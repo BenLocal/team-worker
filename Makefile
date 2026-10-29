@@ -10,7 +10,7 @@ help:
 		'make test     Run Go tests' \
 		'make vet      Run go vet' \
 		'make fmt      Format Go source files' \
-		'make web      Rebuild the board page into internal/board/static' \
+		'make web      Rebuild the board page into internal/board/dist' \
 		'make clean    Remove bin/'
 
 build: web

@@ -21,7 +21,7 @@ COPY go.mod go.sum ./
 RUN GOPROXY="$GOPROXY" go mod download
 COPY cmd/ cmd/
 COPY internal/ internal/
-COPY --from=web /src/internal/board/static/ internal/board/static/
+COPY --from=web /src/internal/board/dist/ internal/board/dist/
 RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /out/ ./cmd/...
 WORKDIR /src/docker/ops
 COPY docker/ops/go.mod docker/ops/go.sum ./
