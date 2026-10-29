@@ -19,6 +19,7 @@ type fakeDaemon struct {
 	tasks   []map[string]any
 	created []map[string]any
 	reg     []map[string]any
+	sent    []map[string]any
 }
 
 func newFakeDaemon(t *testing.T) (*fakeDaemon, *teamAPI) {
@@ -94,6 +95,13 @@ func newFakeDaemon(t *testing.T) (*fakeDaemon, *teamAPI) {
 		}
 		reply(w, msgs)
 	})
+	mux.HandleFunc("POST /v1/teams/{team}/messages", func(w http.ResponseWriter, r *http.Request) {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		in := decode(r)
+		d.sent = append(d.sent, in)
+		reply(w, in)
+	})
 	mux.HandleFunc("GET /v1/teams/{team}/tasks", func(w http.ResponseWriter, r *http.Request) {
 		d.mu.Lock()
 		defer d.mu.Unlock()
@@ -123,41 +131,28 @@ func TestRegisterRecordsTmuxPane(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := d.reg[0]
-	if got["backend"] != "tmux" || got["target"] != "%3" || got["cwd"] != "/workspace" {
+	if got["backend"] != "tmux" || got["target"] != "%3" || got["cwd"] != "/workspace" || got["nudge"] != true {
 		t.Fatalf("registered %v", got)
 	}
 }
 
-func TestWatcherDeliversInboxesAndAnnouncesNewTasks(t *testing.T) {
+func TestWatcherAnnouncesNewTasksThroughTheInbox(t *testing.T) {
 	d, api := newFakeDaemon(t)
-	alive, dead := true, false
 	d.teams["demo"] = true
-	d.agents = []map[string]any{
-		{"name": "leader", "backend": "tmux", "target": "%1", "status": "running", "alive": alive},
-		{"name": "gone", "backend": "tmux", "target": "%2", "status": "running", "alive": dead},
-		{"name": "bg", "backend": "subprocess", "target": "", "status": "running", "alive": alive},
-	}
 	d.tasks = []map[string]any{{"id": "t0", "subject": "old", "priority": "low", "owner": ""}}
-	d.inboxes["demo/leader"] = []map[string]any{{"type": "message", "from": "bob", "content": "hello", "requestId": "r1"}}
-	d.inboxes["demo/gone"] = []map[string]any{{"from": "bob", "content": "lost"}}
+	d.inboxes["demo/leader"] = []map[string]any{{"type": "message", "from": "bob", "content": "hello"}}
 
-	var pastes []string
-	w := &watcher{api: api, team: "demo", leader: "leader", log: io.Discard,
-		paste: func(pane, text string) error {
-			pastes = append(pastes, pane+" "+text)
-			return nil
-		}}
+	w := &watcher{api: api, team: "demo", leader: "leader", log: io.Discard}
 	if err := w.round(); err != nil {
 		t.Fatal(err)
 	}
-	if len(pastes) != 1 || pastes[0] != "%1 [team-worker] demo: message from bob\nhello" {
-		t.Fatalf("first round pasted %q", pastes)
+	if len(d.sent) != 0 {
+		t.Fatalf("tasks present at start must not be announced: %v", d.sent)
 	}
-	if d.inboxes["demo/gone"] == nil {
-		t.Fatal("inbox of a dead pane was consumed")
+	if len(d.inboxes["demo/leader"]) != 1 {
+		t.Fatal("the watcher must leave inboxes to the hooks and the daemon")
 	}
 
-	pastes = nil
 	d.tasks = append(d.tasks,
 		map[string]any{"id": "t1", "subject": "new job", "priority": "high", "owner": ""},
 		map[string]any{"id": "t2", "subject": "assigned", "priority": "high", "owner": "bob"})
@@ -166,15 +161,13 @@ func TestWatcherDeliversInboxesAndAnnouncesNewTasks(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if len(pastes) != 1 || !strings.Contains(pastes[0], "- t1 [high] new job") ||
-		strings.Contains(pastes[0], "t0") || strings.Contains(pastes[0], "t2") {
-		t.Fatalf("task announcement %q", pastes)
+	if len(d.sent) != 1 {
+		t.Fatalf("want one announcement, got %v", d.sent)
 	}
-}
-
-func TestFormatMessageShowsRequestIDForLifecycleTypes(t *testing.T) {
-	got := formatMessage("demo", message{Type: "shutdown_request", From: "leader", RequestID: "r9", Reason: "done"})
-	if got != "[team-worker] demo: shutdown_request from leader (request r9)\ndone" {
-		t.Fatalf("got %q", got)
+	msg := d.sent[0]
+	content, _ := msg["content"].(string)
+	if msg["to"] != "leader" || msg["from"] != "team-worker" || !strings.Contains(content, "- t1 [high] new job") ||
+		strings.Contains(content, "t0") || strings.Contains(content, "t2") {
+		t.Fatalf("announcement %v", msg)
 	}
 }

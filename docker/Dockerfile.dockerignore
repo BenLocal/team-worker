@@ -13,3 +13,5 @@
 !docker/magpie-config/
 !docker/systemd/
 **/*_test.go
+**/node_modules
+internal/board/static/

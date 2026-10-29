@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -27,11 +26,10 @@ var watchInterval = 2 * time.Second
 func leaderCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "leader",
-		Short: "Register the container leader and deliver team events into agent panes",
-		Long: "team-worker inboxes only store messages; an interactive agent idling at its\n" +
-			"prompt never reads them. The watcher consumes the inbox of every live tmux\n" +
-			"agent, pastes each message into its pane, and tells the leader about new\n" +
-			"unassigned pending tasks.",
+		Short: "Register the container leader and tell it about new unassigned tasks",
+		Long: "team-workerd and the agents' hooks deliver inbox messages themselves. The\n" +
+			"watcher only adds what they do not cover: when a pending task without an\n" +
+			"owner appears, it sends the leader an inbox message about it.",
 	}
 	cmd.AddCommand(
 		&cobra.Command{
@@ -58,10 +56,10 @@ func leaderCmd() *cobra.Command {
 		},
 		&cobra.Command{
 			Use:   "watch TEAM LEADER",
-			Short: "Deliver inbox messages and new unassigned tasks into agent panes",
+			Short: "Send the leader an inbox message for each new unassigned pending task",
 			Args:  cobra.ExactArgs(2),
 			RunE: func(cmd *cobra.Command, args []string) error {
-				w := &watcher{api: newTeamAPI(), paste: tmuxPaste, team: args[0], leader: args[1], log: cmd.ErrOrStderr()}
+				w := &watcher{api: newTeamAPI(), team: args[0], leader: args[1], log: cmd.ErrOrStderr()}
 				w.run(cmd.Context())
 				return nil
 			},
@@ -157,23 +155,6 @@ type member struct {
 	AgentID string `json:"agentId"`
 }
 
-type agentInfo struct {
-	Name    string `json:"name"`
-	Backend string `json:"backend"`
-	Target  string `json:"target"`
-	Status  string `json:"status"`
-	Alive   *bool  `json:"alive"`
-}
-
-type message struct {
-	Type      string `json:"type"`
-	From      string `json:"from"`
-	Content   string `json:"content"`
-	RequestID string `json:"requestId"`
-	Summary   string `json:"summary"`
-	Reason    string `json:"reason"`
-}
-
 type task struct {
 	ID       string `json:"id"`
 	Subject  string `json:"subject"`
@@ -213,41 +194,13 @@ func (a *teamAPI) register(team, name, agentID, pane, cwd string) error {
 		"target":  pane,
 		"cwd":     cwd,
 		"command": []string{"leader-session", "claude"},
+		// Lets team-workerd type a reminder when messages wait at an idle prompt.
+		"nudge": true,
 	}, nil)
-}
-
-// tmuxPaste types text into a pane as one bracketed paste and submits it.
-func tmuxPaste(pane, text string) error {
-	f, err := os.CreateTemp("", "team-worker-watch-*.txt")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(f.Name())
-	if _, err := f.WriteString(text); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	buffer := "team-worker-watch-" + strings.TrimPrefix(pane, "%")
-	if err := exec.Command("tmux", "load-buffer", "-b", buffer, f.Name()).Run(); err != nil {
-		return fmt.Errorf("tmux load-buffer: %w", err)
-	}
-	if err := exec.Command("tmux", "paste-buffer", "-d", "-p", "-r", "-b", buffer, "-t", pane).Run(); err != nil {
-		return fmt.Errorf("tmux paste-buffer: %w", err)
-	}
-	// Let the TUI finish handling the bracketed paste before submitting it.
-	time.Sleep(500 * time.Millisecond)
-	if err := exec.Command("tmux", "send-keys", "-t", pane, "Enter").Run(); err != nil {
-		return fmt.Errorf("tmux send-keys: %w", err)
-	}
-	return nil
 }
 
 type watcher struct {
 	api    *teamAPI
-	paste  func(pane, text string) error
 	team   string
 	leader string
 	log    io.Writer
@@ -271,66 +224,7 @@ func (w *watcher) run(ctx context.Context) {
 }
 
 func (w *watcher) round() error {
-	var teams []struct {
-		Name string `json:"name"`
-	}
-	if err := w.api.call(http.MethodGet, "/v1/teams", nil, &teams); err != nil {
-		return err
-	}
-	for _, t := range teams {
-		var agents []agentInfo
-		if err := w.api.call(http.MethodGet, teamPath(t.Name, "agents"), nil, &agents); err != nil {
-			return err
-		}
-		for _, a := range agents {
-			if a.Backend == "tmux" && a.Status == "running" && a.Alive != nil && *a.Alive {
-				if err := w.deliverInbox(t.Name, a); err != nil {
-					return err
-				}
-			}
-		}
-	}
 	return w.announceTasks()
-}
-
-func (w *watcher) deliverInbox(team string, a agentInfo) error {
-	for {
-		var msgs []message
-		if err := w.api.call(http.MethodPost, teamPath(team, "inboxes", a.Name, "receive"), nil, &msgs); err != nil {
-			return err
-		}
-		if len(msgs) == 0 {
-			return nil
-		}
-		for _, m := range msgs {
-			if err := w.paste(a.Target, formatMessage(team, m)); err != nil {
-				return err
-			}
-		}
-	}
-}
-
-func formatMessage(team string, m message) string {
-	kind := m.Type
-	if kind == "" {
-		kind = "message"
-	}
-	from := m.From
-	if from == "" {
-		from = "unknown"
-	}
-	head := fmt.Sprintf("[team-worker] %s: %s from %s", team, kind, from)
-	// Lifecycle requests are answered by ID, so show it; plain messages carry
-	// an internal one that would only be noise.
-	if m.RequestID != "" && kind != "message" {
-		head += fmt.Sprintf(" (request %s)", m.RequestID)
-	}
-	for _, body := range []string{m.Content, m.Summary, m.Reason} {
-		if body != "" {
-			return head + "\n" + body
-		}
-	}
-	return head
 }
 
 func (w *watcher) announceTasks() error {
@@ -351,16 +245,16 @@ func (w *watcher) announceTasks() error {
 		}
 	}
 	if len(fresh) > 0 {
-		var leader agentInfo
-		if err := w.api.call(http.MethodGet, teamPath(w.team, "agents", w.leader), nil, &leader); err != nil {
-			return err
-		}
-		lines := []string{fmt.Sprintf("[team-worker] %s: new unassigned pending tasks", w.team)}
+		lines := []string{"New unassigned pending tasks:"}
 		for _, t := range fresh {
 			lines = append(lines, fmt.Sprintf("- %s [%s] %s", t.ID, t.Priority, t.Subject))
 		}
 		lines = append(lines, fmt.Sprintf("Check `team-worker task list %s --status pending`, then assign, split or take them.", w.team))
-		if err := w.paste(leader.Target, strings.Join(lines, "\n")); err != nil {
+		// An inbox message reaches the leader through its hooks or the daemon's
+		// reminder, at a moment it can act on it.
+		if err := w.api.call(http.MethodPost, teamPath(w.team, "messages"), map[string]string{
+			"from": "team-worker", "to": w.leader, "type": "message", "content": strings.Join(lines, "\n"),
+		}, nil); err != nil {
 			return err
 		}
 	}

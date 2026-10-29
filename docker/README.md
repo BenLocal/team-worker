@@ -1,6 +1,6 @@
 # team-worker Docker 镜像
 
-team-worker、tmux、Git、Node.js、Claude Code、Codex、DeepSeek Harness（dsh 与 dsh-tui）、Magpie、OpenBao、Nginx 和 Docker 工具打包在同一个容器里，宿主机只需要 Docker 和 Bash。Leader 在容器内 tmux 会话 `team-worker-<团队>` 的 `leader` 窗口运行；Leader 用 `team-worker spawn tmux` 创建的 Worker 作为同一会话的其他窗口，也在本容器内运行。
+team-worker、tmux、Git、Node.js、Claude Code、Codex、pi、DeepSeek Harness（dsh 与 dsh-tui）、Magpie、OpenBao、Nginx 和 Docker 工具打包在同一个容器里，宿主机只需要 Docker 和 Bash。Leader 在容器内 tmux 会话 `team-worker-<团队>` 的 `leader` 窗口运行；Leader 用 `team-worker spawn tmux` 创建的 Worker 作为同一会话的其他窗口，也在本容器内运行。
 
 本目录参照 ClawTeam-Docker 改写：ClawTeam 换成本仓库的 team-worker（镜像构建时从源码编译），Magpie、OpenBao、Nginx、DinD/systemd 等组件和配置方式保持不变。容器内的启动配置由一个 Go 程序 `team-worker-ops` 完成（源码在 [`ops/`](ops/)），取代原来的 Python 脚本。
 
@@ -25,10 +25,12 @@ TEAM_WORKER_ENV_FILE=/绝对路径/team-worker.env \
 
 容器启动时依次：导入 Magpie 配置（providers、插件、技能、MCP、Instructions）→ 启动 `team-workerd` → 启动只读看板和 Nginx → 注册团队 `team-worker-docker`（`TEAM_WORKER_TEAM_NAME` 可改）和 Leader → 在 tmux 中启动 Leader → 启动 `team-worker-ops leader watch`。已有团队会复用；Worker 在 Leader 分配任务时才创建。
 
-team-worker 的收件箱只存消息，不会推送到 Agent 会话；交互式 Agent 停在提示符时也不会自己去读。`leader watch` 每 2 秒检查一次：
+消息由 team-worker 自己送到 Agent 面前，规则和容器外完全一样（见仓库的 [docs/agents.md](../docs/agents.md)）：
 
-- 读取所有团队里存活的 tmux Agent（Leader 和 Worker）的收件箱，把每条消息以 `[team-worker]` 开头粘贴到对应窗口并回车。消息读取后即从收件箱移除。
-- 本团队出现新的、未分配负责人的 pending 任务时，通知 Leader。
+- Leader 和 Claude Worker 装有 team-worker hook：每轮结束时收到新消息、自己的待办任务和团队进展；干活途中也会收到新消息。Leader 的 hook 由入口脚本通过 `claude --settings "$(team-worker hook settings --role leader)"` 装上。
+- pi Worker 由内置扩展在空闲时自己开始新一轮。
+- Agent 停在输入框、hook 不会触发时，team-workerd 往它的 tmux 窗口输入一行提醒；权限确认和选择菜单不会被输入。
+- `leader watch` 每 2 秒检查一次：出现新的、没有负责人的 pending 任务时，给 Leader 的收件箱发一条消息。它不读取也不移走任何收件箱。
 
 与 ClawTeam 面板不同，team-worker 的看板是只读的，没有 New Task 按钮，也没有 OpenAPI。新增任务在容器内用 CLI：
 
@@ -38,6 +40,17 @@ team-worker task create team-worker-docker "实现登录功能" -d "说明……
 ```
 
 Leader 的 Claude 进程退出后，10 秒后重启，用 `TEAM_WORKER_LEADER_RESTART_DELAY` 调整间隔。供应商凭据错误需自行修正；tmux 会保留错误信息，不能只凭会话存在就判断模型可用。
+
+## 更新二进制而不重建镜像
+
+镜像里编译了一份 `team-worker`、`team-workerd` 和 `team-worker-ops` 放在 `/usr/local/bin`，但 `PATH` 优先使用 `/opt/team-worker/bin`。`start` 发现宿主机的二进制目录（默认仓库的 `bin/docker`，`TEAM_WORKER_BIN_DIR` 可改）里三个文件齐全时，会把它只读挂载到这里。所以改完代码只需要：
+
+```bash
+./docker/team-worker.sh bins      # 在宿主机编译静态二进制到 bin/docker
+./docker/team-worker.sh restart   # 重启容器，team-workerd 和 Leader 用上新版本
+```
+
+`bins` 先用 `make web` 构建看板页面（需要宿主机有 Node.js 和 npm），再用宿主机的 Go 编译（`CGO_ENABLED=0`），不依赖容器里的 glibc。只换 `team-worker` CLI 时不重启也立即生效；`team-workerd` 和 `team-worker-ops leader watch` 是长期运行的进程，要重启容器才会换成新版本。重启会结束正在运行的 Agent。
 
 ## 一个端口访问多个面板
 
@@ -49,7 +62,7 @@ Nginx 在同一地址、同一端口下按路径分发：
 | `/magpie/` | Magpie 管理界面 | `127.0.0.1:3430` |
 | `/ui/`、`/v1/` | OpenBao 界面与 API（启用时） | `127.0.0.1:8200` |
 
-根路径跳转到 `/team-worker/`。用 `./docker/team-worker.sh web` 获取完整地址和带登录密钥的 Magpie 链接；密钥保存在 home 卷，重启不变。Nginx 关闭了访问日志，避免记录链接密钥。看板和 Magpie 页面使用根路径 API，由 `subpath.js` 给页面请求加上各自前缀。
+根路径跳转到 `/team-worker/`。看板标题栏右侧有 Magpie 链接，启用 OpenBao 时还有 OpenBao 链接（入口脚本通过 `board serve --link` 传入）。Magpie 链接不带登录密钥：浏览器先用 `web` 打印的完整链接登录一次，之后从看板点 Magpie 就能直接进入。用 `./docker/team-worker.sh web` 获取完整地址和带登录密钥的 Magpie 链接；密钥保存在 home 卷，重启不变。Nginx 关闭了访问日志，避免记录链接密钥。看板和 Magpie 页面使用根路径 API，由 `subpath.js` 给页面请求加上各自前缀。
 
 默认绑定本机 `127.0.0.1:8080`。用服务器 IP 访问时指定监听地址和对外 URL：
 
@@ -60,6 +73,10 @@ TEAM_WORKER_WEB_BIND=0.0.0.0 TEAM_WORKER_WEB_PORT=18080 \
 ```
 
 `TEAM_WORKER_WEB_URL` 不带末尾斜线。只发布 Nginx 端口，Magpie 的 `3425` 模型网关仅供容器内 Agent 使用。
+
+## 日志
+
+team-workerd 在容器里以前台方式运行，日志写到 stderr，和其他服务的输出一起用 `docker logs <容器名>` 查看。想单独保存到 home 卷，在 env-file 里设置 `TEAM_WORKER_LOG_FILE=/home/node/.team-worker/team-workerd.log`（按大小轮转）。级别和格式用 `TEAM_WORKER_LOG_LEVEL`、`TEAM_WORKER_LOG_FORMAT` 设置，例如排查问题时设 `TEAM_WORKER_LOG_LEVEL=debug`，接入日志系统时设 `TEAM_WORKER_LOG_FORMAT=json`。记录的内容见仓库根目录 README 的"日志"一节。
 
 ## 容器环境变量
 
@@ -98,6 +115,18 @@ docker exec --user root team-worker journalctl -u team-worker --no-pager -n 100
 代理只写入 dockerd 的 systemd 环境和 `~/.docker/config.json` 的 `proxies.default`，让内层 `docker build` / `docker run` 获得代理；Agent 和 Magpie 的原始代理变量保持不变。
 
 ## Magpie 配置目录
+
+`TEAM_WORKER_CONFIG_DIR` 指定一个配置目录（默认 `docker/magpie-config`），`start` 从这里读取 `providers.yaml`、`skills.yaml`、`prompt.yaml`、`mcp.yaml`、`plugin.yaml`；目录里如果还有 `openbao.yaml`、`openbao.token`、`gitconfig`，分别挂载到 `/etc/team-worker/openbao.yaml`、`/etc/team-worker/openbao.token`、`/etc/gitconfig`。单独的 `TEAM_WORKER_*_FILE` 仍然优先。
+
+带凭据的真实部署配置（例如从服务器拷来的一份）放在 `docker/magpie-config.local/`：这个目录和所有 `*.env` 文件都在 `.gitignore` 里，不会被提交。
+
+```bash
+TEAM_WORKER_CONFIG_DIR=docker/magpie-config.local \
+  TEAM_WORKER_ENV_FILE=docker/magpie-config.local/team-worker.env \
+  ./docker/team-worker.sh start /项目目录
+```
+
+启用 OpenBao 且自动解封时，入口脚本会先等 OpenBao Agent 把 `openbao.yaml` 声明的文件都渲染出来（最多 180 秒），再导入技能；这样 `gitconfig` 里的凭据助手在技能克隆私有仓库时已经能读到凭据。
 
 `magpie-config/` 存放 `providers.yaml`、`skills.yaml`、`prompt.yaml`、`mcp.yaml`、`plugin.yaml` 和 `openbao.yaml`，格式与 ClawTeam-Docker 相同，每个文件里有注释示例。启动脚本默认挂载本目录下的文件，也可用 `TEAM_WORKER_PROVIDERS_FILE`、`TEAM_WORKER_SKILLS_FILE`、`TEAM_WORKER_PROMPT_FILE`、`TEAM_WORKER_MCP_FILE`、`TEAM_WORKER_PLUGIN_FILE` 指定宿主机文件。使用 Compose 时把整个目录只读挂载到 `/etc/team-worker`：
 
@@ -143,7 +172,8 @@ volumes:
 | `plugins FILE` / `skills [--update] [FILE]` / `mcp FILE` / `prompt FILE` | 导入插件、技能、MCP、Instructions |
 | `openbao FILE` | 导入密钥并启动 OpenBao Agent |
 | `systemd prepare\|agent\|magpie` | DinD 模式下把运行配置交给 systemd，并启动对应服务 |
-| `leader prepare\|register\|watch` | 注册团队与 Leader，投递收件箱消息和新任务通知 |
+| `leader prepare\|register\|watch` | 注册团队与 Leader（开启终端提醒），把新的未分配任务发到 Leader 收件箱 |
+| `openbao --wait-rendered DURATION FILE` | 等待 OpenBao Agent 渲染 openbao.yaml 声明的文件 |
 
 开发与测试：
 
@@ -154,9 +184,27 @@ cd docker/ops && go test ./...
 ## 构建参数
 
 ```bash
-GOPROXY=https://goproxy.cn,direct CLAUDE_VERSION=<npm版本> CODEX_VERSION=<npm版本> \
+GOPROXY=https://goproxy.cn,direct CLAUDE_VERSION=<npm版本> CODEX_VERSION=<npm版本> PI_VERSION=<npm版本> \
   BUN_VERSION=<版本> DSH_VERSION=<npm版本> DSH_TUI_VERSION=<npm版本> \
   PLAYWRIGHT_VERSION=<pip版本> OPENBAO_VERSION=<版本> MAGPIE_VERSION=<镜像tag> \
+  ./docker/team-worker.sh build
+```
+
+国内网络可以换用镜像源，例如：
+
+```bash
+GOPROXY=https://goproxy.cn,direct DEBIAN_MIRROR=mirrors.aliyun.com \
+  NPM_REGISTRY=https://registry.npmmirror.com PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple \
+  BUN_DOWNLOAD_BASE=https://registry.npmmirror.com/-/binary/bun \
+  PLAYWRIGHT_DOWNLOAD_HOST=https://cdn.npmmirror.com/binaries/playwright \
+  ./docker/team-worker.sh build
+```
+
+不设 `PLAYWRIGHT_DOWNLOAD_HOST` 时，Playwright 的 Chromium 从官方地址下载。其他下载慢时可以给构建加代理，并用 `NO_PROXY` 让国内镜像直连；代理在本机回环地址时脚本会自动加 `--network host`：
+
+```bash
+HTTP_PROXY=http://127.0.0.1:7897 HTTPS_PROXY=http://127.0.0.1:7897 \
+  NO_PROXY=localhost,127.0.0.1,.npmmirror.com,.aliyun.com,goproxy.cn,.tuna.tsinghua.edu.cn \
   ./docker/team-worker.sh build
 ```
 
