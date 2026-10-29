@@ -13,9 +13,15 @@
 
 ### 1. 会话恢复（keepalive / resume）
 
-已实现会话标识持久化、手动续接、有限重试、主动停止与旧退出事件隔离；Docker Leader 共用该流程。Claude 原生会话续接及前文记忆已实测，其余 CLI 已适配续接参数。
+已实现会话标识持久化、手动续接、有限重试、主动停止与旧退出事件隔离；Docker Leader 共用该流程。Claude 已有原生续接实测记录，2026-10-29 补测 Codex、dsh 和 pi，结果如下。
 
-- [ ] 逐个验证其余 CLI 的真实会话续接，确认恢复后保留前文记忆并记录验证结果。
+- [x] Codex（0.165.0）：在规范化工作目录下，通过 subprocess 启动及 `agent resume`，确认会话 ID 不变、Run ID 更新、不调用工具且准确回忆随机暗号。
+- [x] pi（1.4.0）：通过 subprocess 启动及 `agent resume`，确认会话 ID 不变、Run ID 更新、不调用工具且准确回忆随机暗号。
+- [x] 修复 dsh（0.2.1-rc.2）headless 的续接参数。headless 使用 `--session-id`，默认模式和 tui 保留 `--resume`；容器内实测 `agent resume` 续接同一会话、新 Run ID 和无工具暗号回忆通过。
+- [x] 修复 Codex 自动捕获会话 ID 时的工作目录别名匹配。按文件系统身份识别同一目录；macOS 下传入 `/tmp/...`、原生记录为 `/private/tmp/...` 时，会话 ID 自动捕获、真实续接和无工具暗号回忆均通过。
+- [ ] 验证 Gemini、Kimi、Qwen 和 OpenCode 的真实会话续接及前文记忆。
+
+上述补测使用 `scripts/verify-native-sessions.py`；尚未逐个验证这些 CLI 的原生 tmux 交互与 keepalive 自动续接。
 
 ### 2. `plan` 审批
 

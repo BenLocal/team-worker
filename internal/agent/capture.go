@@ -51,7 +51,7 @@ func CaptureCodexSession(root, cwd, agentID string, since time.Time) (string, er
 			Type    string                   `json:"type"`
 			Payload struct{ ID, Cwd string } `json:"payload"`
 		}
-		valid := firstErr == nil && json.Unmarshal(first, &meta) == nil && meta.Type == "session_meta" && meta.Payload.ID != "" && filepath.Clean(meta.Payload.Cwd) == filepath.Clean(cwd)
+		valid := firstErr == nil && json.Unmarshal(first, &meta) == nil && meta.Type == "session_meta" && meta.Payload.ID != "" && sameSessionWorkspace(meta.Payload.Cwd, cwd)
 		var data []byte
 		if valid {
 			data, err = io.ReadAll(reader)
@@ -74,4 +74,16 @@ func CaptureCodexSession(root, cwd, agentID string, since time.Time) (string, er
 		return nil
 	})
 	return found, err
+}
+
+func sameSessionWorkspace(a, b string) bool {
+	if filepath.Clean(a) == filepath.Clean(b) {
+		return true
+	}
+	first, err := os.Stat(a)
+	if err != nil {
+		return false
+	}
+	second, err := os.Stat(b)
+	return err == nil && os.SameFile(first, second)
 }
