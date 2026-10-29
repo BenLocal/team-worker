@@ -129,7 +129,7 @@ LLM Agent 不会自己去查收件箱。一轮回复结束、停在输入框之�
 |---|---|---|
 | `Stop` | `team-worker hook stop` | 见下文 |
 | `PostToolUse` | `team-worker hook post-tool-use` | 每 15 秒最多检查一次收件箱。有新消息时，作为附加上下文交给 Agent，所以它在干活途中也能收到 leader 的回复 |
-| `SessionStart`（resume、clear、compact） | `team-worker hook session-start` | 会话恢复、清空或上下文被压缩后，重新给 Agent 一遍身份、工作目录、团队说明、专属提示词、当前任务和协作规则 |
+| `SessionStart`（startup、resume、clear、compact） | `team-worker hook session-start` | 启动时捕获原生会话 ID；会话恢复、清空或上下文被压缩后，重新提供身份、工作目录、团队说明、专属提示词、当前任务和协作规则 |
 
 `hook stop` 按顺序做以下判断：
 

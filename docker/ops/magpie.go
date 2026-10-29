@@ -27,7 +27,7 @@ var providerAPIs = map[string]string{
 	"gemini":    "gemini",
 }
 
-// pendingPath marks providers waiting for an API key; leader-session waits on it.
+// pendingPath marks providers waiting for an API key; the leader supervisor waits on it.
 var pendingPath = "/tmp/team-worker-provider-pending"
 
 func magpieCmd() *cobra.Command {

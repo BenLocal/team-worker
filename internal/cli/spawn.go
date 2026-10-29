@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -21,15 +22,21 @@ import (
 )
 
 type spawnRequest struct {
-	Team      string
-	Name      string
-	AgentID   string
-	AgentType string
-	Task      string
-	TaskSet   bool
-	Backend   string
-	Command   []string
-	Cwd       string
+	RequiredEnvKeys []string
+	RunID           string
+	ResumeID        string
+	KeepAlive       bool
+	MaxRestarts     int
+	RestartDelay    time.Duration
+	Team            string
+	Name            string
+	AgentID         string
+	AgentType       string
+	Task            string
+	TaskSet         bool
+	Backend         string
+	Command         []string
+	Cwd             string
 	// EnvLayers come from the template, the template agent and --env, in that order.
 	EnvLayers []spawn.EnvLayer
 	SkipPerms bool
@@ -74,6 +81,24 @@ func (a *app) spawnAgent(ctx context.Context, req spawnRequest) (spawnResult, er
 		return spawnResult{}, err
 	}
 	adapter := registry.For(req.Command)
+	if req.MaxRestarts < 0 || req.RestartDelay < 0 || req.RestartDelay > time.Minute {
+		return spawnResult{}, fmt.Errorf("restart limits must not be negative")
+	}
+	if req.RestartDelay == 0 {
+		req.RestartDelay = time.Second
+	}
+	if req.KeepAlive && agent.SessionClient(req.Command) == "" {
+		return spawnResult{}, fmt.Errorf("keepalive is not supported by this CLI")
+	}
+	req.RunID = store.NewAgentID()
+	nativeCommand, clientName, nativeID, err := agent.StartSessionCommand(req.Command)
+	if req.ResumeID != "" {
+		nativeCommand, err = agent.ResumeCommand(req.Command, req.ResumeID, req.Backend == "tmux")
+		nativeID = req.ResumeID
+	}
+	if err != nil {
+		return spawnResult{}, err
+	}
 
 	team, err := c.GetTeam(ctx, req.Team)
 	teamExists := err == nil
@@ -119,6 +144,7 @@ func (a *app) spawnAgent(ctx context.Context, req spawnRequest) (spawnResult, er
 	})
 	identity := map[string]string{
 		"TEAM_WORKER_AGENT_ID":      req.AgentID,
+		"TEAM_WORKER_RUN_ID":        req.RunID,
 		"TEAM_WORKER_AGENT_NAME":    req.Name,
 		"TEAM_WORKER_AGENT_TYPE":    req.AgentType,
 		"TEAM_WORKER_TEAM_NAME":     req.Team,
@@ -132,7 +158,7 @@ func (a *app) spawnAgent(ctx context.Context, req spawnRequest) (spawnResult, er
 		identity["TEAM_WORKER_USER"] = id.User
 	}
 	built, err := spawn.Build(spawn.Options{
-		Backend: req.Backend, Command: req.Command, Adapter: adapter, Team: req.Team, Agent: req.Name,
+		Backend: req.Backend, Command: nativeCommand, RunID: req.RunID, KeepAlive: req.KeepAlive, Adapter: adapter, Team: req.Team, Agent: req.Name,
 		Prompt: prompt, Cwd: cwd, SkipPermissions: req.SkipPerms, IsLeader: req.Name == leader,
 		EnvLayers: req.EnvLayers, Identity: identity, WorkerBin: workerBinary(),
 		RunDir: filepath.Join(dataDir, "run"), LogPath: config.AgentLogPath(dataDir, req.Team, req.Name),
@@ -172,39 +198,86 @@ func (a *app) spawnAgent(ctx context.Context, req spawnRequest) (spawnResult, er
 				"Agent '%s' is already running in team '%s'. Use --replace to stop it and spawn a new instance.",
 				req.Name, req.Team)
 		}
+		if _, err := c.RequestAgentStop(ctx, req.Team, req.Name, existing.RunID); err != nil {
+			return spawnResult{}, err
+		}
 		if err := proc.Stop(existing); err != nil {
 			return spawnResult{}, fmt.Errorf("stop running agent '%s': %w", req.Name, err)
 		}
-		if _, err := c.AgentExited(ctx, req.Team, req.Name); err != nil {
+		if _, err := c.AgentExitedRun(ctx, req.Team, req.Name, existing.RunID, 0); err != nil {
 			return spawnResult{}, err
 		}
 	} else if err == nil {
 		// A pane kept open after a failed start; the new instance replaces it.
-		proc.Stop(existing)
+		if err := proc.Stop(existing); err != nil {
+			return spawnResult{}, err
+		}
+		if _, err := c.AgentExitedRun(ctx, req.Team, req.Name, existing.RunID, existing.ExitCode); err != nil {
+			return spawnResult{}, err
+		}
 	} else if !client.IsNotFound(err) {
 		return spawnResult{}, err
 	}
 	if err := os.MkdirAll(cwd, 0o755); err != nil {
 		return spawnResult{}, err
 	}
-
 	if req.TaskSet || req.Task != "" {
 		if _, err := c.SetAgentPrompt(ctx, req.Team, req.Name, id.User, req.Task); err != nil {
 			return spawnResult{}, err
 		}
 	}
+
+	rec := model.Agent{Team: req.Team, Name: req.Name, AgentID: req.AgentID, RunID: req.RunID, Backend: req.Backend,
+		Command: req.Command, Cwd: cwd, Nudge: req.Backend == "tmux" && adapter.Nudge()}
+	if _, err := c.RegisterAgent(ctx, rec); err != nil {
+		return spawnResult{}, err
+	}
+	if clientName != "" {
+		keys := append([]string{}, req.RequiredEnvKeys...)
+		for _, layer := range req.EnvLayers {
+			for key := range layer.Set {
+				keys = append(keys, key)
+			}
+		}
+		sort.Strings(keys)
+		session := model.Session{Team: req.Team, Agent: req.Name, User: id.User, RunID: req.RunID, Client: clientName,
+			SessionID: nativeID, Source: "launch", Cwd: cwd, Command: req.Command, Backend: req.Backend,
+			SkipPermissions: req.SkipPerms, KeepAlive: req.KeepAlive, MaxRestarts: req.MaxRestarts,
+			RestartDelayMillis: req.RestartDelay.Milliseconds(), EnvKeys: keys}
+		if _, err := c.SaveSession(ctx, session); err != nil {
+			if _, cleanupErr := c.AgentExitedRun(ctx, req.Team, req.Name, req.RunID, -1); cleanupErr != nil {
+				return spawnResult{}, fmt.Errorf("save session: %w; release reservation: %v", err, cleanupErr)
+			}
+			return spawnResult{}, err
+		}
+	}
 	res, err := built.Start()
+	if err != nil {
+		if _, cleanupErr := c.AgentExitedRun(ctx, req.Team, req.Name, req.RunID, -1); cleanupErr != nil {
+			return spawnResult{}, fmt.Errorf("start agent: %w; release reservation: %v", err, cleanupErr)
+		}
+		return spawnResult{}, err
+	}
+	rec.Target, rec.PID = res.Target, res.PID
+	if _, err := c.RegisterAgent(ctx, rec); err != nil {
+		if stopErr := proc.Stop(rec); stopErr != nil {
+			return spawnResult{}, fmt.Errorf("publish agent: %w; stop child: %v", err, stopErr)
+		}
+		return spawnResult{}, err
+	}
+	current, err := c.GetAgent(ctx, req.Team, req.Name)
 	if err != nil {
 		return spawnResult{}, err
 	}
-	rec := model.Agent{Team: req.Team, Name: req.Name, AgentID: req.AgentID, Backend: res.Backend,
-		Target: res.Target, PID: res.PID, Command: req.Command, Cwd: cwd,
-		Nudge: res.Backend == "tmux" && adapter.Nudge()}
-	if _, err := c.RegisterAgent(ctx, rec); err != nil {
-		proc.Stop(rec)
-		return spawnResult{}, err
+	if current.RunID != req.RunID || current.StopRequested {
+		if err := proc.Stop(rec); err != nil {
+			return spawnResult{}, err
+		}
+		return spawnResult{}, fmt.Errorf("agent launch was stopped or replaced")
 	}
-	res.FinishStartup()
+	if !req.KeepAlive {
+		res.FinishStartup()
+	}
 	result.Status, result.Target, result.PID = "spawned", res.Target, res.PID
 	return result, nil
 }
@@ -357,6 +430,9 @@ func (a *app) spawnCmd() *cobra.Command {
 	f.BoolVar(&noSkip, "no-skip-permissions", false, "Keep the agent CLI's tool approval prompts")
 	f.BoolVar(&req.Replace, "replace", false, "Stop a running agent with the same name first")
 	f.BoolVar(&req.DryRun, "dry-run", false, "Show the command, prompt and environment sources without starting")
+	f.BoolVar(&req.KeepAlive, "keepalive", false, "Resume the exact session after unapproved exits")
+	f.IntVar(&req.MaxRestarts, "max-restarts", 3, "Maximum consecutive keepalive restarts")
+	f.DurationVar(&req.RestartDelay, "restart-delay", time.Second, "Initial keepalive retry delay (doubles up to one minute)")
 	return cmd
 }
 

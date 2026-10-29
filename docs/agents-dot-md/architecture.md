@@ -60,11 +60,13 @@ team-worker board serve ──> internal/board (只读 Web 看板，经 client �
 4. 提交后 `OnChange` → `Hub.Notify`，唤醒所有在等的长轮询请求。
 
 **启动一个 agent（spawn）**
-1. `team-worker spawn ...`（`internal/cli/spawn.go`）调 `spawn.Launch`：按适配器拼命令和环境，`PATH` 首位放 team-worker 所在目录，用 tmux 窗口（会话名 `team-worker-<team>`）或后台子进程启动。
-2. CLI 经 `POST /v1/teams/{team}/agents` 登记 agent，然后 `FinishStartup` 应答 agent CLI 的启动界面并粘贴 prompt。
-3. agent 退出时包装命令执行 `team-worker lifecycle on-exit` → `POST .../agents/{name}/exit`，`store.AgentExited` 把它持有的进行中任务退回 `pending` 并通知 leader。
-4. tmux 窗口被直接关掉、退出钩子没机会执行时，`team-workerd` 每 `ReapInterval`（10 秒，`internal/server/daemon.go`）用 `proc.Probe` 扫一遍运行中的 agent，按同样方式回收。
-5. 工作目录默认是 `<数据目录>/workspaces/<team>/<agent>`（`config` 里拼出），`--cwd` 可覆盖。
+1. `team-worker spawn ...`（`internal/cli/spawn.go`）先准备原生会话命令、适配器和环境，再预登记本轮 Run ID 与会话元数据，最后启动 tmux 窗口或后台子进程并补齐进程信息，避免快速退出早于登记。
+2. 普通运行的包装命令在退出时执行 `team-worker lifecycle on-exit --run-id ... --code ...`；启用 `--keepalive` 时，由隐藏的 `lifecycle supervise` 子进程管理启动界面、子进程退出和重试。
+3. `store.AgentExitedRun` 仅接受当前 Run ID 的退出回报，将进行中任务退回 `pending` 并通知 Leader。每次重试分配新 Run ID；延迟到达的旧退出回报和旧会话钩子不会影响新运行。
+4. `sessions` 按团队、成员、用户保存准确原生会话 ID、原始命令、工作目录与恢复策略，退出不删除。只记录额外环境变量的名称，手动恢复时重新提供值。Claude、pi 预分配 ID；启动钩子可捕获原生 ID；Codex 按工作目录与注入的 Agent ID 查找唯一会话，歧义时拒绝恢复。
+5. keepalive 默认关闭，启用后连续快速退出默认最多重试 3 次，延迟指数增长至 1 分钟；运行满 1 分钟后重置连续失败计数。恢复重读团队上下文并提醒检查任务归属。主动 stop、替换、批准关闭和团队 cleanup 先写停止意图，重试登记在事务内校验旧 Run ID 与停止意图。
+6. tmux 窗口被直接关掉、退出钩子没机会执行时，`team-workerd` 每 `ReapInterval`（10 秒，`internal/server/daemon.go`）用 `proc.Probe` 扫一遍运行中的 Agent，带 Run ID 回收。监督进程本身消失后不会由 daemon 重建；用 `agent resume` 手动续接。
+7. 工作目录默认是 `<数据目录>/workspaces/<team>/<agent>`（`config` 里拼出），`--cwd` 可覆盖。
 
 **长轮询收消息**
 1. `inbox receive --wait` / `inbox watch` / `task wait` 调 `POST .../inboxes/{agent}/receive?wait=30s`。
@@ -73,7 +75,7 @@ team-worker board serve ──> internal/board (只读 Web 看板，经 client �
 
 ## 五、数据流与存储
 
-- 权威数据源：`<数据目录>/team-worker.db`，只有 `team-workerd` 写。团队模板是 `~/.team-worker/templates/*.toml` 文件，不进数据库。表：`teams`、`members`、`tasks`、`task_deps`、`messages`、`events`、`agents`、`workspaces`。
+- 权威数据源：`<数据目录>/team-worker.db`，只有 `team-workerd` 写。团队模板是 `~/.team-worker/templates/*.toml` 文件，不进数据库。表：`teams`、`members`、`tasks`、`task_deps`、`messages`、`events`、`agents`、`sessions`、`workspaces`。
 - 团队公共提示词保存在 `teams.prompt`，成员专属提示词保存在 `members.prompt`，按 `(team, name, user_name)` 区分。模板渲染后的角色 `task` 和显式传入的 `spawn --task` 写入成员提示词；进程重新注册不覆盖它，启动和会话恢复钩子会重新读取。修改成员提示词与发送该成员的 inbox 通知在同一事务完成。
 - 迁移：`internal/store/migrations/*.sql` 用 `go:embed` 内置，Goose Provider 负责顺序执行和事务，进度记在 `goose_db_version`。旧库的 `PRAGMA user_version` 一次性接入 Goose 历史；各 SQL 仍同步更新 `user_version`，用于版本兼容检查。**已发布的迁移不改，只追加文件。**
 - 时间戳：字符串存储，格式对齐 Python `datetime.isoformat()`（`store.timestamp`），保持与 ClawTeam 输出一致。

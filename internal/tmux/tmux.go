@@ -113,8 +113,12 @@ func Paste(pane, text string) error {
 
 func KillPane(pane string) error {
 	_, err := run("kill-pane", "-t", pane)
-	if err != nil && strings.Contains(err.Error(), "can't find") {
-		return nil
+	if err != nil {
+		message := err.Error()
+		if strings.Contains(message, "can't find") || strings.Contains(message, "no server running") ||
+			(strings.Contains(message, "error connecting to") && strings.Contains(message, "No such file or directory")) {
+			return nil
+		}
 	}
 	return err
 }

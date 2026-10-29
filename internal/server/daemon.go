@@ -106,7 +106,7 @@ func Reap(ctx context.Context, st *store.Store, log *slog.Logger) {
 		if alive, known := st.Probe(a); !known || alive {
 			continue
 		}
-		res, err := st.AgentExited(ctx, a.Team, a.Name)
+		res, err := st.AgentExitedRun(ctx, a.Team, a.Name, a.RunID, -1)
 		if err != nil {
 			log.Warn("reap: record exit", "team", a.Team, "agent", a.Name, "err", err)
 			continue

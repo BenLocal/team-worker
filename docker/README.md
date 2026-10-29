@@ -39,7 +39,7 @@ TEAM_WORKER_ENV_FILE=/绝对路径/team-worker.env \
 team-worker task create team-worker-docker "实现登录功能" -d "说明……"
 ```
 
-Leader 的 Claude 进程退出后，10 秒后重启，用 `TEAM_WORKER_LEADER_RESTART_DELAY` 调整间隔。供应商凭据错误需自行修正；tmux 会保留错误信息，不能只凭会话存在就判断模型可用。
+Leader 通过 `team-worker spawn --keepalive` 运行，保存准确的原生会话 ID；后续容器启动有保存的会话时使用 `agent resume`。Claude 进程未经批准退出后，默认等待 10 秒再续接，连续快速退出最多重试 3 次，等待时间逐次加倍、最长 1 分钟；运行满 1 分钟后重置连续次数。用 `TEAM_WORKER_LEADER_RESTART_DELAY` 调整初始间隔，用 `TEAM_WORKER_LEADER_MAX_RESTARTS` 调整次数上限。批准关停或 `agent stop` 后不再重启。供应商凭据错误需自行修正；tmux 会保留错误信息，不能只凭会话存在就判断模型可用。
 
 ## 更新二进制而不重建镜像
 
@@ -89,7 +89,8 @@ team-workerd 在容器里以前台方式运行，日志写到 stderr，和其他
 | `LLM_API_BASE` | 默认 `providers.yaml` 的 OpenAI 兼容网关地址 |
 | `TEAM_WORKER_TEAM_NAME` | 容器团队名，默认 `team-worker-docker` |
 | `TEAM_WORKER_MODEL` | Magpie 模型路由，优先于 `providers.yaml` 的 `claude.model` |
-| `TEAM_WORKER_LEADER_RESTART_DELAY` | Leader 退出后的重启间隔（秒），默认 10 |
+| `TEAM_WORKER_LEADER_RESTART_DELAY` | Leader 续接的初始等待秒数，默认 10，最大 60 |
+| `TEAM_WORKER_LEADER_MAX_RESTARTS` | Leader 连续快速退出后的最大续接次数，默认 3 |
 | `TEAM_WORKER_DIND` | 设为 `1` 启用 Docker in Docker（systemd 模式） |
 | `TEAM_WORKER_MASKING` | 默认在 home 卷首次启动时打开 Magpie 的 Privacy masking（发给模型供应商的密钥、密码、token 换成占位符）；之后在 Magpie 里关掉会保持关闭。设为 `0` 跳过 |
 | `TEAM_WORKER_OPENBAO`、`TEAM_WORKER_OPENBAO_AUTO_UNSEAL` | 设为 `1` 启用 OpenBao 及自动初始化、解封 |
@@ -215,7 +216,7 @@ HTTP_PROXY=http://127.0.0.1:7897 HTTPS_PROXY=http://127.0.0.1:7897 \
 
 构建上下文是仓库根目录（`docker build -f docker/Dockerfile .`），镜像里的 team-worker 和 team-worker-ops 都从当前工作区源码编译。默认镜像名 `team-worker-local:latest`，容器名 `team-worker`，用 `TEAM_WORKER_IMAGE`、`TEAM_WORKER_CONTAINER` 覆盖。镜像设置 `DISABLE_AUTOUPDATER=1`，工具版本随镜像固定；同时预装 Bun（Magpie 插件运行时）、Python Playwright 与 Chromium（浏览器测试）、dsh 与 dsh-tui。
 
-项目挂载到 `/workspace`，修改直接写回宿主机；Linux 上项目需允许容器用户 UID 1000 读写。`<容器名>-home` 卷保存 Claude 登录状态、team-worker 数据库和 Magpie 配置；重启容器可保留这些文件，但不会恢复已结束的 Agent 进程或 tmux 会话。
+项目挂载到 `/workspace`，修改直接写回宿主机；Linux 上项目需允许容器用户 UID 1000 读写。`<容器名>-home` 卷保存 Claude 登录状态、原生会话历史、team-worker 数据库和 Magpie 配置。重启容器时，Leader 有准确会话标识就续接原会话，否则创建新会话；Worker 需用 `team-worker agent resume` 手动续接。tmux 会话会重新创建。
 
 ## 与 ClawTeam-Docker 的差异
 

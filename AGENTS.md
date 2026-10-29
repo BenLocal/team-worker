@@ -66,5 +66,6 @@
 
 ## 🧠 记忆索引（docs/memory/，脚本生成）
 <!-- MEMORY:START -->
-- （暂无记忆条目，排查后按 AGENTS.md《记忆记录》的约定追加）
+- [Agent 会话恢复的参考实现问题](docs/memory/agent-lifecycle.md) — 对照 ClawTeam 时需要注意的会话标识、退出清理和重启判定。
+- [看板终端显示问题](docs/memory/known-pitfalls.md) — Ghostty 终端的浏览器光标、自动高度与网格滚动的排查结论。
 <!-- MEMORY:END -->

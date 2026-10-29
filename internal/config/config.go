@@ -76,6 +76,9 @@ func AgentLogPath(dataDir, team, agent string) string {
 // AgentsDir holds TOML agent adapters that add or adjust agent CLIs.
 func AgentsDir() string { return filepath.Join(homeDir(), ".team-worker", "agents") }
 
+// StartBlockedFile optionally delays supervised children until a setup marker is removed.
+func StartBlockedFile() string { return os.Getenv("TEAM_WORKER_START_BLOCKED_FILE") }
+
 // TemplateDir holds launch templates.
 func TemplateDir() string { return filepath.Join(homeDir(), ".team-worker", "templates") }
 

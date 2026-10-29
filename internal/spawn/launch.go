@@ -1,6 +1,7 @@
 package spawn
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -18,6 +19,9 @@ import (
 )
 
 type Options struct {
+	RunID           string
+	KeepAlive       bool
+	StartupPaste    string
 	Backend         string
 	Command         []string
 	Adapter         agent.Agent
@@ -59,7 +63,7 @@ type Result struct {
 // that exits during startup is already known when its exit hook runs.
 func (r Result) FinishStartup() {
 	if r.Backend == "tmux" {
-		handleStartup(r.Target, r.adapter, r.paste, 20*time.Second)
+		handleStartup(context.Background(), r.Target, r.adapter, r.paste, 20*time.Second)
 	}
 }
 
@@ -92,6 +96,7 @@ func Build(opts Options) (Built, error) {
 	if _, err := lookPath(plan.Args[0], env.Vars["PATH"]); err != nil {
 		return Built{}, fmt.Errorf("agent command '%s' not found in PATH; check that it runs on its own first", plan.Args[0])
 	}
+	opts.StartupPaste = plan.Paste
 	return Built{opts: opts, Plan: plan, Env: env}, nil
 }
 
@@ -151,8 +156,19 @@ func wrapCommand(opts Options, args []string) string {
 	if bin == "" {
 		bin = "team-worker"
 	}
+	if opts.KeepAlive {
+		command := []string{bin, "lifecycle", "supervise", "--team", opts.Team, "--agent", opts.Agent, "--run-id", opts.RunID}
+		if opts.StartupPaste != "" {
+			command = append(command, "--paste", opts.StartupPaste)
+		}
+		command = append(append(command, "--"), args...)
+		return fmt.Sprintf("cd %s && exec %s", shellQuote(opts.Cwd), shellJoin(command))
+	}
 	hook := fmt.Sprintf("%s lifecycle on-exit --team %s --agent %s >/dev/null 2>&1",
 		shellQuote(bin), shellQuote(opts.Team), shellQuote(opts.Agent))
+	if opts.RunID != "" {
+		hook += " --run-id " + shellQuote(opts.RunID) + ` --code "$__tw_status"`
+	}
 	return fmt.Sprintf("cd %s && %s; __tw_status=$?; %s; exit $__tw_status",
 		shellQuote(opts.Cwd), shellJoin(args), hook)
 }
@@ -248,11 +264,14 @@ func (b Built) startSubprocess() (Result, error) {
 // handleStartup answers the confirmation screens agent CLIs show on first
 // start in a directory, then pastes the prompt for CLIs that need it. It
 // returns once the screen stops changing.
-func handleStartup(pane string, ad agent.Agent, paste string, timeout time.Duration) {
+func handleStartup(ctx context.Context, pane string, ad agent.Agent, paste string, timeout time.Duration) {
 	deadline := time.Now().Add(timeout)
 	var last string
 	stable := 0
 	for time.Now().Before(deadline) {
+		if ctx.Err() != nil {
+			return
+		}
 		time.Sleep(300 * time.Millisecond)
 		exists, dead, _ := tmux.PaneState(pane)
 		if !exists || dead {
@@ -286,7 +305,12 @@ func handleStartup(pane string, ad agent.Agent, paste string, timeout time.Durat
 			break
 		}
 	}
-	if paste != "" {
+	if paste != "" && ctx.Err() == nil {
 		tmux.Paste(pane, paste)
 	}
+}
+
+// WaitReady applies the adapter's startup interaction to a supervised tmux child.
+func WaitReady(ctx context.Context, pane string, adapter agent.Agent, paste string) {
+	handleStartup(ctx, pane, adapter, paste, 20*time.Second)
 }

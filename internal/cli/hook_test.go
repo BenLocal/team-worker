@@ -186,7 +186,7 @@ func TestHookSettings(t *testing.T) {
 	if !strings.Contains(stop.Command, "hook stop --team 'demo' --agent 'leader' --role leader") || stop.Timeout <= 600 {
 		t.Fatalf("stop hook: %+v", stop)
 	}
-	if settings.Hooks["SessionStart"][0].Matcher != "resume|clear|compact" || len(settings.Hooks["PostToolUse"]) != 1 {
+	if settings.Hooks["SessionStart"][0].Matcher != "startup|resume|clear|compact" || len(settings.Hooks["PostToolUse"]) != 1 {
 		t.Fatalf("settings: %+v", settings.Hooks)
 	}
 }

@@ -160,22 +160,47 @@ const (
 // Agent is a spawned agent process. Target is the tmux pane id for the tmux
 // backend; PID is the pane's shell or the subprocess.
 type Agent struct {
-	Team      string      `json:"team"`
-	Name      string      `json:"name"`
-	AgentID   string      `json:"agentId"`
-	Backend   string      `json:"backend"`
-	Target    string      `json:"target"`
-	PID       int         `json:"pid"`
-	Command   []string    `json:"command"`
-	Cwd       string      `json:"cwd"`
-	Status    AgentStatus `json:"status"`
-	StartedAt string      `json:"startedAt"`
-	ExitedAt  string      `json:"exitedAt"`
+	PreviousRunID string      `json:"previousRunId,omitempty"`
+	RunID         string      `json:"runId,omitempty"`
+	StopRequested bool        `json:"stopRequested,omitempty"`
+	ExitCode      int         `json:"exitCode,omitempty"`
+	Team          string      `json:"team"`
+	Name          string      `json:"name"`
+	AgentID       string      `json:"agentId"`
+	Backend       string      `json:"backend"`
+	Target        string      `json:"target"`
+	PID           int         `json:"pid"`
+	Command       []string    `json:"command"`
+	Cwd           string      `json:"cwd"`
+	Status        AgentStatus `json:"status"`
+	StartedAt     string      `json:"startedAt"`
+	ExitedAt      string      `json:"exitedAt"`
 	// Nudge lets the daemon type a reminder into the agent's tmux pane when
 	// messages wait while the agent sits idle at its prompt.
 	Nudge bool `json:"nudge"`
 	// Alive is filled in by the daemon from a live process probe.
 	Alive *bool `json:"alive,omitempty"`
+}
+
+// Session is the resumable CLI session, independent of its current process.
+// Environment values are deliberately excluded; callers supply them again.
+type Session struct {
+	Team               string   `json:"team"`
+	Agent              string   `json:"agent"`
+	User               string   `json:"user,omitempty"`
+	RunID              string   `json:"runId,omitempty"`
+	Client             string   `json:"client"`
+	SessionID          string   `json:"sessionId"`
+	Source             string   `json:"source,omitempty"`
+	Cwd                string   `json:"cwd"`
+	Command            []string `json:"command"`
+	Backend            string   `json:"backend"`
+	SkipPermissions    bool     `json:"skipPermissions"`
+	KeepAlive          bool     `json:"keepalive"`
+	MaxRestarts        int      `json:"maxRestarts"`
+	RestartDelayMillis int64    `json:"restartDelayMillis"`
+	EnvKeys            []string `json:"envKeys,omitempty"`
+	UpdatedAt          string   `json:"updatedAt"`
 }
 
 // AgentExit is the outcome of recording an agent's exit.

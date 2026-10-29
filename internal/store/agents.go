@@ -11,13 +11,13 @@ import (
 	"github.com/benlocal/team-worker/internal/model"
 )
 
-const agentColumns = `team, name, agent_id, backend, target, pid, command, cwd, status, started_at, exited_at, nudge`
+const agentColumns = `team, name, agent_id, backend, target, pid, command, cwd, status, started_at, exited_at, nudge, run_id, stop_requested, exit_code`
 
 func scanAgent(row scanner) (model.Agent, error) {
 	var a model.Agent
 	var command string
 	err := row.Scan(&a.Team, &a.Name, &a.AgentID, &a.Backend, &a.Target, &a.PID, &command, &a.Cwd,
-		&a.Status, &a.StartedAt, &a.ExitedAt, &a.Nudge)
+		&a.Status, &a.StartedAt, &a.ExitedAt, &a.Nudge, &a.RunID, &a.StopRequested, &a.ExitCode)
 	if err != nil {
 		return a, err
 	}
@@ -40,6 +40,7 @@ func (s *Store) RegisterAgent(ctx context.Context, a model.Agent) (model.Agent, 
 		a.Command = []string{}
 	}
 	a.Status = model.AgentRunning
+	a.ExitCode = 0
 	a.StartedAt = s.timestamp()
 	a.ExitedAt = ""
 	command, err := json.Marshal(a.Command)
@@ -50,10 +51,25 @@ func (s *Store) RegisterAgent(ctx context.Context, a model.Agent) (model.Agent, 
 		if err := requireTeam(ctx, tx, a.Team); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx,
-			`INSERT OR REPLACE INTO agents (`+agentColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		previous, err := getAgent(ctx, tx, a.Team, a.Name)
+		if err != nil && KindOf(err) != KindNotFound {
+			return err
+		}
+		if a.PreviousRunID != "" && (err != nil || previous.RunID != a.PreviousRunID || previous.StopRequested || previous.Status != model.AgentExited) {
+			return conflictf("Agent restart was cancelled or replaced")
+		}
+		if err == nil && a.RunID != "" {
+			if previous.RunID == a.RunID {
+				a.Status, a.ExitedAt, a.StopRequested, a.ExitCode = previous.Status, previous.ExitedAt, previous.StopRequested, previous.ExitCode
+				a.StartedAt = previous.StartedAt
+			} else if previous.RunID != "" && previous.Status == model.AgentRunning {
+				return conflictf("Agent already has a running instance")
+			}
+		}
+		_, err = tx.ExecContext(ctx,
+			`INSERT OR REPLACE INTO agents (`+agentColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			a.Team, a.Name, a.AgentID, a.Backend, a.Target, a.PID, string(command), a.Cwd,
-			a.Status, a.StartedAt, a.ExitedAt, a.Nudge)
+			a.Status, a.StartedAt, a.ExitedAt, a.Nudge, a.RunID, a.StopRequested, a.ExitCode)
 		return err
 	})
 	return a, err
@@ -138,6 +154,10 @@ func (s *Store) lockHolderDead(ctx context.Context, q queryer, team, name string
 // is already marked exited do nothing, so the exit hook and the daemon's
 // reaper can both report the same exit.
 func (s *Store) AgentExited(ctx context.Context, team, name string) (model.AgentExit, error) {
+	return s.AgentExitedRun(ctx, team, name, "", 0)
+}
+
+func (s *Store) AgentExitedRun(ctx context.Context, team, name, runID string, exitCode int) (model.AgentExit, error) {
 	res := model.AgentExit{Agent: name, Released: []model.Task{}}
 	err := s.write(ctx, func(tx *sql.Tx) error {
 		if err := requireTeam(ctx, tx, team); err != nil {
@@ -145,12 +165,12 @@ func (s *Store) AgentExited(ctx context.Context, team, name string) (model.Agent
 		}
 		a, err := getAgent(ctx, tx, team, name)
 		switch {
-		case err == nil && a.Status == model.AgentExited:
+		case err == nil && (a.Status == model.AgentExited || a.RunID != runID):
 			return nil
 		case err == nil:
 			if _, err := tx.ExecContext(ctx,
-				"UPDATE agents SET status = ?, exited_at = ? WHERE team = ? AND name = ?",
-				model.AgentExited, s.timestamp(), team, name); err != nil {
+				"UPDATE agents SET status = ?, exited_at = ?, exit_code = ? WHERE team = ? AND name = ?",
+				model.AgentExited, s.timestamp(), exitCode, team, name); err != nil {
 				return err
 			}
 		case KindOf(err) != KindNotFound:
