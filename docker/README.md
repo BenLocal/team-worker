@@ -87,6 +87,7 @@ team-workerd 在容器里以前台方式运行，日志写到 stderr，和其他
 | `TEAM_WORKER_MODEL` | Magpie 模型路由，优先于 `providers.yaml` 的 `claude.model` |
 | `TEAM_WORKER_LEADER_RESTART_DELAY` | Leader 退出后的重启间隔（秒），默认 10 |
 | `TEAM_WORKER_DIND` | 设为 `1` 启用 Docker in Docker（systemd 模式） |
+| `TEAM_WORKER_MASKING` | 默认在 home 卷首次启动时打开 Magpie 的 Privacy masking（发给模型供应商的密钥、密码、token 换成占位符）；之后在 Magpie 里关掉会保持关闭。设为 `0` 跳过 |
 | `TEAM_WORKER_OPENBAO`、`TEAM_WORKER_OPENBAO_AUTO_UNSEAL` | 设为 `1` 启用 OpenBao 及自动初始化、解封 |
 | `TEAM_WORKER_*_FILE` | `PROVIDERS`、`SKILLS`、`PROMPT`、`MCP`、`PLUGIN`、`OPENBAO` 配置文件的容器内路径 |
 | `MIRROR_HTTP_PROXY`、`HTTP_PROXY`、`HTTPS_PROXY`、`NO_PROXY` | 代理；`NO_PROXY` 建议包含 `localhost,127.0.0.1,::1` |

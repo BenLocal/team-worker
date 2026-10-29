@@ -79,6 +79,8 @@ done
 if [[ $ready != true ]]; then echo 'Magpie failed to start.' >&2; exit 1; fi
 team-worker-ops plugins \
     "${TEAM_WORKER_PLUGIN_FILE:-/etc/team-worker/plugin.yaml}"
+# Privacy masking is on by default; a failure is reported and retried next start.
+team-worker-ops masking || echo 'Magpie privacy masking could not be turned on; retrying on the next start.' >&2
 # Skill sources may need Git credentials that OpenBao Agent renders; with
 # automatic unsealing nothing waits on a person, so wait for those files.
 if [[ ${TEAM_WORKER_OPENBAO:-0} == 1 && ${TEAM_WORKER_OPENBAO_AUTO_UNSEAL:-0} == 1 ]]; then

@@ -22,7 +22,7 @@ func main() {
 	}
 	root.AddCommand(
 		proxyCmd(), magpieCmd(), pluginsCmd(), skillsCmd(), mcpCmd(), promptCmd(),
-		openbaoCmd(), systemdCmd(), leaderCmd(),
+		openbaoCmd(), systemdCmd(), leaderCmd(), maskingCmd(),
 	)
 	if err := root.Execute(); err != nil {
 		var exit exitError
