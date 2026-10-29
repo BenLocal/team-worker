@@ -1,0 +1,9 @@
+# Empty instructions preserve the existing Magpie configuration.
+# instructions:
+#   shared: |
+#     请使用中文汇报进度。
+#   agents: [claude]
+#   extra:
+#     claude: |
+#       完成任务后说明验证结果。
+instructions: {}

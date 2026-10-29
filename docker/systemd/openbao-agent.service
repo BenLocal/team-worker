@@ -1,0 +1,20 @@
+[Unit]
+Description=Import openbao.yaml and render secret files with OpenBao Agent
+Wants=openbao.service
+After=openbao.service
+
+[Service]
+Type=exec
+User=node
+Group=node
+EnvironmentFile=/run/team-worker/agent.env
+ExecCondition=/bin/sh -c 'test "$${TEAM_WORKER_OPENBAO:-0}" = 1'
+ExecStart=/usr/local/bin/team-worker-ops openbao /etc/team-worker/openbao.yaml
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=30
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

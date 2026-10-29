@@ -1,0 +1,15 @@
+*
+!go.mod
+!go.sum
+!cmd/
+!internal/
+!skills/team-worker/
+!docker/Dockerfile
+!docker/*.sh
+!docker/ops/
+!docker/*.js
+!docker/nginx.conf
+!docker/openbao.hcl
+!docker/magpie-config/
+!docker/systemd/
+**/*_test.go

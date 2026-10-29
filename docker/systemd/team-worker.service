@@ -1,0 +1,20 @@
+[Unit]
+Description=team-worker agents and Web services
+Wants=docker.service magpie.service
+After=docker.service magpie.service
+SuccessAction=exit
+FailureAction=exit
+
+[Service]
+Type=exec
+User=node
+Group=node
+EnvironmentFile=/run/team-worker/agent.env
+ExecStart=/usr/local/bin/team-worker-ops systemd agent
+TimeoutStopSec=30
+KillMode=mixed
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target

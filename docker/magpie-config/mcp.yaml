@@ -1,0 +1,7 @@
+# Complete server definitions; unlisted servers are preserved.
+# servers:
+#   - name: example
+#     transport: http
+#     url: https://mcp.example.com/mcp
+#     agents: [claude]
+servers: []

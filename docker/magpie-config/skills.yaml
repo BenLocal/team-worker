@@ -1,0 +1,5 @@
+# Sources are paths inside the container or repository URLs accepted by Magpie.
+# sources:
+#   - source: /workspace/aiclass-skills/skills
+#     agents: [claude]
+sources: []

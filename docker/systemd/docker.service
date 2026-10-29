@@ -1,0 +1,22 @@
+[Unit]
+Description=Docker Engine for team-worker
+After=network.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=notify
+Environment=container=docker
+EnvironmentFile=/run/team-worker/docker.env
+ExecStart=/usr/local/bin/dockerd --host=unix:///var/run/docker.sock --group=node --data-root=/var/lib/docker --pidfile=/run/team-worker-dockerd.pid
+ExecReload=/bin/kill -s HUP $MAINPID
+Restart=always
+RestartSec=3
+TimeoutStartSec=120
+TimeoutStopSec=30
+KillMode=process
+Delegate=yes
+TasksMax=infinity
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,5 @@
+# Native Magpie plugin specs: npm packages, Git sources or container paths.
+# plugins:
+#   - your-plugin@1.0.0
+#   - /workspace/my-plugin.js
+plugins: []
