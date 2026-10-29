@@ -11,13 +11,13 @@ import (
 	"github.com/benlocal/team-worker/internal/model"
 )
 
-const agentColumns = `team, name, agent_id, backend, target, pid, command, cwd, status, started_at, exited_at`
+const agentColumns = `team, name, agent_id, backend, target, pid, command, cwd, status, started_at, exited_at, nudge`
 
 func scanAgent(row scanner) (model.Agent, error) {
 	var a model.Agent
 	var command string
 	err := row.Scan(&a.Team, &a.Name, &a.AgentID, &a.Backend, &a.Target, &a.PID, &command, &a.Cwd,
-		&a.Status, &a.StartedAt, &a.ExitedAt)
+		&a.Status, &a.StartedAt, &a.ExitedAt, &a.Nudge)
 	if err != nil {
 		return a, err
 	}
@@ -51,9 +51,9 @@ func (s *Store) RegisterAgent(ctx context.Context, a model.Agent) (model.Agent, 
 			return err
 		}
 		_, err := tx.ExecContext(ctx,
-			`INSERT OR REPLACE INTO agents (`+agentColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			`INSERT OR REPLACE INTO agents (`+agentColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			a.Team, a.Name, a.AgentID, a.Backend, a.Target, a.PID, string(command), a.Cwd,
-			a.Status, a.StartedAt, a.ExitedAt)
+			a.Status, a.StartedAt, a.ExitedAt, a.Nudge)
 		return err
 	})
 	return a, err
@@ -100,6 +100,19 @@ func (s *Store) queryAgents(ctx context.Context, query string, args ...any) ([]m
 		agents = append(agents, a)
 	}
 	return agents, rows.Err()
+}
+
+// InboxStats returns how many messages wait in an agent's inbox and the id
+// of the newest one, which grows whenever a new message arrives.
+func (s *Store) InboxStats(ctx context.Context, team, agent string) (count int, newest int64, err error) {
+	inbox, err := resolveInbox(ctx, s.db, team, agent, "")
+	if err != nil {
+		return 0, 0, err
+	}
+	err = s.db.QueryRowContext(ctx,
+		"SELECT COUNT(*), COALESCE(MAX(id), 0) FROM messages WHERE team = ? AND inbox = ?", team, inbox,
+	).Scan(&count, &newest)
+	return count, newest, err
 }
 
 // lockHolderDead reports whether a task lock's holder is known to be gone:

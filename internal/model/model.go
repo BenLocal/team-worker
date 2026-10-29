@@ -171,6 +171,9 @@ type Agent struct {
 	Status    AgentStatus `json:"status"`
 	StartedAt string      `json:"startedAt"`
 	ExitedAt  string      `json:"exitedAt"`
+	// Nudge lets the daemon type a reminder into the agent's tmux pane when
+	// messages wait while the agent sits idle at its prompt.
+	Nudge bool `json:"nudge"`
 	// Alive is filled in by the daemon from a live process probe.
 	Alive *bool `json:"alive,omitempty"`
 }

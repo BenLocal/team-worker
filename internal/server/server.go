@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"sync"
@@ -17,24 +18,27 @@ import (
 // MaxWait caps how long a long-poll request may block.
 const MaxWait = 60 * time.Second
 
-// Hub wakes long-poll requests whenever the store commits a write.
+// Hub wakes long-poll requests whenever the store commits a write and
+// counts writes, so clients can ask whether anything changed since a version.
 type Hub struct {
-	mu sync.Mutex
-	ch chan struct{}
+	mu      sync.Mutex
+	ch      chan struct{}
+	version uint64
 }
 
 func NewHub() *Hub { return &Hub{ch: make(chan struct{})} }
 
-// Changed returns a channel that closes on the next write. Take it before
-// reading state so a write between the read and the wait is not missed.
-func (h *Hub) Changed() <-chan struct{} {
+// Changed returns a channel that closes on the next write, and the current
+// version. Take it before reading state so a write in between is not missed.
+func (h *Hub) Changed() (<-chan struct{}, uint64) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return h.ch
+	return h.ch, h.version
 }
 
 func (h *Hub) Notify() {
 	h.mu.Lock()
+	h.version++
 	close(h.ch)
 	h.ch = make(chan struct{})
 	h.mu.Unlock()
@@ -44,23 +48,85 @@ type Server struct {
 	store *store.Store
 	hub   *Hub
 	mux   *http.ServeMux
+	log   *slog.Logger
 }
 
-// New wires the store's change notifications into a hub and registers routes.
-func New(s *store.Store) *Server {
-	srv := &Server{store: s, hub: NewHub(), mux: http.NewServeMux()}
+// New wires the store's change notifications into a hub and registers
+// routes. A nil logger discards logs.
+func New(s *store.Store, log *slog.Logger) *Server {
+	if log == nil {
+		log = slog.New(slog.DiscardHandler)
+	}
+	srv := &Server{store: s, hub: NewHub(), mux: http.NewServeMux(), log: log}
 	s.OnChange = srv.hub.Notify
 	srv.routes()
 	return srv
 }
 
-func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.mux.ServeHTTP(w, r) }
+// SlowRequest is the duration after which a request that is not a long poll
+// is logged as slow.
+var SlowRequest = 2 * time.Second
+
+// ServeHTTP logs every request: failures and slow requests as warnings
+// (server errors as errors), the rest at debug level. Bodies are never logged.
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+	s.mux.ServeHTTP(rec, r)
+	elapsed := time.Since(start)
+	attrs := []any{"method", r.Method, "path", r.URL.Path, "status", rec.status,
+		"ms", elapsed.Milliseconds()}
+	if rec.errMsg != "" {
+		attrs = append(attrs, "error", rec.errMsg)
+	}
+	// Long polls wait on purpose; only their failures matter.
+	longPoll := r.URL.Query().Get("wait") != ""
+	switch {
+	case rec.status >= 500:
+		s.log.Error("request failed", attrs...)
+	case rec.status == http.StatusNotFound && r.Method == http.MethodGet:
+		// Existence checks, e.g. spawn looking for a running agent, are routine.
+		s.log.Debug("request", attrs...)
+	case rec.status >= 400:
+		s.log.Warn("request rejected", attrs...)
+	case !longPoll && elapsed > SlowRequest:
+		s.log.Warn("slow request", attrs...)
+	default:
+		s.log.Debug("request", attrs...)
+	}
+}
+
+// statusRecorder keeps the response status and, for errors, the message.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+	errMsg string
+}
+
+func (r *statusRecorder) WriteHeader(status int) {
+	r.status = status
+	r.ResponseWriter.WriteHeader(status)
+}
+
+func (r *statusRecorder) Write(b []byte) (int, error) {
+	if r.status >= 400 && r.errMsg == "" {
+		var e struct {
+			Error string `json:"error"`
+		}
+		if json.Unmarshal(b, &e) == nil {
+			r.errMsg = e.Error
+		}
+	}
+	return r.ResponseWriter.Write(b)
+}
 
 func (s *Server) routes() {
 	m := s.mux
 	m.HandleFunc("GET /v1/health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
+
+	m.HandleFunc("GET /v1/changes", s.changes)
 
 	m.HandleFunc("GET /v1/teams", s.listTeams)
 	m.HandleFunc("POST /v1/teams", s.createTeam)
@@ -91,6 +157,40 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /v1/teams/{team}/inboxes/{agent}/receive", s.receive)
 }
 
+// changes returns the current write version, waiting up to wait for it to
+// pass after. Hooks use it to sleep until anything in the store changes.
+func (s *Server) changes(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	after, _ := strconv.ParseUint(q.Get("after"), 10, 64)
+	var wait time.Duration
+	if v := q.Get("wait"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d < 0 {
+			writeError(w, http.StatusBadRequest, "invalid wait duration")
+			return
+		}
+		wait = min(d, MaxWait)
+	}
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	for {
+		changed, version := s.hub.Changed()
+		if version > after || wait == 0 {
+			respond(w, map[string]uint64{"version": version}, nil)
+			return
+		}
+		select {
+		case <-changed:
+		case <-timer.C:
+			respond(w, map[string]uint64{"version": version}, nil)
+			return
+		case <-r.Context().Done():
+			respond(w, nil, r.Context().Err())
+			return
+		}
+	}
+}
+
 func (s *Server) listTeams(w http.ResponseWriter, r *http.Request) {
 	teams, err := s.store.ListTeams(r.Context())
 	respond(w, teams, err)
@@ -102,6 +202,9 @@ func (s *Server) createTeam(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	team, err := s.store.CreateTeam(r.Context(), in)
+	if err == nil {
+		s.log.Info("team created", "team", team.Name, "leader", in.LeaderName)
+	}
 	respond(w, team, err)
 }
 
@@ -112,6 +215,9 @@ func (s *Server) getTeam(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) deleteTeam(w http.ResponseWriter, r *http.Request) {
 	deleted, err := s.store.DeleteTeam(r.Context(), r.PathValue("team"))
+	if deleted {
+		s.log.Info("team deleted", "team", r.PathValue("team"))
+	}
 	respond(w, map[string]bool{"deleted": deleted}, err)
 }
 
@@ -121,6 +227,9 @@ func (s *Server) addMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	member, err := s.store.AddMember(r.Context(), r.PathValue("team"), in)
+	if err == nil {
+		s.log.Info("member added", "team", r.PathValue("team"), "member", member.Name, "type", member.AgentType)
+	}
 	respond(w, member, err)
 }
 
@@ -147,6 +256,10 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	task, err := s.store.CreateTask(r.Context(), r.PathValue("team"), in)
+	if err == nil {
+		s.log.Info("task created", "team", r.PathValue("team"), "task", task.ID, "subject", task.Subject,
+			"owner", task.Owner, "status", task.Status, "blockedBy", task.BlockedBy)
+	}
 	respond(w, task, err)
 }
 
@@ -165,8 +278,43 @@ func (s *Server) updateTask(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &in) {
 		return
 	}
-	task, err := s.store.UpdateTask(r.Context(), r.PathValue("team"), r.PathValue("id"), in)
+	team, id := r.PathValue("team"), r.PathValue("id")
+	before, _ := s.store.GetTask(r.Context(), team, id)
+	task, err := s.store.UpdateTask(r.Context(), team, id, in)
+	if err == nil {
+		s.logTaskUpdate(team, before, task, in.Caller)
+	}
 	respond(w, task, err)
+}
+
+// logTaskUpdate records what an update changed: status, owner, lock or blockers.
+func (s *Server) logTaskUpdate(team string, before, after model.Task, caller string) {
+	attrs := []any{"team", team, "task", after.ID, "subject", after.Subject}
+	if caller != "" {
+		attrs = append(attrs, "by", caller)
+	}
+	changed := false
+	if before.Status != after.Status {
+		attrs = append(attrs, "status", string(before.Status)+" -> "+string(after.Status))
+		changed = true
+	}
+	if before.Owner != after.Owner {
+		attrs = append(attrs, "owner", before.Owner+" -> "+after.Owner)
+		changed = true
+	}
+	if before.LockedBy != after.LockedBy {
+		attrs = append(attrs, "lock", before.LockedBy+" -> "+after.LockedBy)
+		changed = true
+	}
+	if len(before.BlockedBy) != len(after.BlockedBy) {
+		attrs = append(attrs, "blockedBy", after.BlockedBy)
+		changed = true
+	}
+	if changed {
+		s.log.Info("task updated", attrs...)
+	} else {
+		s.log.Debug("task updated", attrs...)
+	}
 }
 
 func (s *Server) getPrompt(w http.ResponseWriter, r *http.Request) {
@@ -182,6 +330,9 @@ func (s *Server) setPrompt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	changed, err := s.store.SetTeamPrompt(r.Context(), r.PathValue("team"), in.Prompt)
+	if changed {
+		s.log.Info("team instructions updated", "team", r.PathValue("team"), "chars", len(in.Prompt))
+	}
 	respond(w, map[string]bool{"changed": changed}, err)
 }
 
@@ -230,6 +381,10 @@ func (s *Server) registerAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	in.Team = r.PathValue("team")
 	a, err := s.store.RegisterAgent(r.Context(), in)
+	if err == nil {
+		s.log.Info("agent registered", "team", a.Team, "agent", a.Name, "backend", a.Backend,
+			"target", a.Target, "pid", a.PID, "nudge", a.Nudge, "cwd", a.Cwd)
+	}
 	respond(w, a, err)
 }
 
@@ -243,6 +398,9 @@ func (s *Server) getAgent(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) agentExited(w http.ResponseWriter, r *http.Request) {
 	res, err := s.store.AgentExited(r.Context(), r.PathValue("team"), r.PathValue("name"))
+	if err == nil && res.Changed {
+		s.log.Info("agent exited", "team", r.PathValue("team"), "agent", res.Agent, "released", len(res.Released))
+	}
 	respond(w, res, err)
 }
 
@@ -252,6 +410,10 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	msg, err := s.store.Send(r.Context(), r.PathValue("team"), in)
+	if err == nil {
+		s.log.Info("message sent", "team", r.PathValue("team"), "from", msg.From, "to", msg.To,
+			"type", msg.Type, "chars", len(msg.Content))
+	}
 	respond(w, msg, err)
 }
 
@@ -261,6 +423,10 @@ func (s *Server) broadcast(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	msgs, err := s.store.Broadcast(r.Context(), r.PathValue("team"), in)
+	if err == nil {
+		s.log.Info("message broadcast", "team", r.PathValue("team"), "from", in.From, "type", in.Type,
+			"recipients", len(msgs), "chars", len(in.Content))
+	}
 	respond(w, msgs, err)
 }
 
@@ -294,7 +460,7 @@ func (s *Server) receive(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), wait)
 	defer cancel()
 	for {
-		changed := s.hub.Changed()
+		changed, _ := s.hub.Changed()
 		msgs, err := s.store.Receive(r.Context(), team, agent, user, limit)
 		if err != nil || len(msgs) > 0 || wait == 0 {
 			respond(w, msgs, err)

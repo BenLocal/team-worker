@@ -151,13 +151,18 @@ func startDaemon(ctx context.Context, c *Client, dataDir string) error {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return err
 	}
-	logFile, err := os.OpenFile(config.LogPath(dataDir), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	out, err := os.OpenFile(config.OutPath(dataDir), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return err
 	}
-	defer logFile.Close()
-	cmd := exec.Command(path, "--data-dir", dataDir)
-	cmd.Stdout, cmd.Stderr = logFile, logFile
+	defer out.Close()
+	args := []string{"--data-dir", dataDir}
+	// An explicit TEAM_WORKER_LOG_FILE wins; the daemon reads it itself.
+	if os.Getenv("TEAM_WORKER_LOG_FILE") == "" {
+		args = append(args, "--log-file", config.LogPath(dataDir))
+	}
+	cmd := exec.Command(path, args...)
+	cmd.Stdout, cmd.Stderr = out, out
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start team-workerd: %w", err)
@@ -175,7 +180,8 @@ func startDaemon(ctx context.Context, c *Client, dataDir string) error {
 		case <-time.After(50 * time.Millisecond):
 		}
 	}
-	return fmt.Errorf("team-workerd did not become ready; see %s", config.LogPath(dataDir))
+	return fmt.Errorf("team-workerd did not become ready; see %s and %s",
+		config.LogPath(dataDir), config.OutPath(dataDir))
 }
 
 func fileExists(p string) bool {
@@ -353,4 +359,17 @@ func (c *Client) AgentExited(ctx context.Context, team, name string) (model.Agen
 func IsNotFound(err error) bool {
 	var e *APIError
 	return errors.As(err, &e) && e.Status == http.StatusNotFound
+}
+
+// Changes returns the daemon's write version, waiting up to wait for it to
+// move past after. A zero wait returns the current version at once.
+func (c *Client) Changes(ctx context.Context, after uint64, wait time.Duration) (uint64, error) {
+	q := url.Values{"after": {strconv.FormatUint(after, 10)}}
+	if wait > 0 {
+		q.Set("wait", wait.String())
+	}
+	var out struct {
+		Version uint64 `json:"version"`
+	}
+	return out.Version, c.do(ctx, http.MethodGet, "/v1/changes", q, nil, &out)
 }

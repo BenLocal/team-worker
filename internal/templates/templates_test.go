@@ -11,6 +11,8 @@ const sample = `
 [template]
 name = "pair"
 description = "two agents"
+[template.env]
+SHARED = "1"
 
 [template.leader]
 name = "lead"
@@ -20,6 +22,7 @@ task = "lead {goal}"
 name = "dev"
 type = "developer"
 command = ["codex"]
+env = { ROLE = "dev" }
 task = "build {goal} for {leader_name}"
 
 [[template.tasks]]
@@ -48,6 +51,9 @@ func TestListAndLoadUserTemplates(t *testing.T) {
 	tmpl, err := Load("pair", dir)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if tmpl.Env["SHARED"] != "1" || tmpl.Agents[0].Env["ROLE"] != "dev" {
+		t.Fatalf("env: %+v %+v", tmpl.Env, tmpl.Agents[0].Env)
 	}
 	if tmpl.Command[0] != "claude" || tmpl.Backend != "tmux" || tmpl.Agents[0].Command[0] != "codex" {
 		t.Fatalf("defaults: %+v", tmpl)
