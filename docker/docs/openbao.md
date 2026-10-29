@@ -1,12 +1,12 @@
 # OpenBao 界面使用指南
 
-适用于设置了 `TEAM_WORKER_OPENBAO=1` 的 team-worker Docker 部署。下文的 `<主机>:<端口>` 指容器的发布地址，例如 `http://<主机>:28088`；界面说明基于 OpenBao 2.7.2。
+team-worker Docker 默认安装并启动 OpenBao（`TEAM_WORKER_OPENBAO=1`）；设为 `0` 可关闭启动。下文的 `<主机>:<端口>` 指容器的发布地址，例如 `http://<主机>:28088`；界面说明基于 OpenBao 2.7.2。
 
 ## 概述
 
 OpenBao 在容器内只监听 `127.0.0.1:8200`，Nginx 在发布端口上代理界面 `/ui/` 和 API `/v1/`。启动时 `openbao-agent.service` 把 `magpie-config/openbao.yaml` 中的密钥导入 KV v2 挂载 `secret`，再由 OpenBao Agent 渲染成成员使用的 0600 文件。
 
-设置了 `TEAM_WORKER_OPENBAO_AUTO_UNSEAL=1` 时，首次启动自动初始化，解封密钥和 root 令牌保存在容器 home 卷的 `/home/node/.openbao/init.json`，之后每次启动自动解封。未设置时初始化和解封需要人工完成，见 README 的“OpenBao 密钥服务”。
+默认 `TEAM_WORKER_OPENBAO_AUTO_UNSEAL=1`：首次启动自动初始化，解封密钥和 root 令牌保存在容器 home 卷的 `/home/node/.openbao/init.json`（权限 0600），之后每次启动自动解封，再导入 `openbao.yaml` 并渲染文件。设为 `0` 时初始化和解封需要人工完成，见 README 的“OpenBao 密钥服务”。
 
 ## 打开界面并登录
 

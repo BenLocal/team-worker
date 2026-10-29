@@ -93,6 +93,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # in /usr/local/bin are the fallback when nothing is mounted.
 ENV PATH="/opt/team-worker/bin:/opt/venv/bin:${PATH}" HOME=/home/node TERM=xterm-256color \
     TEAM_WORKER_DATA_DIR=/home/node/.team-worker MAGPIE_ADDR=127.0.0.1:3425 \
+    TEAM_WORKER_OPENBAO=1 TEAM_WORKER_OPENBAO_AUTO_UNSEAL=1 \
     TEAM_WORKER_PROVIDERS_FILE=/etc/team-worker/providers.yaml \
     DISABLE_AUTOUPDATER=1 MAGPIE_BUN=/usr/local/bin/bun \
     NARB_DISABLE_NATIVE_CACHE=1
