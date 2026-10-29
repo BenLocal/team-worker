@@ -131,6 +131,51 @@ func TestMagpieInstalledDshFollowsClaudeModel(t *testing.T) {
 	}
 }
 
+func TestMagpieInstalledCodexUsesItsOwnModelOrClaudes(t *testing.T) {
+	for _, tc := range []struct {
+		codex map[string]any
+		want  [][]string
+	}{
+		{nil, [][]string{{"codex", "relay/test-model"}}},
+		{map[string]any{"model": "relay/codex-model", "effort": "high"},
+			[][]string{{"codex", "relay/codex-model"}, {"codex", "effort", "high"}}},
+	} {
+		config := providersConfig()
+		if tc.codex != nil {
+			config["codex"] = tc.codex
+		}
+		_, path := setupMagpieHome(t, config)
+		log := fakeMagpie(t, false)
+		bin := filepath.Dir(log)
+		if err := os.WriteFile(filepath.Join(bin, "codex"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		env := map[string]string{"TEST_BASE": "http://gateway:8000/v1", "TEST_KEY": "secret", "TEAM_WORKER_MODEL": "relay/test-model"}
+		if _, err := configureMagpie(path, env, runMagpie); err != nil {
+			t.Fatal(err)
+		}
+		var got [][]string
+		for _, c := range magpieCalls(t, log) {
+			if c[0] == "codex" {
+				got = append(got, c)
+			}
+		}
+		if !slices.EqualFunc(got, tc.want, slices.Equal) {
+			t.Fatalf("codex config %v: codex calls = %v", tc.codex, got)
+		}
+	}
+}
+
+func TestMagpieRejectsUnknownCodexFields(t *testing.T) {
+	for _, codex := range []any{map[string]any{"model": "x", "api": "y"}, map[string]any{"effort": "max"}, "x"} {
+		config := providersConfig()
+		config["codex"] = codex
+		if _, err := validateProviders(config, map[string]string{"TEST_BASE": "http://gateway/v1", "TEST_KEY": "k"}); err == nil {
+			t.Fatalf("codex %v was accepted", codex)
+		}
+	}
+}
+
 func TestMagpieRequiredEmptyKeyWaitsAndFilledKeyResumes(t *testing.T) {
 	config := providersConfig()
 	config["providers"].([]any)[0].(map[string]any)["key_required"] = true
