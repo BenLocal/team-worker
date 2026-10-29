@@ -148,10 +148,13 @@ func TestPostToolUseHookThrottles(t *testing.T) {
 func TestSessionStartHookRestoresContext(t *testing.T) {
 	h, ctx := newHookTeam(t)
 	h.api.SetTeamPrompt(ctx, "demo", "Repo is /src/app")
+	if _, err := h.api.SetAgentPrompt(ctx, "demo", "alice", "", "Keep the security reviewer role"); err != nil {
+		t.Fatal(err)
+	}
 	h.api.CreateTask(ctx, "demo", store.CreateTaskInput{Subject: "write docs", Owner: "alice"})
 	res, _ := h.hook(`{"source":"compact"}`, "session-start", "--team", "demo", "--agent", "alice")
 	for _, want := range []string{"compact", "- Name: alice", "Repo is /src/app", "write docs",
-		"team-worker task list demo --owner alice"} {
+		"team-worker task list demo --owner alice", "Keep the security reviewer role"} {
 		if !strings.Contains(res.Specific.Context, want) {
 			t.Errorf("session-start context missing %q", want)
 		}

@@ -78,6 +78,8 @@ blocked_by = ["design"]       # 依赖的任务，填其他任务的 key
 
 所以在 `task` 里只需要写这个角色的职责、工作方法和交付物，不必重复讲 team-worker 怎么用。仓库位置、测试环境这类整个团队通用的信息，放进团队说明里，就不用在每个 Agent 的 `task` 里重复写。
 
+`launch` 将每个角色渲染后的 `task` 保存到 SQLite 的成员记录中。后续 `spawn` 不传 `--task` 会复用保存值，显式传入则覆盖，传空字符串则清空；`--dry-run` 不写入。运行中可以用 `team-worker agent prompt set <team> <agent> --file role.md` 单独修改，并通知该成员重新读取。会话恢复钩子也会恢复保存的专属提示词。修改源 TOML 文件不会更新已创建团队。
+
 ## 写好模板的几点建议
 
 - **leader 要负责收尾。** 写清楚 leader 什么时候算完成，例如：用 `team-worker task wait {team_name}` 等所有任务完成，核对 worker 交付的结果，汇总后报告给用户，最后用 `team-worker lifecycle request-shutdown` 让 worker 退出。

@@ -142,8 +142,9 @@ func (a *app) launchCmd() *cobra.Command {
 				}
 				reqs = append(reqs, spawnRequest{
 					Team: teamName, Name: ag.Name, AgentType: agentType(ag), Backend: backend, Command: command,
-					Task: templates.Render(ag.Task, goal, teamName, ag.Name, leader.Name),
-					Cwd:  cwd, EnvLayers: append(layers, flagLayers...), SkipPerms: !noSkip,
+					Task:    templates.Render(ag.Task, goal, teamName, ag.Name, leader.Name),
+					TaskSet: true,
+					Cwd:     cwd, EnvLayers: append(layers, flagLayers...), SkipPerms: !noSkip,
 				})
 			}
 			// Check every agent's command and environment before the team exists,

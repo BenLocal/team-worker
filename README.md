@@ -87,6 +87,18 @@ team-worker team prompt set my-team --file team-prompt.md   # 修改后成员会
 team-worker team prompt show my-team
 ```
 
+每个成员还可以保存自己的职责和工作要求，按团队、成员名和用户独立保存：
+
+```bash
+team-worker agent prompt set my-team alice --file reviewer.md
+team-worker agent prompt show my-team alice
+team-worker agent prompt set my-team alice ""   # 清空专属提示词
+```
+
+`set` 也接受直接传入文本或从 stdin 读取。`--user` 默认取当前用户，可指定其他用户的成员。修改后只有对应成员收到重新读取提示词的通知。团队说明和成员专属提示词都保存在 SQLite 中。每份成员专属提示词最多 65536 字节。
+
+`spawn --task "..."` 会覆盖保存的专属提示词；未传 `--task` 时复用已有内容，显式传 `--task ""` 则清空。`launch` 会保存 TOML 中每个角色经过变量替换后的 `task`。会话恢复钩子会补回专属提示词和当前任务；`--dry-run` 不修改保存值。
+
 ## 模板
 
 团队结构固定时，可以写一个 TOML 模板，用一条命令建好团队、任务依赖和所有 Agent：
@@ -175,6 +187,7 @@ team-workerd 记录这些事件：
 | `GET /v1/teams/{team}/inboxes/{agent}` | 查看收件箱但不消费 |
 | `POST /v1/teams/{team}/inboxes/{agent}/receive` | 消费消息；`wait=30s` 时长轮询，有新消息立即返回 |
 | `GET/PUT /v1/teams/{team}/prompt` | 读取 / 设置团队说明 |
+| `GET/PUT /v1/teams/{team}/members/{name}/prompt?user=...` | 读取 / 设置成员专属提示词，`user` 默认空；设置时通知对应成员 |
 | `GET /v1/teams/{team}/board` | 看板数据：成员及进程状态、任务、统计、最近消息 |
 | `GET/POST /v1/teams/{team}/agents` | 列出 Agent（含实时存活检测）/ 登记已启动的 Agent |
 | `GET /v1/teams/{team}/agents/{name}` | Agent 详情 |
@@ -193,4 +206,6 @@ curl --unix-socket ~/.team-worker/team-workerd.sock http://x/v1/teams/my-team/ta
 - 环境变量前缀从 `CLAWTEAM_` 改为 `TEAM_WORKER_`。
 - 不做 git worktree：每个 Agent 只拿到一个普通工作目录，怎么组织代码由团队自己决定。
 - 不内置模板，团队结构完全由用户的模板定义。
+- 团队说明和成员专属提示词保存在 SQLite 中，重启时复用；成员提示词支持单独修改并通知对应成员。
+- 数据库按版本自动升级，旧库升级前自动备份；备份与恢复步骤见 [数据库升级与恢复](docs/agents-dot-md/environment.md#数据库升级与恢复)。
 - 尚未实现：`profile`/`preset`、`cost`、`plan`、`join` 审批、`harness`、会话恢复（keepalive / resume）、Web 看板接管终端输入。

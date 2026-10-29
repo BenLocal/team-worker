@@ -143,6 +143,8 @@ func (s *Server) routes() {
 
 	m.HandleFunc("GET /v1/teams/{team}/prompt", s.getPrompt)
 	m.HandleFunc("PUT /v1/teams/{team}/prompt", s.setPrompt)
+	m.HandleFunc("GET /v1/teams/{team}/members/{name}/prompt", s.getAgentPrompt)
+	m.HandleFunc("PUT /v1/teams/{team}/members/{name}/prompt", s.setAgentPrompt)
 	m.HandleFunc("GET /v1/teams/{team}/board", s.board)
 
 	m.HandleFunc("GET /v1/teams/{team}/agents", s.listAgents)
@@ -513,4 +515,20 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(v)
+}
+
+func (s *Server) getAgentPrompt(w http.ResponseWriter, r *http.Request) {
+	prompt, err := s.store.AgentPrompt(r.Context(), r.PathValue("team"), r.PathValue("name"), r.URL.Query().Get("user"))
+	respond(w, map[string]string{"prompt": prompt}, err)
+}
+
+func (s *Server) setAgentPrompt(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Prompt string `json:"prompt"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	changed, err := s.store.SetAgentPrompt(r.Context(), r.PathValue("team"), r.PathValue("name"), r.URL.Query().Get("user"), in.Prompt)
+	respond(w, map[string]bool{"changed": changed}, err)
 }

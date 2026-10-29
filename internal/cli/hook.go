@@ -346,8 +346,7 @@ func (a *app) hookSessionStartCmd() *cobra.Command {
 	return cmd
 }
 
-// teamContext rebuilds an agent's first prompt with its current tasks in
-// place of the original task text.
+// teamContext restores saved instructions and the current task board.
 func (a *app) teamContext(ctx context.Context, t hookTarget, cwd string) (string, error) {
 	c := a.client()
 	team, err := c.GetTeam(ctx, t.team)
@@ -355,6 +354,10 @@ func (a *app) teamContext(ctx context.Context, t hookTarget, cwd string) (string
 		return "", err
 	}
 	prompt, err := c.TeamPrompt(ctx, t.team)
+	if err != nil {
+		return "", err
+	}
+	agentInstructions, err := c.AgentPrompt(ctx, t.team, t.agent, t.user)
 	if err != nil {
 		return "", err
 	}
@@ -379,7 +382,7 @@ func (a *app) teamContext(ctx context.Context, t hookTarget, cwd string) (string
 		taskText = label + " right now:\n" + taskLines(tasks)
 	}
 	return spawn.BuildPrompt(spawn.PromptParams{AgentName: t.agent, AgentID: id.AgentID, AgentType: agentType,
-		Team: t.team, Leader: leaderOf(team), User: t.user, Workspace: cwd, TeamPrompt: prompt, Task: taskText}), nil
+		Team: t.team, Leader: leaderOf(team), User: t.user, Workspace: cwd, TeamPrompt: prompt, Task: agentInstructions}) + "\n## Current Tasks\n\n" + taskText + "\n", nil
 }
 
 func (a *app) hookSettingsCmd() *cobra.Command {
