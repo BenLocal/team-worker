@@ -118,6 +118,8 @@ team-worker board serve -p 8080    # 浏览器打开 http://127.0.0.1:8080，点
 
 Web 看板是只读的，默认只监听 127.0.0.1。 `board serve --link NAME=URL`（可重复）在页面标题栏右侧显示到其他服务的链接，例如 `--link Docs=https://example.com`。
 
+团队标题旁的 `Team prompt` 按钮显示团队公共提示词。每个 Agent 终端卡片的 `Prompt` 按钮和侧栏成员菜单的 `Show prompt` 显示该成员的专属提示词，未启动或已退出的成员也能查看。内容从 store 按需读取，未设置时显示空状态；弹窗支持长文本滚动及 Escape 关闭。
+
 ## Agent skill
 
 [`skills/team-worker`](skills/team-worker/SKILL.md) 说明 leader 和 worker 怎样用这个 CLI 协作，以及 worker 的循环流程。安装时把整个目录复制或软链到 `~/.claude/skills/team-worker`（Claude Code）或 `~/.codex/skills/team-worker`（Codex）。
@@ -196,6 +198,13 @@ team-workerd 记录这些事件：
 ```bash
 curl --unix-socket ~/.team-worker/team-workerd.sock http://x/v1/teams/my-team/tasks
 ```
+
+Web 看板的提示词读取接口由 `board serve` 提供：
+
+| 接口 | 说明 |
+|---|---|
+| `GET /api/teams/{team}/prompt` | 查看团队公共提示词 |
+| `GET /api/teams/{team}/members/{name}/prompt?user=...` | 查看成员专属提示词，`user` 默认空 |
 
 ## 与 ClawTeam 的差异
 

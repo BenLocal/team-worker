@@ -96,6 +96,7 @@ main { height: 100vh; display: flex; flex-direction: column; min-width: 0; paddi
 .head h1 { font: italic 500 30px/1.1 var(--serif); letter-spacing: -.015em; margin: 0; overflow-wrap: anywhere; }
 .head .desc { margin: 6px 0 0; color: var(--ink-2); max-width: 72ch; }
 .head .progress-text { margin-left: auto; text-align: right; }
+.head-prompt { flex: none; margin-bottom: 4px; }
 .head .progress-text strong { font-size: 22px; font-weight: 600; letter-spacing: -.02em; color: var(--progress); }
 .views { display: inline-flex; gap: 2px; padding: 2px; border-radius: 6px; border: 1px solid var(--rule); background: var(--rail); align-self: center; }
 .views button { border: 0; background: none; border-radius: 4px; padding: 4px 14px; cursor: pointer; color: var(--muted); }
@@ -266,7 +267,7 @@ main { height: 100vh; display: flex; flex-direction: column; min-width: 0; paddi
 .name-line .pin { color: var(--progress); line-height: 0; flex: none; }
 .row-more { visibility: hidden; background: none; border: 0; border-radius: 4px; color: var(--muted); cursor: pointer; padding: 6px 4px; line-height: 0; }
 .team-row .row-more { margin-top: 6px; }
-.team-row:hover .row-more, .person-row:hover .row-more, .row-more:focus-visible, .row-more[aria-expanded="true"] { visibility: visible; }
+.team-row:hover .row-more, .person-row:hover .row-more, .row-more:focus-visible, .row-more[aria-expanded="true"], .row-more.prompt-origin { visibility: visible; }
 .row-more:hover { color: var(--ink); background: rgb(22 28 36 / .9); }
 .person-row { display: grid; grid-template-columns: minmax(0, 1fr) 24px; align-items: center; }
 .person .when { font-size: 11px; color: var(--muted); }
@@ -284,3 +285,25 @@ main { height: 100vh; display: flex; flex-direction: column; min-width: 0; paddi
 .rail-menu button { text-align: left; background: none; border: 0; border-radius: 4px; padding: 6px 10px; cursor: pointer; white-space: pre; }
 .rail-menu button:hover, .rail-menu button:focus-visible { background: var(--panel); outline: none; }
 body.rail-collapsed #rail-tools { display: none; }
+
+/* ---- stored prompt viewer (native <dialog>) ---- */
+.prompt-dialog { width: min(760px, calc(100vw - 32px)); max-width: 100%; max-height: calc(100vh - 32px); padding: 0;
+  border: 1px solid var(--rule); border-radius: 8px; background: var(--card); color: var(--ink);
+  box-shadow: 0 24px 64px rgb(0 0 0 / .55); }
+.prompt-dialog::backdrop { background: rgb(3 5 8 / .7); }
+.prompt-card { display: flex; flex-direction: column; max-height: calc(100vh - 34px); }
+.prompt-head { display: flex; align-items: flex-start; gap: 16px; padding: 14px 18px 12px;
+  border-bottom: 1px solid var(--rule); flex: none; }
+.prompt-head > div { flex: 1; min-width: 0; }
+.prompt-head h2 { margin: 0; font: italic 500 20px/1.2 var(--serif); letter-spacing: -.01em; overflow-wrap: anywhere; }
+.prompt-context { margin: 3px 0 0; font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
+.prompt-close { flex: none; }
+.prompt-body { margin: 0; padding: 16px 18px 20px; min-height: 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere;
+  font: 12.5px/1.6 var(--mono); color: var(--ink-2); }
+.prompt-body:focus-visible { outline-offset: -2px; }
+.prompt-body.loading, .prompt-body.empty { color: var(--muted); font-style: italic; }
+.prompt-body.error { color: var(--blocked); font-style: normal; }
+@media (max-width: 760px) {
+  .prompt-dialog { width: calc(100vw - 16px); }
+  .prompt-body { padding: 12px 14px 16px; }
+}

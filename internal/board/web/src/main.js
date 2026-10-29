@@ -2,6 +2,7 @@ import "@fontsource-variable/jetbrains-mono";
 import "@fontsource-variable/fraunces/opsz-italic.css";
 import "./style.css";
 import { AgentTerminal, selectCard } from "./terminals.js";
+import { openMemberPrompt, openTeamPrompt } from "./prompt-dialog.js";
 
 const $ = (id) => document.getElementById(id);
 const SVG = "http://www.w3.org/2000/svg";
@@ -257,11 +258,17 @@ function memberRows(t, b) {
         m.inboxCount ? el("span", { class: "unread", title: `${m.inboxCount} unread messages` }, String(m.inboxCount))
           : el("span", { class: "when", title: at ? "Last message " + new Date(at).toLocaleString() : "" }, ago(at))),
       el("button", { type: "button", class: "row-more menu-trigger", "aria-label": `${m.name} actions`, "aria-haspopup": "menu",
-        onclick: (e) => openMenu(e.currentTarget, "m:" + t.name + "/" + m.name, [
-          ["Show terminal", () => showTerminal(t.name, m.name)],
-          ["Copy name", () => copyText(m.name)],
-          ["Copy agent ID", () => copyText(m.agentId)],
-        ]) }, icon(ICONS.more)));
+        onclick: (e) => {
+          // The menu is removed before its action runs, so keep the trigger
+          // button to restore focus to after the prompt dialog closes.
+          const trigger = e.currentTarget;
+          openMenu(trigger, "m:" + t.name + "/" + m.name, [
+            ["Show terminal", () => showTerminal(t.name, m.name)],
+            ["Show prompt", () => openMemberPrompt(t.name, m.name, m.user, trigger)],
+            ["Copy name", () => copyText(m.name)],
+            ["Copy agent ID", () => copyText(m.agentId)],
+          ]);
+        } }, icon(ICONS.more)));
   });
   const rest = members.length - limit;
   if (rest > 0) {
@@ -396,10 +403,11 @@ function renderLinks() {
 
 /* ---------------- header + tasks ---------------- */
 function renderHead(board) {
-  const s = board.taskSummary;
   if (!changed("head", board.team)) return;
   $("head").replaceChildren(
-    el("div", {}, el("h1", {}, board.team.name), board.team.description ? el("p", { class: "desc" }, board.team.description) : null));
+    el("div", {}, el("h1", {}, board.team.name), board.team.description ? el("p", { class: "desc" }, board.team.description) : null),
+    el("button", { type: "button", class: "quiet-btn head-prompt", title: "Show the team's shared instructions",
+      onclick: (e) => openTeamPrompt(board.team.name, e.currentTarget) }, "Team prompt"));
 }
 function renderStats(board) {
   const s = board.taskSummary;

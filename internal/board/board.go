@@ -61,6 +61,16 @@ func newHandler(c *client.Client, resolve resolver) http.Handler {
 		b, err := c.Board(r.Context(), r.PathValue("team"), 500)
 		reply(w, b, err)
 	})
+	// Prompts are read only when a viewer asks for one; the board snapshot
+	// deliberately leaves them out so polling stays small.
+	mux.HandleFunc("GET /api/teams/{team}/prompt", func(w http.ResponseWriter, r *http.Request) {
+		prompt, err := c.TeamPrompt(r.Context(), r.PathValue("team"))
+		reply(w, map[string]string{"prompt": prompt}, err)
+	})
+	mux.HandleFunc("GET /api/teams/{team}/members/{name}/prompt", func(w http.ResponseWriter, r *http.Request) {
+		prompt, err := c.AgentPrompt(r.Context(), r.PathValue("team"), r.PathValue("name"), r.URL.Query().Get("user"))
+		reply(w, map[string]string{"prompt": prompt}, err)
+	})
 	mux.HandleFunc("GET /api/teams/{team}/agents/{name}/screen", func(w http.ResponseWriter, r *http.Request) {
 		a, err := c.GetAgent(r.Context(), r.PathValue("team"), r.PathValue("name"))
 		if err != nil {
