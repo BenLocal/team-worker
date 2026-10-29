@@ -34,6 +34,7 @@ const (
 	ticketTTL       = 30 * time.Second
 	pingInterval    = 20 * time.Second
 	idleTimeout     = 60 * time.Second
+	sizeInterval    = time.Second
 	tmuxTimeout     = 3 * time.Second
 )
 
@@ -402,6 +403,29 @@ type clientMessage struct {
 	Data string `json:"data"`
 }
 
+// sizeMessage tells the page the agent window's size. With no other client
+// the window follows the viewer, but a larger client attached to the agent
+// (tmux attach from a terminal) sets the size while ignore-size viewers do
+// not, and a card sized to itself would then show only part of the window.
+// The page fits its terminal to this size instead.
+type sizeMessage struct {
+	Type string `json:"type"`
+	Cols int    `json:"cols"`
+	Rows int    `json:"rows"`
+}
+
+// windowSize reads the size of the window that holds the agent's pane.
+func windowSize(ctx context.Context, p pane) (cols, rows int, err error) {
+	out, err := tmuxRun(ctx, "display-message", "-p", "-t", p.id, "#{window_width} #{window_height}")
+	if err != nil {
+		return 0, 0, err
+	}
+	if _, err := fmt.Sscanf(out, "%d %d", &cols, &rows); err != nil {
+		return 0, 0, err
+	}
+	return cols, rows, nil
+}
+
 type historyMessage struct {
 	Type      string `json:"type"`
 	Text      string `json:"text,omitempty"`
@@ -494,6 +518,26 @@ func relay(ctx context.Context, conn *websocket.Conn, v *viewer, p pane, control
 				if time.Since(time.Unix(0, lastRead.Load())) > idleTimeout {
 					return errors.New("terminal client went away")
 				}
+			}
+		}
+	})
+	run(func() error {
+		ticker := time.NewTicker(sizeInterval)
+		defer ticker.Stop()
+		var last sizeMessage
+		for {
+			// A missing pane is reported by the PTY ending, not here.
+			if cols, rows, err := windowSize(ctx, p); err == nil && (cols != last.Cols || rows != last.Rows) {
+				last = sizeMessage{Type: "size", Cols: cols, Rows: rows}
+				raw, _ := json.Marshal(last)
+				if err := conn.Write(ctx, websocket.MessageText, raw); err != nil {
+					return err
+				}
+			}
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-ticker.C:
 			}
 		}
 	})

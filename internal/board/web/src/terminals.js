@@ -195,11 +195,53 @@ export class AgentTerminal {
   fit() {
     if (!this.terminal || !this.host.clientWidth) return;
     if (this.historyTerminal) { this.historyFit.fit(); return; }
+    if (this.paneSize) { this.layout(); return; }
     this.fitAddon.fit();
     const cols = Math.max(20, Math.min(400, this.terminal.cols));
     const rows = Math.max(5, Math.min(150, this.terminal.rows));
     if (cols !== this.terminal.cols || rows !== this.terminal.rows) this.terminal.resize(cols, rows);
     this.send({ type: "resize", cols, rows });
+  }
+
+  // setPaneSize adopts the agent window's size, so the whole window shows
+  // even when a larger tmux client attached elsewhere decides that size.
+  setPaneSize(cols, rows) {
+    this.paneSize = { cols, rows };
+    if (this.terminal.cols !== cols || this.terminal.rows !== rows) this.terminal.resize(cols, rows);
+    // Keep the viewer's client the window's size so tmux draws all of it.
+    this.send({ type: "resize", cols: Math.max(20, Math.min(400, cols)), rows: Math.max(5, Math.min(150, rows)) });
+    this.layout();
+  }
+
+  // layout picks the largest font that fits the window's columns into the
+  // card, and lets the card grow to the window's rows; full screen fits both.
+  layout() {
+    const canvas = this.liveHost?.querySelector("canvas");
+    if (!canvas || !this.paneSize || this.historyTerminal) return;
+    const full = document.fullscreenElement === this.element;
+    // A window too wide to read in the card at 9px takes the whole grid row;
+    // it returns to one column once the window fits again.
+    const readable = this.paneSize.cols * 0.6 * 9;
+    const wide = this.element.classList.contains("wide");
+    if (!full && !wide && this.host.clientWidth - 16 < readable) {
+      this.narrowWidth = this.host.clientWidth;
+      this.element.classList.add("wide");
+    } else if (wide && this.narrowWidth && this.narrowWidth - 16 >= readable) {
+      this.element.classList.remove("wide");
+    }
+    const width = this.host.clientWidth - 16;
+    const height = full ? this.host.clientHeight - 12 : Infinity;
+    let size = Math.max(7, Math.min(full ? 20 : 14, Math.floor(width / (this.paneSize.cols * 0.6))));
+    for (;;) {
+      if (this.terminal.options.fontSize !== size) this.terminal.options.fontSize = size;
+      if ((canvas.offsetWidth <= width && canvas.offsetHeight <= height) || size <= 7) break;
+      size--;
+    }
+    // ghostty redraws the canvas for a new font on the next frame, so size the
+    // card again once the canvas has its final height.
+    const grow = () => { this.host.style.height = full ? "" : canvas.offsetHeight + 12 + "px"; };
+    grow();
+    requestAnimationFrame(() => requestAnimationFrame(grow));
   }
 
   send(message) {
@@ -279,6 +321,9 @@ export class AgentTerminal {
 
   async connect(control) {
     this.disconnect();
+    this.paneSize = null;
+    this.host.style.height = "";
+    this.element.classList.remove("wide");
     if (this.disposed || !this.state.live) return;
     const generation = this.generation;
     this.error.textContent = "";
@@ -321,6 +366,7 @@ export class AgentTerminal {
         if (typeof event.data === "string") {
           const message = JSON.parse(event.data);
           if (message.type === "history") this.showHistory(message);
+          else if (message.type === "size") this.setPaneSize(message.cols, message.rows);
         } else this.terminal.write(new Uint8Array(event.data));
       };
       socket.onclose = () => {
