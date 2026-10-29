@@ -15,8 +15,9 @@ const (
 
 // File is the optional ~/.team-worker/config.json.
 type File struct {
-	DataDir string `json:"data_dir"`
-	User    string `json:"user"`
+	DataDir   string `json:"data_dir"`
+	User      string `json:"user"`
+	ServerURL string `json:"server_url,omitempty"`
 }
 
 func homeDir() string {
@@ -36,6 +37,18 @@ func Load() File {
 	}
 	return f
 }
+
+// ServerURL selects remote HTTP mode when set; otherwise the client uses its socket.
+func ServerURL() string {
+	if value, set := os.LookupEnv("TEAM_WORKER_SERVER_URL"); set {
+		return value
+	}
+	return Load().ServerURL
+}
+
+func APIKey() string { return os.Getenv("TEAM_WORKER_API_KEY") }
+
+func HTTPAddr() string { return os.Getenv("TEAM_WORKER_HTTP_ADDR") }
 
 // DataDir returns TEAM_WORKER_DATA_DIR, then config data_dir, then ~/.team-worker.
 func DataDir() string {

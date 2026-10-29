@@ -82,12 +82,20 @@ TEAM_WORKER_WEB_BIND=0.0.0.0 TEAM_WORKER_WEB_PORT=18080 \
 
 team-workerd 在容器里以前台方式运行，日志写到 stderr，和其他服务的输出一起用 `docker logs <容器名>` 查看。想单独保存到 home 卷，在 env-file 里设置 `TEAM_WORKER_LOG_FILE=/home/node/.team-worker/team-workerd.log`（按大小轮转）。级别和格式用 `TEAM_WORKER_LOG_LEVEL`、`TEAM_WORKER_LOG_FORMAT` 设置，例如排查问题时设 `TEAM_WORKER_LOG_LEVEL=debug`，接入日志系统时设 `TEAM_WORKER_LOG_FORMAT=json`。记录的内容见仓库根目录 README 的"日志"一节。
 
+## 远程 CLI API
+
+设置 `TEAM_WORKER_API_KEY` 后，容器内 daemon 默认在 `127.0.0.1:8082` 开启 HTTP API，由 Nginx 转发到现有 Web 端口的 `/team-worker-api/`。客户端使用 `TEAM_WORKER_SERVER_URL=http://127.0.0.1:18080/team-worker-api`（端口按实际部署修改），并设置相同的 `TEAM_WORKER_API_KEY`。未配置 Key 时不开启 HTTP API；本地 socket 仍免 Key。
+
+Key 可通过 `TEAM_WORKER_ENV_FILE` 提供，文件放在仓库外并设为 `600`。修改后需重建容器。使用内置 Nginx 路由时保持 daemon 的监听地址为 `127.0.0.1:8082`。
+
 ## 容器环境变量
 
 | 变量 | 用途 |
 | --- | --- |
 | `LLM_API_BASE` | 默认 `providers.yaml` 的 OpenAI 兼容网关地址 |
 | `TEAM_WORKER_TEAM_NAME` | 容器团队名，默认 `team-worker-docker` |
+| `TEAM_WORKER_API_KEY` | 远程 CLI API 的 Key；设置后默认启用容器内 HTTP 监听 |
+| `TEAM_WORKER_HTTP_ADDR` | HTTP 监听地址；内置 Nginx 路由使用 `127.0.0.1:8082` |
 | `TEAM_WORKER_MODEL` | Magpie 模型路由，优先于 `providers.yaml` 的 `claude.model` |
 | `TEAM_WORKER_LEADER_RESTART_DELAY` | Leader 续接的初始等待秒数，默认 10，最大 60 |
 | `TEAM_WORKER_LEADER_MAX_RESTARTS` | Leader 连续快速退出后的最大续接次数，默认 3 |

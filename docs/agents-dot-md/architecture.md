@@ -8,7 +8,7 @@
 
 ```
 team-worker (CLI, cobra)
-  internal/cli ──> internal/client ──HTTP/JSON over Unix socket──> team-workerd
+  internal/cli ──> internal/client ──HTTP/JSON over Unix socket 或 HTTP──> team-workerd
                         │ 连不上时 startDaemon 后台拉起                │
                                                                      internal/server (net/http mux + Hub)
                                                                        └──> internal/store ──> SQLite (WAL, 单连接)
@@ -19,7 +19,7 @@ team-worker board serve ──> internal/board (只读 Web 看板，经 client �
 ```
 
 - 部署形态：单机两进程，外加按需启动的 agent 进程（tmux 窗口或后台子进程）。`cmd/team-workerd` 是常驻服务，`cmd/team-worker` 是 CLI，二进制放在同一目录或都在 `PATH`。
-- 进程边界：只有 `team-workerd` 打开数据库；CLI 一律经 socket 调 API，不直接读写 SQLite。同一数据目录靠 `team-workerd.lock`（flock）保证只有一个服务。
+- 进程边界：只有 `team-workerd` 打开数据库；CLI 经 socket 或带 API Key 的 HTTP 调 API，不直接读写 SQLite。同一数据目录靠 `team-workerd.lock`（flock）保证只有一个服务。
 
 ## 二、模块与依赖方向
 
@@ -29,7 +29,7 @@ team-worker board serve ──> internal/board (只读 Web 看板，经 client �
 | `internal/config` | 数据目录、socket 路径、`TEAM_WORKER_*` 环境变量与身份 | 标准库 | 其他 internal 包 |
 | `internal/store` | 全部状态与业务规则（依赖解锁、任务锁、收件箱消费），事务内完成 | `model` | `server`、`client`、`cli` |
 | `internal/server` | 把 store 暴露成 JSON API，长轮询，服务生命周期 | `store`、`model`、`config` | `client`、`cli` |
-| `internal/client` | socket 上的 HTTP 客户端，自动拉起服务 | `model`、`config`、`store`（仅复用 `*Input` / `TaskFilter` 类型） | `server`、`cli` |
+| `internal/client` | socket / 远程 HTTP 客户端；仅 socket 模式自动拉起服务 | `model`、`config`、`store`（仅复用 `*Input` / `TaskFilter` 类型） | `server`、`cli` |
 | `internal/tmux` | 封装 tmux 命令：建窗口、发按键、粘贴、截屏 | 标准库 | 其他 internal 包 |
 | `internal/proc` | 探测与停止 agent 进程（tmux / subprocess 两种后端） | `model`、`tmux` | `store`、`server` |
 | `internal/spawn` | 准备环境、按 CLI 适配器启动 agent，处理启动界面与 prompt 粘贴 | `tmux` | `store`、`server`、`client` |
@@ -49,7 +49,7 @@ team-worker board serve ──> internal/board (只读 Web 看板，经 client �
 | `store` 小写辅助函数 | 接收 `queryer`（`*sql.DB` 或 `*sql.Tx`），供事务内复用 | 自己开事务 |
 | `cli` 命令 | 读 flag 与身份，调 client，`a.emit` 输出 | 绕过 client 直连数据库 |
 
-错误码映射在 `server.respond`：Invalid→400、NotFound→404、Conflict→409、`context.Canceled`→503（客户端据此重试）。
+错误码映射在 `server.respond`：Invalid→400、NotFound→404、Conflict→409、`context.Canceled`→503（客户端据此重试）。可选 TCP 监听在路由外校验 Bearer API Key，失败返回 JSON 401；socket 监听不经过鉴权，两者共用一个 Server、Hub 和 Store。
 
 ## 四、关键链路（端到端走一遍）
 
@@ -83,14 +83,14 @@ team-worker board serve ──> internal/board (只读 Web 看板，经 client �
 
 ## 六、外部依赖与集成
 
-无网络依赖（`board serve` 除外，它在本机起一个 HTTP 看板）。外部进程关系有两类：
+默认通过本机 socket 访问；可选 HTTP 监听支持远程 API 调用，Key 通过环境变量提供。远程客户端不自动拉起 daemon，也不回退到本地 socket。spawn / proc / tmux 仍由运行 CLI 的机器执行。外部进程关系有两类：
 
 - agent 进程：依赖 `tmux` 或直接起子进程，见上文 spawn 链路；`proc` 负责探测存活与停止。
 - 服务进程：CLI 拉起 `team-workerd`，先找 CLI 同目录下的二进制，再查 `PATH`，`Setsid` 脱离终端，日志写 `team-workerd.log`，5 秒内健康检查不通则报错。
 
 ## 七、关键设计决策与取舍
 
-- **单服务独占 SQLite，CLI 走 Unix socket**
+- **单服务独占 SQLite，CLI 默认走 Unix socket**
   - 背景：ClawTeam 用一堆 JSON 文件，多进程并发写有竞态，消息可能重复投递。
   - 取舍：换来事务一致性和长轮询；代价是多一个常驻进程（用自动拉起缓解）。
   - 重新评估的信号：需要跨机器协作时。

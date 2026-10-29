@@ -1,4 +1,4 @@
-// Package client talks to team-workerd over its Unix socket.
+// Package client talks to team-workerd over a Unix socket or authenticated HTTP.
 package client
 
 import (
@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -48,8 +49,10 @@ func IsUnavailable(err error) bool {
 }
 
 type Client struct {
-	base string
-	http *http.Client
+	base    string
+	http    *http.Client
+	apiKey  string
+	initErr error
 	// start launches the daemon when the socket is not answering; nil disables it.
 	start func(context.Context) error
 }
@@ -57,6 +60,13 @@ type Client struct {
 // New returns a client for the daemon serving dataDir. Unless
 // TEAM_WORKER_NO_AUTOSTART is set, it starts team-workerd on first use.
 func New(dataDir string) *Client {
+	if address := config.ServerURL(); address != "" {
+		c, err := NewRemote(address, config.APIKey())
+		if err != nil {
+			return &Client{initErr: err}
+		}
+		return c
+	}
 	socket := config.SocketPath(dataDir)
 	c := &Client{
 		base: "http://team-workerd",
@@ -76,6 +86,20 @@ func New(dataDir string) *Client {
 // NewHTTP returns a client for an arbitrary base URL; tests use it with httptest.
 func NewHTTP(base string, hc *http.Client) *Client { return &Client{base: base, http: hc} }
 
+// NewRemote uses a fixed remote endpoint and never starts a local daemon.
+func NewRemote(base, apiKey string) (*Client, error) {
+	u, err := url.Parse(base)
+	if err != nil || u == nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return nil, fmt.Errorf("remote server URL must be an http(s) URL without credentials, query or fragment")
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.ResponseHeaderTimeout = 70 * time.Second
+	return &Client{base: strings.TrimRight(base, "/"), apiKey: apiKey, http: &http.Client{
+		Transport: transport, Timeout: 70 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}}, nil
+}
+
 func (c *Client) do(ctx context.Context, method, path string, query url.Values, body, out any) error {
 	err := c.doOnce(ctx, method, path, query, body, out)
 	if err != nil && c.start != nil && isUnreachable(err) {
@@ -88,6 +112,9 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 }
 
 func (c *Client) doOnce(ctx context.Context, method, path string, query url.Values, body, out any) error {
+	if c.initErr != nil {
+		return c.initErr
+	}
 	u := c.base + path
 	if len(query) > 0 {
 		u += "?" + query.Encode()
@@ -107,6 +134,9 @@ func (c *Client) doOnce(ctx context.Context, method, path string, query url.Valu
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return err
@@ -116,7 +146,7 @@ func (c *Client) doOnce(ctx context.Context, method, path string, query url.Valu
 	if err != nil {
 		return err
 	}
-	if resp.StatusCode >= 400 {
+	if resp.StatusCode >= 300 {
 		var e struct {
 			Error string `json:"error"`
 		}

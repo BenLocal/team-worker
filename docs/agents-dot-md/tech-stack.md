@@ -41,7 +41,7 @@
 
 ## 四、配置管理
 
-- 只有环境变量 `TEAM_WORKER_*`（见 README《配置》）和可选的 `~/.team-worker/config.json`（`data_dir`、`user`），读取逻辑集中在 `internal/config`。
+- 只有环境变量 `TEAM_WORKER_*`（见 README《配置》）和可选的 `~/.team-worker/config.json`（`data_dir`、`user`、`server_url`），读取逻辑集中在 `internal/config`。HTTP API Key 只从环境变量读取。
 - 新配置项加到 `internal/config`，并同步 README 的配置表。
 
 ## 五、构建与验证命令

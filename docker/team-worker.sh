@@ -127,6 +127,7 @@ case "$action" in
                 --mount "type=volume,source=${NAME}-docker,target=/var/lib/docker")
         fi
         for var in ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL TEAM_WORKER_MODEL TEAM_WORKER_WEB_URL \
+            TEAM_WORKER_API_KEY TEAM_WORKER_HTTP_ADDR \
             TEAM_WORKER_OPENBAO TEAM_WORKER_OPENBAO_AUTO_UNSEAL TEAM_WORKER_TEAM_NAME \
             MIRROR_HTTP_PROXY HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy ALL_PROXY all_proxy; do
             if [[ -n ${!var:-} ]]; then options+=(-e "$var"); fi

@@ -162,6 +162,9 @@ Web 看板是只读的，默认只监听 127.0.0.1。 `board serve --link NAME=U
 |---|---|---|
 | `TEAM_WORKER_DATA_DIR` | 数据目录 | 配置文件中的 `data_dir`，否则为 `~/.team-worker` |
 | `TEAM_WORKER_SOCKET` | Unix socket 路径 | `<数据目录>/team-workerd.sock` |
+| `TEAM_WORKER_SERVER_URL` | CLI 远程 HTTP(S) 服务地址；显式设为空字符串则使用本地 socket | 配置文件中的 `server_url`，否则未设置 |
+| `TEAM_WORKER_API_KEY` | HTTP 服务端和远程 CLI 使用的 API Key；socket 不需要 | 未设置 |
+| `TEAM_WORKER_HTTP_ADDR` | daemon 的可选 HTTP 监听地址，可由 `--listen` 覆盖；启用时必须配置 Key | 未设置，不监听 TCP |
 | `TEAM_WORKER_AGENT_NAME` | 当前 Agent 名称，作为发件人、锁持有者和默认收件箱 | `agent` |
 | `TEAM_WORKER_AGENT_ID` | 当前 Agent ID | 随机生成 |
 | `TEAM_WORKER_USER` | 多用户场景下的用户名，收件箱按 `<user>_<name>` 区分 | 配置文件中的 `user` |
@@ -169,7 +172,40 @@ Web 看板是只读的，默认只监听 127.0.0.1。 `board serve --link NAME=U
 | `TEAM_WORKER_NO_AUTOSTART` | 设为任意值时不自动拉起服务 | 未设置 |
 | `TEAM_WORKER_START_BLOCKED_FILE` | keepalive 在该文件移除后才启动子进程；Docker 用于等待 provider Key 配置 | 未设置 |
 
-配置文件固定为 `~/.team-worker/config.json`，可设置 `data_dir` 和 `user`。Unix socket 路径不能超过约 100 个字符；数据目录路径较长时，用 `TEAM_WORKER_SOCKET` 把 socket 放到短路径下。
+配置文件固定为 `~/.team-worker/config.json`，可设置 `data_dir`、`user` 和 `server_url`。API Key 通过环境变量提供。Unix socket 路径不能超过约 100 个字符；数据目录路径较长时，用 `TEAM_WORKER_SOCKET` 把 socket 放到短路径下。
+
+### HTTP 远程调用
+
+服务端先设置 `TEAM_WORKER_API_KEY`，再启用 HTTP 监听；原有 socket 同时保留：
+
+```bash
+team-workerd --listen 0.0.0.0:8082
+```
+
+客户端设置同一个 `TEAM_WORKER_API_KEY`，指定服务地址后直接使用现有命令：
+
+```bash
+export TEAM_WORKER_SERVER_URL=http://server-host:8082
+team-worker team discover
+team-worker task list my-team
+team-worker inbox send my-team leader "远程调用测试"
+
+# 临时切回本地 socket，无需提供 Key：
+TEAM_WORKER_SERVER_URL='' TEAM_WORKER_API_KEY='' team-worker team discover
+```
+
+HTTP 请求使用 `Authorization: Bearer <API Key>`，包括健康检查在内的所有 API 均校验 Key；缺失或错误时返回 `401 {"error":"Unauthorized"}`。服务端未设置 Key 时拒绝启动 HTTP 监听。socket 请求按文件权限控制，不校验 Key。
+
+远程模式不自动拉起本地 daemon，也不在连接失败后退回 socket。客户端拒绝携带凭据、query 或 fragment 的服务地址，并拒绝自动跟随重定向。HTTPS 可通过反向代理提供。
+
+该配置切换 daemon API 的访问方式。`spawn`、`launch`、进程停止与终端操作仍在运行 CLI 的机器执行，本功能不提供远程进程执行器。
+
+可重复验收（使用隔离数据目录、临时 Key 与本地随机端口）：
+
+```bash
+make build
+python3 scripts/verify-http.py --bin-dir bin
+```
 
 数据目录内容：
 
@@ -204,7 +240,7 @@ team-workerd 记录这些事件：
 
 ## API
 
-服务只监听 Unix socket，请求和响应都是 JSON，出错时返回 `{"error": "..."}`。
+服务默认监听 Unix socket，也可用 `--listen` 增加需要 API Key 的 HTTP 监听。请求和响应都是 JSON，出错时返回 `{"error": "..."}`。
 
 | 方法和路径 | 说明 |
 |---|---|

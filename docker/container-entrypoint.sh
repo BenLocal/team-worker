@@ -95,6 +95,9 @@ team-worker-ops prompt \
     "${TEAM_WORKER_PROMPT_FILE:-/etc/team-worker/prompt.yaml}"
 # The daemon runs in the foreground here so a crash stops the container;
 # CLI autostart stays as a fallback for docker exec sessions.
+if [[ -n ${TEAM_WORKER_API_KEY:-} ]]; then
+    export TEAM_WORKER_HTTP_ADDR="${TEAM_WORKER_HTTP_ADDR:-127.0.0.1:8082}"
+fi
 team-workerd --data-dir "$TEAM_WORKER_DATA_DIR" &
 pids+=($!)
 ready=false
