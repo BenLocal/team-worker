@@ -6,10 +6,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
 
+	"github.com/benlocal/team-worker/internal/agent"
 	"github.com/benlocal/team-worker/internal/client"
 	"github.com/benlocal/team-worker/internal/config"
 	"github.com/benlocal/team-worker/internal/model"
@@ -27,9 +29,11 @@ type spawnRequest struct {
 	Backend   string
 	Command   []string
 	Cwd       string
-	Env       map[string]string
+	// EnvLayers come from the template, the template agent and --env, in that order.
+	EnvLayers []spawn.EnvLayer
 	SkipPerms bool
 	Replace   bool
+	DryRun    bool
 }
 
 type spawnResult struct {
@@ -41,46 +45,118 @@ type spawnResult struct {
 	PID       int      `json:"pid"`
 	Workspace string   `json:"workspace"`
 	Command   []string `json:"command"`
+	Adapter   string   `json:"adapter"`
+	// Dry runs also report the full start: final arguments, prompt and
+	// where each environment variable comes from (never its value).
+	Args   []string    `json:"args,omitempty"`
+	Prompt string      `json:"prompt,omitempty"`
+	Env    []envOrigin `json:"env,omitempty"`
+}
+
+type envOrigin struct {
+	Name   string `json:"name"`
+	Origin string `json:"origin"`
 }
 
 // spawnAgent registers the agent in its team (creating the team with the
 // agent as leader when needed), prepares its workspace and prompt, starts
-// it and records the process with the daemon.
+// it and records the process with the daemon. Everything that can fail is
+// checked before the team is changed, and a dry run stops there.
 func (a *app) spawnAgent(ctx context.Context, req spawnRequest) (spawnResult, error) {
 	c := a.client()
 	id := config.IdentityFromEnv()
 	if req.AgentType == "" {
 		req.AgentType = "general-purpose"
 	}
-	if req.AgentID == "" {
-		req.AgentID = store.NewAgentID()
-	}
-
-	team, err := c.GetTeam(ctx, req.Team)
-	if client.IsNotFound(err) {
-		team, err = c.CreateTeam(ctx, store.CreateTeamInput{
-			Name: req.Team, Description: "Created by team-worker spawn", LeaderName: req.Name,
-			LeaderID: req.AgentID, User: id.User, LeaderAgentType: req.AgentType,
-		})
-	}
+	registry, err := agent.Load(config.AgentsDir())
 	if err != nil {
 		return spawnResult{}, err
 	}
-	member := findMember(team, req.Name, id.User)
-	if member == nil {
-		m, err := c.AddMember(ctx, req.Team, store.AddMemberInput{
-			Name: req.Name, AgentID: req.AgentID, AgentType: req.AgentType, User: id.User})
-		if err != nil {
-			return spawnResult{}, err
-		}
-		member = &m
+	adapter := registry.For(req.Command)
+
+	team, err := c.GetTeam(ctx, req.Team)
+	teamExists := err == nil
+	if err != nil && !client.IsNotFound(err) {
+		return spawnResult{}, err
 	}
-	req.AgentID = member.AgentID
+	member := findMember(team, req.Name, id.User)
+	if member != nil {
+		req.AgentID = member.AgentID
+	} else if req.AgentID == "" {
+		req.AgentID = store.NewAgentID()
+	}
 	leader := leaderOf(team)
 	if leader == "" {
 		leader = req.Name
 	}
+	teamPrompt := ""
+	if teamExists {
+		if teamPrompt, err = c.TeamPrompt(ctx, req.Team); err != nil {
+			return spawnResult{}, err
+		}
+	}
 
+	dataDir := config.DataDir()
+	cwd := req.Cwd
+	if cwd == "" {
+		cwd = config.WorkspaceDir(dataDir, req.Team, req.Name)
+	}
+	if cwd, err = filepath.Abs(cwd); err != nil {
+		return spawnResult{}, err
+	}
+	prompt := spawn.BuildPrompt(spawn.PromptParams{
+		AgentName: req.Name, AgentID: req.AgentID, AgentType: req.AgentType, Team: req.Team,
+		Leader: leader, User: id.User, Workspace: cwd, TeamPrompt: teamPrompt, Task: req.Task,
+	})
+	identity := map[string]string{
+		"TEAM_WORKER_AGENT_ID":      req.AgentID,
+		"TEAM_WORKER_AGENT_NAME":    req.Name,
+		"TEAM_WORKER_AGENT_TYPE":    req.AgentType,
+		"TEAM_WORKER_TEAM_NAME":     req.Team,
+		"TEAM_WORKER_AGENT_LEADER":  boolEnv(req.Name == leader),
+		"TEAM_WORKER_DATA_DIR":      dataDir,
+		"TEAM_WORKER_SOCKET":        config.SocketPath(dataDir),
+		"TEAM_WORKER_WORKSPACE_DIR": cwd,
+		"TEAM_WORKER_BIN":           workerBinary(),
+	}
+	if id.User != "" {
+		identity["TEAM_WORKER_USER"] = id.User
+	}
+	built, err := spawn.Build(spawn.Options{
+		Backend: req.Backend, Command: req.Command, Adapter: adapter, Team: req.Team, Agent: req.Name,
+		Prompt: prompt, Cwd: cwd, SkipPermissions: req.SkipPerms, IsLeader: req.Name == leader,
+		EnvLayers: req.EnvLayers, Identity: identity, WorkerBin: workerBinary(),
+		RunDir: filepath.Join(dataDir, "run"), LogPath: config.AgentLogPath(dataDir, req.Team, req.Name),
+	})
+	if err != nil {
+		return spawnResult{}, err
+	}
+	result := spawnResult{Backend: req.Backend, AgentName: req.Name, AgentID: req.AgentID, Workspace: cwd,
+		Command: req.Command, Adapter: adapter.Name() + " (" + adapter.Source() + ")"}
+	if req.DryRun {
+		result.Status = "dry-run"
+		result.Args = hidePrompt(built.Plan.Args, prompt)
+		result.Prompt = prompt
+		for name, origin := range built.Env.Origin {
+			result.Env = append(result.Env, envOrigin{Name: name, Origin: origin})
+		}
+		sort.Slice(result.Env, func(i, j int) bool { return result.Env[i].Name < result.Env[j].Name })
+		return result, nil
+	}
+
+	if !teamExists {
+		if _, err := c.CreateTeam(ctx, store.CreateTeamInput{
+			Name: req.Team, Description: "Created by team-worker spawn", LeaderName: req.Name,
+			LeaderID: req.AgentID, User: id.User, LeaderAgentType: req.AgentType,
+		}); err != nil {
+			return spawnResult{}, err
+		}
+	} else if member == nil {
+		if _, err := c.AddMember(ctx, req.Team, store.AddMemberInput{
+			Name: req.Name, AgentID: req.AgentID, AgentType: req.AgentType, User: id.User}); err != nil {
+			return spawnResult{}, err
+		}
+	}
 	if existing, err := c.GetAgent(ctx, req.Team, req.Name); err == nil && isRunning(existing) {
 		if !req.Replace {
 			return spawnResult{}, fmt.Errorf(
@@ -93,66 +169,46 @@ func (a *app) spawnAgent(ctx context.Context, req spawnRequest) (spawnResult, er
 		if _, err := c.AgentExited(ctx, req.Team, req.Name); err != nil {
 			return spawnResult{}, err
 		}
-	} else if err != nil && !client.IsNotFound(err) {
-		return spawnResult{}, err
-	}
-
-	dataDir := config.DataDir()
-	cwd := req.Cwd
-	if cwd == "" {
-		cwd = config.WorkspaceDir(dataDir, req.Team, req.Name)
-	}
-	if cwd, err = filepath.Abs(cwd); err != nil {
+	} else if err == nil {
+		// A pane kept open after a failed start; the new instance replaces it.
+		proc.Stop(existing)
+	} else if !client.IsNotFound(err) {
 		return spawnResult{}, err
 	}
 	if err := os.MkdirAll(cwd, 0o755); err != nil {
 		return spawnResult{}, err
 	}
 
-	teamPrompt, err := c.TeamPrompt(ctx, req.Team)
+	res, err := built.Start()
 	if err != nil {
 		return spawnResult{}, err
 	}
-	prompt := spawn.BuildPrompt(spawn.PromptParams{
-		AgentName: req.Name, AgentID: req.AgentID, AgentType: req.AgentType, Team: req.Team,
-		Leader: leader, User: id.User, Workspace: cwd, TeamPrompt: teamPrompt, Task: req.Task,
-	})
-
-	env := map[string]string{
-		"TEAM_WORKER_AGENT_ID":      req.AgentID,
-		"TEAM_WORKER_AGENT_NAME":    req.Name,
-		"TEAM_WORKER_AGENT_TYPE":    req.AgentType,
-		"TEAM_WORKER_TEAM_NAME":     req.Team,
-		"TEAM_WORKER_AGENT_LEADER":  boolEnv(req.Name == leader),
-		"TEAM_WORKER_DATA_DIR":      dataDir,
-		"TEAM_WORKER_SOCKET":        config.SocketPath(dataDir),
-		"TEAM_WORKER_WORKSPACE_DIR": cwd,
-	}
-	if id.User != "" {
-		env["TEAM_WORKER_USER"] = id.User
-	}
-	for k, v := range req.Env {
-		env[k] = v
-	}
-
-	res, err := spawn.Launch(spawn.Options{
-		Backend: req.Backend, Command: req.Command, Team: req.Team, Agent: req.Name, Prompt: prompt,
-		Cwd: cwd, SkipPermissions: req.SkipPerms, IsLeader: req.Name == leader, Env: env,
-		WorkerBin: workerBinary(), RunDir: filepath.Join(dataDir, "run"),
-		LogPath: config.AgentLogPath(dataDir, req.Team, req.Name),
-	})
-	if err != nil {
-		return spawnResult{}, err
-	}
-	agent := model.Agent{Team: req.Team, Name: req.Name, AgentID: req.AgentID, Backend: res.Backend,
-		Target: res.Target, PID: res.PID, Command: req.Command, Cwd: cwd}
-	if _, err := c.RegisterAgent(ctx, agent); err != nil {
-		proc.Stop(agent)
+	rec := model.Agent{Team: req.Team, Name: req.Name, AgentID: req.AgentID, Backend: res.Backend,
+		Target: res.Target, PID: res.PID, Command: req.Command, Cwd: cwd,
+		Nudge: res.Backend == "tmux" && adapter.Nudge()}
+	if _, err := c.RegisterAgent(ctx, rec); err != nil {
+		proc.Stop(rec)
 		return spawnResult{}, err
 	}
 	res.FinishStartup()
-	return spawnResult{Status: "spawned", Backend: res.Backend, AgentName: req.Name, AgentID: req.AgentID,
-		Target: res.Target, PID: res.PID, Workspace: cwd, Command: req.Command}, nil
+	result.Status, result.Target, result.PID = "spawned", res.Target, res.PID
+	return result, nil
+}
+
+// hidePrompt shortens the prompt and hook settings arguments so dry-run
+// output stays readable.
+func hidePrompt(args []string, prompt string) []string {
+	out := make([]string, len(args))
+	for i, a := range args {
+		switch {
+		case a == prompt:
+			a = fmt.Sprintf("<prompt: %d chars>", len(prompt))
+		case strings.HasPrefix(a, `{"hooks":`):
+			a = "<team-worker hooks: see `team-worker hook settings`>"
+		}
+		out[i] = a
+	}
+	return out
 }
 
 func findMember(t model.Team, name, user string) *model.Member {
@@ -200,7 +256,11 @@ func workerBinary() string {
 	return exe
 }
 
-func parseEnv(pairs []string) (map[string]string, error) {
+// envFlagLayer turns repeated --env KEY=VALUE flags into the last env layer.
+func envFlagLayer(pairs []string) ([]spawn.EnvLayer, error) {
+	if len(pairs) == 0 {
+		return nil, nil
+	}
 	env := map[string]string{}
 	for _, kv := range pairs {
 		k, v, ok := strings.Cut(kv, "=")
@@ -209,7 +269,7 @@ func parseEnv(pairs []string) (map[string]string, error) {
 		}
 		env[k] = v
 	}
-	return env, nil
+	return []spawn.EnvLayer{{Name: "--env", Set: env}}, nil
 }
 
 func (a *app) spawnCmd() *cobra.Command {
@@ -254,7 +314,7 @@ func (a *app) spawnCmd() *cobra.Command {
 				req.Name = "agent-" + store.NewAgentID()[:6]
 			}
 			var err error
-			if req.Env, err = parseEnv(envPairs); err != nil {
+			if req.EnvLayers, err = envFlagLayer(envPairs); err != nil {
 				return a.fail(err)
 			}
 			req.SkipPerms = !noSkip
@@ -262,7 +322,13 @@ func (a *app) spawnCmd() *cobra.Command {
 			if err != nil {
 				return a.fail(err)
 			}
-			a.emit(res, func(w io.Writer) { printSpawned(w, req.Team, res) })
+			a.emit(res, func(w io.Writer) {
+				if req.DryRun {
+					printDryRun(w, res)
+				} else {
+					printSpawned(w, req.Team, res)
+				}
+			})
 			return nil
 		},
 	}
@@ -275,7 +341,21 @@ func (a *app) spawnCmd() *cobra.Command {
 	f.StringArrayVar(&envPairs, "env", nil, "Extra environment variable KEY=VALUE (repeatable)")
 	f.BoolVar(&noSkip, "no-skip-permissions", false, "Keep the agent CLI's tool approval prompts")
 	f.BoolVar(&req.Replace, "replace", false, "Stop a running agent with the same name first")
+	f.BoolVar(&req.DryRun, "dry-run", false, "Show the command, prompt and environment sources without starting")
 	return cmd
+}
+
+func printDryRun(w io.Writer, res spawnResult) {
+	fmt.Fprintf(w, "Adapter:   %s\n", res.Adapter)
+	fmt.Fprintf(w, "Backend:   %s\n", res.Backend)
+	fmt.Fprintf(w, "Workspace: %s\n", res.Workspace)
+	fmt.Fprintf(w, "Command:   %s\n", strings.Join(res.Args, " "))
+	fmt.Fprintf(w, "Prompt:    %d chars (--json shows the text)\n\nEnvironment (values hidden):\n", len(res.Prompt))
+	tw := newTable(w, "  NAME", "FROM")
+	for _, e := range res.Env {
+		row(tw, "  "+e.Name, e.Origin)
+	}
+	tw.Flush()
 }
 
 func printSpawned(w io.Writer, team string, res spawnResult) {

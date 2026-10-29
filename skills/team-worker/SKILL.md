@@ -28,10 +28,10 @@ description: 用 team-worker CLI 组织多 Agent 团队：建团队、拆分并�
    team-worker spawn tmux --team <team> -n alice --agent-type developer --task "<职责和交付要求>"
    team-worker spawn tmux --team <team> -n bob --task "..." -- codex      # -- 后面写要用的 Agent CLI，默认 claude
    ```
-   `spawn` 会做这些事：登记成员；给 Agent 建工作目录 `~/.team-worker/workspaces/<team>/<name>`（可以用 `--cwd` 换成别的目录）；注入身份变量；把身份、团队说明、任务和协作规则作为第一条提示词发给它。如果同名 Agent 还在运行，会报错；要先停掉旧的再重新启动，加 `--replace`。
+   `spawn` 会做这些事：登记成员；给 Agent 建工作目录 `~/.team-worker/workspaces/<team>/<name>`（可以用 `--cwd` 换成别的目录）；注入身份变量；把身份、团队说明、任务和协作规则作为第一条提示词发给它。如果同名 Agent 还在运行，会报错；要先停掉旧的再重新启动，加 `--replace`。不确定会执行什么时，先加 `--dry-run` 查看最终命令和环境变量的来源。
    团队结构固定、要反复使用时，可以写一个模板，用 `team-worker launch <模板> -g "<目标>"` 一次建好团队、任务和所有 Agent。模板格式见 team-worker 仓库的 `docs/templates.md`。
 4. **下达指令**：`team-worker inbox send <team> <name> "<说明>"`；要通知所有成员，用 `team-worker inbox broadcast <team> "<内容>"`。
-5. **等待和跟进**：`team-worker --json task wait <team> --timeout <秒>`。等待期间它会读取 leader 收件箱里的消息，最后一行的 `"event": "result"` 中，`status` 为 `completed` 才代表全部完成；`timeout` 或 `interrupted` 时退出码为 1。如果 Agent 进程退出时手上还有任务，这些任务会自动退回 `pending`，leader 会收到一条 `exited unexpectedly` 消息。这时用 `spawn --replace` 重新启动这个 Agent，或者把任务改派给别人。要看某个 Agent 当前在做什么，用 `team-worker agent screen <team> <name>`；要看进程是否还活着，用 `team-worker agent list <team>`。
+5. **等待和跟进**：如果你是由 spawn 启动的 Claude Code，或者是用 `claude --settings "$(team-worker hook settings --role leader)"` 启动的，每次准备停下时都会自动收到新消息和团队进展，这时直接结束这一轮回复即可，不需要执行 `task wait`。没有 hook 时，执行 `team-worker --json task wait <team> --timeout <秒>`。等待期间它会读取 leader 收件箱里的消息，最后一行的 `"event": "result"` 中，`status` 为 `completed` 才代表全部完成；`timeout` 或 `interrupted` 时退出码为 1。如果 Agent 进程退出时手上还有任务，这些任务会自动退回 `pending`，leader 会收到一条 `exited unexpectedly` 消息。这时用 `spawn --replace` 重新启动这个 Agent，或者把任务改派给别人。要看某个 Agent 当前在做什么，用 `team-worker agent screen <team> <name>`；要看进程是否还活着，用 `team-worker agent list <team>`。
 6. **验收和收尾**：逐个核对 worker 汇报的结果，确认无误后再向用户报告。用 `team-worker lifecycle request-shutdown <team> <name>` 让 worker 退出。如果 worker 不响应，用 `team-worker agent stop <team> <name>` 强制停止。用户确认团队不再需要后，执行 `team-worker team cleanup <team> --force`，这会删除该团队的任务和消息，但工作目录会保留。
 
 ## 作为 Worker

@@ -16,6 +16,8 @@ type Agent struct {
 	Type    string   `toml:"type" json:"type"`
 	Task    string   `toml:"task" json:"task"`
 	Command []string `toml:"command" json:"command,omitempty"`
+	// Env applies to this agent on top of the template's env.
+	Env map[string]string `toml:"env" json:"env,omitempty"`
 }
 
 // Task is created when the team launches. Key names the task so others can
@@ -34,10 +36,12 @@ type Template struct {
 	Description string   `toml:"description" json:"description"`
 	Command     []string `toml:"command" json:"command"`
 	Backend     string   `toml:"backend" json:"backend"`
-	Leader      Agent    `toml:"leader" json:"leader"`
-	Agents      []Agent  `toml:"agents" json:"agents"`
-	Tasks       []Task   `toml:"tasks" json:"tasks"`
-	Source      string   `toml:"-" json:"source"`
+	// Env applies to every agent; values may use ${NAME} from the caller's environment.
+	Env    map[string]string `toml:"env" json:"env,omitempty"`
+	Leader Agent             `toml:"leader" json:"leader"`
+	Agents []Agent           `toml:"agents" json:"agents"`
+	Tasks  []Task            `toml:"tasks" json:"tasks"`
+	Source string            `toml:"-" json:"source"`
 }
 
 type file struct {

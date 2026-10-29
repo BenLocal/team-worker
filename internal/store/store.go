@@ -168,6 +168,8 @@ var migrations = []string{
 		PRIMARY KEY (team, name)
 	);
 	CREATE INDEX agents_status ON agents(status);`,
+
+	`ALTER TABLE agents ADD COLUMN nudge INTEGER NOT NULL DEFAULT 0;`,
 }
 
 // migrate applies pending migrations, tracking progress in PRAGMA user_version.

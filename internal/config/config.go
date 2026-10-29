@@ -59,6 +59,10 @@ func DBPath(dataDir string) string   { return filepath.Join(dataDir, "team-worke
 func LockPath(dataDir string) string { return filepath.Join(dataDir, "team-workerd.lock") }
 func LogPath(dataDir string) string  { return filepath.Join(dataDir, "team-workerd.log") }
 
+// OutPath receives an autostarted daemon's stdout and stderr: startup
+// errors and crashes, which rotation of the log file must not move away.
+func OutPath(dataDir string) string { return filepath.Join(dataDir, "team-workerd.out") }
+
 // WorkspaceDir is the directory a spawned agent works in unless --cwd is given.
 func WorkspaceDir(dataDir, team, agent string) string {
 	return filepath.Join(dataDir, "workspaces", team, agent)
@@ -69,7 +73,10 @@ func AgentLogPath(dataDir, team, agent string) string {
 	return filepath.Join(dataDir, "logs", team, agent+".log")
 }
 
-// TemplateDir holds user launch templates, which override built-in ones.
+// AgentsDir holds TOML agent adapters that add or adjust agent CLIs.
+func AgentsDir() string { return filepath.Join(homeDir(), ".team-worker", "agents") }
+
+// TemplateDir holds launch templates.
 func TemplateDir() string { return filepath.Join(homeDir(), ".team-worker", "templates") }
 
 // Identity describes the agent running a CLI command, taken from the

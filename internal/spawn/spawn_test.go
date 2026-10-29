@@ -1,48 +1,14 @@
 package spawn
 
 import (
+	"github.com/benlocal/team-worker/internal/agent"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 	"time"
 )
-
-func TestPrepare(t *testing.T) {
-	if os.Getuid() == 0 {
-		t.Skip("claude permission flag is skipped for root")
-	}
-	cases := []struct {
-		name        string
-		command     []string
-		interactive bool
-		want        []string
-		paste       bool
-		stdin       bool
-	}{
-		{"claude tmux", []string{"claude"}, true, []string{"claude", "--dangerously-skip-permissions", "P"}, false, false},
-		{"claude subprocess", []string{"claude"}, false, []string{"claude", "--dangerously-skip-permissions", "-p", "P"}, false, false},
-		{"codex tmux", []string{"codex"}, true, []string{"codex", "--dangerously-bypass-approvals-and-sandbox", "P"}, false, false},
-		{"codex subprocess", []string{"codex"}, false, []string{"codex", "exec", "--dangerously-bypass-approvals-and-sandbox", "P"}, false, false},
-		{"gemini tmux", []string{"gemini"}, true, []string{"gemini", "--yolo", "-i", "P"}, false, false},
-		{"unknown tmux", []string{"my-agent", "--x"}, true, []string{"my-agent", "--x"}, true, false},
-		{"unknown subprocess", []string{"my-agent"}, false, []string{"my-agent"}, false, true},
-	}
-	for _, c := range cases {
-		p := Prepare(c.command, "P", true, c.interactive)
-		if !slices.Equal(p.Args, c.want) || (p.Paste != "") != c.paste || (p.Stdin != "") != c.stdin {
-			t.Errorf("%s: args=%q paste=%q stdin=%q", c.name, p.Args, p.Paste, p.Stdin)
-		}
-	}
-	if p := Prepare([]string{"dsh"}, "P", true, true); p.Env["DSH_PERMISSION_MODE"] != "danger-full-access" {
-		t.Errorf("dsh permission env missing: %v", p.Env)
-	}
-	if p := Prepare([]string{"claude"}, "P", false, true); slices.Contains(p.Args, "--dangerously-skip-permissions") {
-		t.Errorf("skip-permissions off still added the flag: %q", p.Args)
-	}
-}
 
 func TestBuildPromptUsesTeamWorkerCommands(t *testing.T) {
 	p := BuildPrompt(PromptParams{AgentName: "alice", AgentID: "id1", AgentType: "dev", Team: "demo",
@@ -56,21 +22,6 @@ func TestBuildPromptUsesTeamWorkerCommands(t *testing.T) {
 	}
 	if strings.Contains(p, "clawteam") {
 		t.Error("prompt still mentions clawteam")
-	}
-}
-
-func TestStartupAction(t *testing.T) {
-	if a := startupAction("claude", "do you trust this folder?\npress enter to continue"); a != "enter" {
-		t.Errorf("claude trust: %q", a)
-	}
-	if a := startupAction("claude", "bypass permissions mode\n1. no\n2. yes, i accept"); a != "down-enter" {
-		t.Errorf("claude permissions: %q", a)
-	}
-	if a := startupAction("codex", "do you trust the contents of this directory?\npress enter to continue"); a != "enter" {
-		t.Errorf("codex trust: %q", a)
-	}
-	if a := startupAction("claude", "welcome\n> "); a != "" {
-		t.Errorf("plain screen: %q", a)
 	}
 }
 
@@ -89,7 +40,7 @@ func TestSubprocessRunsExitHook(t *testing.T) {
 		Agent:     "alice",
 		Prompt:    "hello prompt",
 		Cwd:       cwd,
-		Env:       map[string]string{"TEAM_WORKER_AGENT_NAME": "alice"},
+		Identity:  map[string]string{"TEAM_WORKER_AGENT_NAME": "alice"},
 		WorkerBin: bin,
 		LogPath:   filepath.Join(dir, "logs", "alice.log"),
 	})
@@ -125,5 +76,105 @@ func TestLaunchRejectsMissingCommand(t *testing.T) {
 	}
 	if _, err := exec.LookPath("sh"); err != nil {
 		t.Skip("sh missing")
+	}
+}
+
+func TestComposeEnvLayers(t *testing.T) {
+	caller := []string{"PATH=/usr/bin", "HOME=/home/u", "TERM=dumb", "TMUX=/tmp/tmux", "CLAUDECODE=1",
+		"SECRET=s3", "GATEWAY_KEY=k1", "KEEP=yes"}
+	env, err := ComposeEnv(EnvSpec{
+		Caller:      caller,
+		Adapter:     agent.EnvPlan{Unset: []string{"CLAUDECODE"}, Set: map[string]string{"A": "adapter"}},
+		AdapterName: "claude (builtin)",
+		Layers: []EnvLayer{
+			{Name: "template", Set: map[string]string{"A": "template", "API_KEY": "${GATEWAY_KEY}"}},
+			{Name: "--env", Set: map[string]string{"A": "cli"}, Unset: []string{"SECRET"}},
+		},
+		Identity:  map[string]string{"TEAM_WORKER_AGENT_NAME": "alice"},
+		WorkerBin: "/opt/tw/bin/team-worker",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"A": "cli", "API_KEY": "k1", "TERM": "xterm-256color", "KEEP": "yes",
+		"TEAM_WORKER_AGENT_NAME": "alice", "PATH": "/opt/tw/bin:/usr/bin"}
+	for k, v := range want {
+		if env.Vars[k] != v {
+			t.Errorf("%s = %q, want %q", k, env.Vars[k], v)
+		}
+	}
+	for _, k := range []string{"TMUX", "CLAUDECODE", "SECRET"} {
+		if _, ok := env.Vars[k]; ok {
+			t.Errorf("%s should be removed", k)
+		}
+	}
+	if env.Origin["A"] != "--env" || env.Origin["API_KEY"] != "template" || env.Origin["KEEP"] != "caller" {
+		t.Errorf("origins: %v", env.Origin)
+	}
+}
+
+func TestComposeEnvGuards(t *testing.T) {
+	identity := map[string]string{"TEAM_WORKER_AGENT_NAME": "alice"}
+	_, err := ComposeEnv(EnvSpec{Identity: identity,
+		Layers: []EnvLayer{{Name: "--env", Set: map[string]string{"TEAM_WORKER_AGENT_NAME": "mallory"}}}})
+	if err == nil || !strings.Contains(err.Error(), "team-worker manages") {
+		t.Fatalf("identity override must fail: %v", err)
+	}
+	_, err = ComposeEnv(EnvSpec{Layers: []EnvLayer{{Name: "template", Set: map[string]string{"K": "${NOPE}"}}}})
+	if err == nil || !strings.Contains(err.Error(), "${NOPE} is not set") {
+		t.Fatalf("missing reference must fail: %v", err)
+	}
+	env, err := ComposeEnv(EnvSpec{Caller: []string{"PATH=/bin", "HOME=/h", "TOKEN=t"},
+		Adapter: agent.EnvPlan{NoInherit: true, Pass: []string{"PATH"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env.Vars["PATH"] != "/bin" || env.Vars["HOME"] != "" || env.Vars["TOKEN"] != "" {
+		t.Fatalf("inherit=false should keep only pass: %v", env.Vars)
+	}
+}
+
+func TestBuildUsesAdapterAndChecksCommand(t *testing.T) {
+	b, err := Build(Options{Backend: "subprocess", Command: []string{"sh", "-c", "true"}, Prompt: "P",
+		Cwd: t.TempDir(), Identity: map[string]string{"TEAM_WORKER_AGENT_NAME": "a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.Plan.Stdin != "P" || b.Env.Vars["TEAM_WORKER_AGENT_NAME"] != "a" {
+		t.Fatalf("generic adapter plan: %+v", b.Plan)
+	}
+	if _, err := Build(Options{Backend: "docker", Command: []string{"sh"}}); err == nil {
+		t.Fatal("unknown backend must fail")
+	}
+}
+
+// fileAdapter is a test adapter that asks spawn to write one support file.
+type fileAdapter struct{ path string }
+
+func (fileAdapter) Name() string                { return "files" }
+func (fileAdapter) Source() string              { return "test" }
+func (fileAdapter) Match([]string) bool         { return true }
+func (fileAdapter) StartupKeys(string) []string { return nil }
+func (fileAdapter) Nudge() bool                 { return false }
+func (f fileAdapter) Prepare(s agent.Session) agent.Plan {
+	return agent.Plan{Args: s.Command, Files: []agent.File{{Path: f.path, Content: []byte("ext")}}}
+}
+
+func TestStartWritesAdapterFiles(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "run", "pi", "ext.ts")
+	b, err := Build(Options{Backend: "subprocess", Command: []string{"sh", "-c", "true"}, Adapter: fileAdapter{path},
+		Team: "demo", Agent: "a", Cwd: dir, LogPath: filepath.Join(dir, "a.log")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); err == nil {
+		t.Fatal("Build must not write files; dry runs use it")
+	}
+	if _, err := b.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(path); err != nil || string(data) != "ext" {
+		t.Fatalf("support file: %q %v", data, err)
 	}
 }

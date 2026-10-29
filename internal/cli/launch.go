@@ -101,7 +101,7 @@ func (a *app) launchCmd() *cobra.Command {
 			if dash := cmd.ArgsLenAtDash(); dash >= 0 {
 				override = args[dash:]
 			}
-			env, err := parseEnv(envPairs)
+			flagLayers, err := envFlagLayer(envPairs)
 			if err != nil {
 				return a.fail(err)
 			}
@@ -116,16 +116,51 @@ func (a *app) launchCmd() *cobra.Command {
 			c := a.client()
 			user := config.IdentityFromEnv().User
 			leader := tmpl.Leader
-			if _, err := c.CreateTeam(ctx, store.CreateTeamInput{Name: teamName, Description: tmpl.Description,
-				LeaderName: leader.Name, User: user, LeaderAgentType: agentType(leader)}); err != nil {
-				return a.fail(err)
-			}
+			teamPrompt := ""
 			if promptFile != "" {
 				data, err := os.ReadFile(promptFile)
 				if err != nil {
 					return a.fail(err)
 				}
-				if _, err := c.SetTeamPrompt(ctx, teamName, strings.TrimRight(string(data), "\n")); err != nil {
+				teamPrompt = strings.TrimRight(string(data), "\n")
+			}
+
+			var reqs []spawnRequest
+			for _, ag := range append([]templates.Agent{leader}, tmpl.Agents...) {
+				command := ag.Command
+				if len(override) > 0 {
+					command = override
+				} else if len(command) == 0 {
+					command = tmpl.Command
+				}
+				var layers []spawn.EnvLayer
+				if len(tmpl.Env) > 0 {
+					layers = append(layers, spawn.EnvLayer{Name: "template " + tmpl.Name, Set: tmpl.Env})
+				}
+				if len(ag.Env) > 0 {
+					layers = append(layers, spawn.EnvLayer{Name: "template agent " + ag.Name, Set: ag.Env})
+				}
+				reqs = append(reqs, spawnRequest{
+					Team: teamName, Name: ag.Name, AgentType: agentType(ag), Backend: backend, Command: command,
+					Task: templates.Render(ag.Task, goal, teamName, ag.Name, leader.Name),
+					Cwd:  cwd, EnvLayers: append(layers, flagLayers...), SkipPerms: !noSkip,
+				})
+			}
+			// Check every agent's command and environment before the team exists,
+			// so a typo does not leave a half-launched team behind.
+			for _, req := range reqs {
+				req.DryRun = true
+				if _, err := a.spawnAgent(ctx, req); err != nil {
+					return a.fail(fmt.Errorf("agent '%s': %w", req.Name, err))
+				}
+			}
+
+			if _, err := c.CreateTeam(ctx, store.CreateTeamInput{Name: teamName, Description: tmpl.Description,
+				LeaderName: leader.Name, User: user, LeaderAgentType: agentType(leader)}); err != nil {
+				return a.fail(err)
+			}
+			if teamPrompt != "" {
+				if _, err := c.SetTeamPrompt(ctx, teamName, teamPrompt); err != nil {
 					return a.fail(err)
 				}
 			}
@@ -155,22 +190,12 @@ func (a *app) launchCmd() *cobra.Command {
 
 			var launched []launchedAgent
 			failed := false
-			for _, ag := range append([]templates.Agent{leader}, tmpl.Agents...) {
-				command := ag.Command
-				if len(override) > 0 {
-					command = override
-				} else if len(command) == 0 {
-					command = tmpl.Command
-				}
-				res, err := a.spawnAgent(ctx, spawnRequest{
-					Team: teamName, Name: ag.Name, AgentType: agentType(ag), Backend: backend, Command: command,
-					Task: templates.Render(ag.Task, goal, teamName, ag.Name, leader.Name),
-					Cwd:  cwd, Env: env, SkipPerms: !noSkip,
-				})
+			for _, req := range reqs {
+				res, err := a.spawnAgent(ctx, req)
 				entry := launchedAgent{spawnResult: res}
 				if err != nil {
 					failed = true
-					entry.AgentName, entry.Error = ag.Name, err.Error()
+					entry.AgentName, entry.Error = req.Name, err.Error()
 				}
 				launched = append(launched, entry)
 			}

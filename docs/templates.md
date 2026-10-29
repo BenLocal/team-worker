@@ -25,11 +25,15 @@ description = "一句话说明"
 command = ["claude"]          # 所有 Agent 默认使用的 CLI，默认 ["claude"]
 backend = "tmux"              # tmux 或 subprocess，默认 tmux
 
+[template.env]                # 可选，所有 Agent 共用的环境变量，值里可以用 ${NAME}
+GIT_AUTHOR_NAME = "team-bot"
+
 [template.leader]             # 必填，团队的 leader
 name = "lead"
 type = "lead"                 # 角色名，写入成员信息和身份变量，默认 general-purpose
 task = """leader 的任务说明"""
 command = ["codex"]           # 可选，单独为这个 Agent 指定 CLI
+env = { OPENAI_API_KEY = "${LEAD_KEY}" }   # 可选，只给这个 Agent 的环境变量
 
 [[template.agents]]           # 可写多个，每个对应一个 worker
 name = "dev"
@@ -44,6 +48,8 @@ owner = "dev"                 # 负责人，填成员名
 priority = "high"             # low、medium、high、urgent，默认 medium
 blocked_by = ["design"]       # 依赖的任务，填其他任务的 key
 ```
+
+`${NAME}` 取自执行 `launch` 时所在的环境，所以模板里不必写明文密钥。完整的环境变量合成规则，以及怎样给某种 CLI 统一配置环境变量，见 [agents.md](agents.md)。
 
 `launch` 会校验 `blocked_by`：其中每个 key 都必须在模板里的某个任务上定义过，否则直接报错，不会创建任何东西。
 

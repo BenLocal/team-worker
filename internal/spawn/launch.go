@@ -13,25 +13,35 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/benlocal/team-worker/internal/agent"
 	"github.com/benlocal/team-worker/internal/tmux"
 )
 
 type Options struct {
 	Backend         string
 	Command         []string
+	Adapter         agent.Agent
 	Team            string
 	Agent           string
 	Prompt          string
 	Cwd             string
 	SkipPermissions bool
 	IsLeader        bool
-	// Env is added to the caller's environment for the agent process.
-	Env map[string]string
+	// EnvLayers apply after the adapter's environment; Identity comes last.
+	EnvLayers []EnvLayer
+	Identity  map[string]string
 	// WorkerBin is the team-worker binary the exit hook runs.
 	WorkerBin string
 	// RunDir holds short-lived env files; LogPath receives subprocess output.
 	RunDir  string
 	LogPath string
+}
+
+// Built is a prepared agent start: the final command and environment.
+type Built struct {
+	opts Options
+	Plan agent.Plan
+	Env  Env
 }
 
 type Result struct {
@@ -40,8 +50,8 @@ type Result struct {
 	PID     int      `json:"pid"`
 	Command []string `json:"command"`
 
-	cli   string
-	paste string
+	adapter agent.Agent
+	paste   string
 }
 
 // FinishStartup answers the agent CLI's startup screens and pastes the
@@ -49,60 +59,65 @@ type Result struct {
 // that exits during startup is already known when its exit hook runs.
 func (r Result) FinishStartup() {
 	if r.Backend == "tmux" {
-		handleStartup(r.Target, r.cli, r.paste, 20*time.Second)
+		handleStartup(r.Target, r.adapter, r.paste, 20*time.Second)
 	}
 }
 
 // SessionName is the tmux session holding a team's agent windows.
 func SessionName(team string) string { return "team-worker-" + team }
 
-func Launch(opts Options) (Result, error) {
+// Build prepares the command and environment without starting anything.
+func Build(opts Options) (Built, error) {
 	if len(opts.Command) == 0 {
-		return Result{}, errors.New("no agent command given")
+		return Built{}, errors.New("no agent command given")
 	}
-	interactive := opts.Backend == "tmux"
-	prep := Prepare(opts.Command, opts.Prompt, opts.SkipPermissions, interactive)
-	env := buildEnv(opts.Env, prep.Env, opts.WorkerBin)
-	if _, err := lookPath(prep.Args[0], env["PATH"]); err != nil {
-		return Result{}, fmt.Errorf("agent command '%s' not found in PATH; check that it runs on its own first", prep.Args[0])
+	if opts.Backend != "tmux" && opts.Backend != "subprocess" {
+		return Built{}, fmt.Errorf("unknown backend '%s': use tmux or subprocess", opts.Backend)
 	}
-	switch opts.Backend {
-	case "tmux":
-		return launchTmux(opts, prep, env)
-	case "subprocess":
-		return launchSubprocess(opts, prep, env)
+	if opts.Adapter == nil {
+		opts.Adapter = agent.Builtin().For(opts.Command)
 	}
-	return Result{}, fmt.Errorf("unknown backend '%s': use tmux or subprocess", opts.Backend)
+	plan := opts.Adapter.Prepare(agent.Session{Command: opts.Command, Prompt: opts.Prompt,
+		Interactive: opts.Backend == "tmux", SkipPermissions: opts.SkipPermissions,
+		Team: opts.Team, AgentName: opts.Agent, Leader: opts.IsLeader, WorkerBin: opts.WorkerBin,
+		StateDir: opts.RunDir})
+	env, err := ComposeEnv(EnvSpec{
+		Caller: os.Environ(), Adapter: plan.Env,
+		AdapterName: opts.Adapter.Name() + " (" + opts.Adapter.Source() + ")",
+		Layers:      opts.EnvLayers, Identity: opts.Identity, WorkerBin: opts.WorkerBin,
+	})
+	if err != nil {
+		return Built{}, err
+	}
+	if _, err := lookPath(plan.Args[0], env.Vars["PATH"]); err != nil {
+		return Built{}, fmt.Errorf("agent command '%s' not found in PATH; check that it runs on its own first", plan.Args[0])
+	}
+	return Built{opts: opts, Plan: plan, Env: env}, nil
 }
 
-// buildEnv copies the caller's environment, adds the agent's variables and
-// puts the team-worker binary's directory first on PATH so agents find it.
-func buildEnv(extra, adapter map[string]string, workerBin string) map[string]string {
-	env := map[string]string{}
-	for _, kv := range os.Environ() {
-		if k, v, ok := strings.Cut(kv, "="); ok {
-			env[k] = v
+// Start writes the adapter's support files and runs the agent in its backend.
+func (b Built) Start() (Result, error) {
+	for _, f := range b.Plan.Files {
+		if err := os.MkdirAll(filepath.Dir(f.Path), 0o700); err != nil {
+			return Result{}, err
+		}
+		if err := os.WriteFile(f.Path, f.Content, 0o600); err != nil {
+			return Result{}, err
 		}
 	}
-	// Interactive CLIs such as Codex refuse TERM=dumb, which non-interactive shells pass down.
-	if strings.EqualFold(env["TERM"], "dumb") || env["TERM"] == "" {
-		env["TERM"] = "xterm-256color"
+	if b.opts.Backend == "tmux" {
+		return b.startTmux()
 	}
-	// A leader running inside Claude Code must not make workers think they are nested.
-	for _, k := range []string{"CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SESSION", "TMUX", "TMUX_PANE"} {
-		delete(env, k)
+	return b.startSubprocess()
+}
+
+// Launch builds and starts an agent.
+func Launch(opts Options) (Result, error) {
+	b, err := Build(opts)
+	if err != nil {
+		return Result{}, err
 	}
-	for k, v := range adapter {
-		env[k] = v
-	}
-	for k, v := range extra {
-		env[k] = v
-	}
-	if workerBin != "" {
-		dir := filepath.Dir(workerBin)
-		env["PATH"] = dir + string(os.PathListSeparator) + env["PATH"]
-	}
-	return env
+	return b.Start()
 }
 
 func lookPath(name, path string) (string, error) {
@@ -145,7 +160,8 @@ func wrapCommand(opts Options, args []string) string {
 var shellNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // writeEnvFile stores the environment in a file the pane sources and then
-// deletes; passing it inline would exceed tmux's command-length limit.
+// deletes; passing it inline would exceed tmux's command-length limit. The
+// file sets exactly these variables, so ones the adapter dropped stay unset.
 func writeEnvFile(dir string, env map[string]string) (string, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
@@ -154,6 +170,8 @@ func writeEnvFile(dir string, env map[string]string) (string, error) {
 	rand.Read(b)
 	path := filepath.Join(dir, "env-"+hex.EncodeToString(b)+".sh")
 	var sb strings.Builder
+	// tmux starts the pane with its server's environment; clear it first.
+	sb.WriteString("for __tw_v in $(env | sed -n 's/^\\([A-Za-z_][A-Za-z0-9_]*\\)=.*/\\1/p'); do unset \"$__tw_v\" 2>/dev/null; done; unset __tw_v\n")
 	for k, v := range env {
 		if shellNameRE.MatchString(k) {
 			fmt.Fprintf(&sb, "export %s=%s\n", k, shellQuote(v))
@@ -163,45 +181,52 @@ func writeEnvFile(dir string, env map[string]string) (string, error) {
 	return path, os.WriteFile(path, []byte(sb.String()), 0o600)
 }
 
-func launchTmux(opts Options, prep Prepared, env map[string]string) (Result, error) {
+func (b Built) startTmux() (Result, error) {
 	if !tmux.Available() {
 		return Result{}, errors.New("tmux is not installed")
 	}
-	envFile, err := writeEnvFile(opts.RunDir, env)
+	envFile, err := writeEnvFile(b.opts.RunDir, b.Env.Vars)
 	if err != nil {
 		return Result{}, err
 	}
-	shellCmd := ". " + shellQuote(envFile) + "; " + wrapCommand(opts, prep.Args)
-	pane, err := tmux.NewWindow(SessionName(opts.Team), opts.Agent, shellCmd)
+	shellCmd := ". " + shellQuote(envFile) + "; " + wrapCommand(b.opts, b.Plan.Args)
+	pane, err := tmux.NewWindow(SessionName(b.opts.Team), b.opts.Agent, shellCmd)
 	if err != nil {
 		os.Remove(envFile)
 		return Result{}, err
 	}
-	if opts.IsLeader {
-		// Keep the leader's output on screen after it exits so it can be inspected.
-		tmux.SetOption(pane, "remain-on-exit", "on")
+	// Keep the leader's screen after it exits, and any agent's screen when it
+	// fails, so `agent screen` and the board can still show what went wrong.
+	keep := "failed"
+	if b.opts.IsLeader {
+		keep = "on"
 	}
+	tmux.SetOption(pane, "remain-on-exit", keep)
 	_, _, pid := tmux.PaneState(pane)
-	return Result{Backend: "tmux", Target: pane, PID: pid, Command: prep.Args,
-		cli: cliName(prep.Args), paste: prep.Paste}, nil
+	return Result{Backend: "tmux", Target: pane, PID: pid, Command: b.Plan.Args,
+		adapter: b.opts.Adapter, paste: b.Plan.Paste}, nil
 }
 
-func launchSubprocess(opts Options, prep Prepared, env map[string]string) (Result, error) {
-	if err := os.MkdirAll(filepath.Dir(opts.LogPath), 0o700); err != nil {
+func (b Built) startSubprocess() (Result, error) {
+	if err := os.MkdirAll(filepath.Dir(b.opts.LogPath), 0o700); err != nil {
 		return Result{}, err
 	}
-	logFile, err := os.OpenFile(opts.LogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	logFile, err := os.OpenFile(b.opts.LogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return Result{}, err
 	}
 	defer logFile.Close()
-	cmd := exec.Command("sh", "-c", wrapCommand(opts, prep.Args))
-	cmd.Stdout, cmd.Stderr = logFile, logFile
-	if prep.Stdin != "" {
-		cmd.Stdin = strings.NewReader(prep.Stdin)
+	shell, err := lookPath("sh", b.Env.Vars["PATH"])
+	if err != nil {
+		shell = "/bin/sh"
 	}
-	cmd.Env = make([]string, 0, len(env))
-	for k, v := range env {
+	cmd := exec.Command(shell, "-c", wrapCommand(b.opts, b.Plan.Args))
+	cmd.Stdout, cmd.Stderr = logFile, logFile
+	if b.Plan.Stdin != "" {
+		cmd.Stdin = strings.NewReader(b.Plan.Stdin)
+	}
+	cmd.Env = make([]string, 0, len(b.Env.Vars))
+	for k, v := range b.Env.Vars {
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
 	// A new session makes the agent its own process group, so stopping it
@@ -211,19 +236,19 @@ func launchSubprocess(opts Options, prep Prepared, env map[string]string) (Resul
 		return Result{}, err
 	}
 	pid := cmd.Process.Pid
-	if prep.Stdin != "" {
+	if b.Plan.Stdin != "" {
 		// The stdin copy needs a running goroutine; wait in the background.
 		go cmd.Wait()
 	} else {
 		cmd.Process.Release()
 	}
-	return Result{Backend: "subprocess", Target: opts.LogPath, PID: pid, Command: prep.Args}, nil
+	return Result{Backend: "subprocess", Target: b.opts.LogPath, PID: pid, Command: b.Plan.Args}, nil
 }
 
 // handleStartup answers the confirmation screens agent CLIs show on first
 // start in a directory, then pastes the prompt for CLIs that need it. It
 // returns once the screen stops changing.
-func handleStartup(pane, cli, paste string, timeout time.Duration) {
+func handleStartup(pane string, ad agent.Agent, paste string, timeout time.Duration) {
 	deadline := time.Now().Add(timeout)
 	var last string
 	stable := 0
@@ -237,68 +262,31 @@ func handleStartup(pane, cli, paste string, timeout time.Duration) {
 		if err != nil {
 			return
 		}
-		lower := strings.ToLower(text)
-		switch startupAction(cli, lower) {
-		case "enter":
-			tmux.SendKeys(pane, "Enter")
-			stable, last = 0, ""
-			continue
-		case "down-enter":
-			tmux.SendKeys(pane, "Down")
-			time.Sleep(200 * time.Millisecond)
-			tmux.SendKeys(pane, "Enter")
-			stable, last = 0, ""
-			continue
-		}
 		if strings.TrimSpace(text) != "" && text == last {
 			stable++
 		} else {
 			stable, last = 0, text
 		}
-		if stable >= 3 || (paste != "" && looksReady(text)) {
+		// A dialog is drawn before the TUI reads raw keys; keys sent on the
+		// first frame are echoed as text. Act once the screen has settled.
+		if keys := ad.StartupKeys(strings.ToLower(text)); len(keys) > 0 {
+			if stable < 1 {
+				continue
+			}
+			for i, k := range keys {
+				if i > 0 {
+					time.Sleep(400 * time.Millisecond)
+				}
+				tmux.SendKeys(pane, k)
+			}
+			stable, last = 0, ""
+			continue
+		}
+		if stable >= 3 || (paste != "" && agent.InputPromptVisible(text)) {
 			break
 		}
 	}
 	if paste != "" {
 		tmux.Paste(pane, paste)
 	}
-}
-
-// startupAction returns the keys that dismiss a known startup screen.
-func startupAction(cli, text string) string {
-	switch cli {
-	case "claude", "claude-code":
-		if strings.Contains(text, "yes, i accept") &&
-			(strings.Contains(text, "permission") || strings.Contains(text, "dangerously")) {
-			return "down-enter"
-		}
-		if (strings.Contains(text, "trust this folder") || strings.Contains(text, "trust the contents")) &&
-			(strings.Contains(text, "enter to confirm") || strings.Contains(text, "press enter") ||
-				strings.Contains(text, "enter to continue")) {
-			return "enter"
-		}
-	case "codex", "codex-cli":
-		if strings.Contains(text, "press enter to continue") &&
-			(strings.Contains(text, "trust the contents of this directory") ||
-				(strings.Contains(text, "update available") && strings.Contains(text, "skip"))) {
-			return "enter"
-		}
-	case "gemini":
-		if strings.Contains(text, "trust folder") || strings.Contains(text, "trust parent folder") {
-			return "enter"
-		}
-	}
-	return ""
-}
-
-func looksReady(text string) bool {
-	lines := strings.Split(strings.TrimRight(text, "\n "), "\n")
-	start := max(0, len(lines)-10)
-	for _, l := range lines[start:] {
-		l = strings.TrimSpace(l)
-		if strings.HasPrefix(l, "❯") || strings.HasPrefix(l, ">") || strings.HasPrefix(l, "›") {
-			return true
-		}
-	}
-	return false
 }

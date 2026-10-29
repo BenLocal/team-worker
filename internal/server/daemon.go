@@ -56,13 +56,14 @@ func Run(ctx context.Context, opts Options) error {
 	baseCtx, cancelBase := context.WithCancel(context.Background())
 	defer cancelBase()
 	httpSrv := &http.Server{
-		Handler:           New(st),
+		Handler:           New(st, log),
 		ReadHeaderTimeout: 10 * time.Second,
 		BaseContext:       func(net.Listener) context.Context { return baseCtx },
 	}
 	errCh := make(chan error, 1)
 	go func() { errCh <- httpSrv.Serve(ln) }()
 	go reapLoop(baseCtx, st, log)
+	go NewNudger(st, log).Run(baseCtx)
 	log.Info("team-workerd started", "socket", opts.Socket, "db", config.DBPath(opts.DataDir), "pid", os.Getpid())
 
 	select {

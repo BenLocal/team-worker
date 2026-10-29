@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -28,7 +29,7 @@ func newHarness(t *testing.T) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ts := httptest.NewServer(server.New(st))
+	ts := httptest.NewServer(server.New(st, nil))
 	t.Cleanup(func() {
 		ts.Close()
 		st.Close()
@@ -36,17 +37,25 @@ func newHarness(t *testing.T) *harness {
 	t.Setenv("TEAM_WORKER_AGENT_NAME", "leader")
 	t.Setenv("TEAM_WORKER_USER", "")
 	t.Setenv("TEAM_WORKER_DATA_DIR", t.TempDir())
+	// Adapters and templates are read from $HOME/.team-worker; keep the user's out of tests.
+	t.Setenv("HOME", t.TempDir())
 	return &harness{t: t, api: client.NewHTTP(ts.URL, ts.Client())}
 }
 
 // run executes the CLI and returns stdout and the exit status.
 func (h *harness) run(args ...string) (string, bool) {
 	h.t.Helper()
+	return h.runIn("", args...)
+}
+
+// runIn is run with the given stdin.
+func (h *harness) runIn(stdin string, args ...string) (string, bool) {
+	h.t.Helper()
 	root := NewRoot(func() *client.Client { return h.api })
 	var out, errOut bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&errOut)
-	root.SetIn(strings.NewReader(""))
+	root.SetIn(strings.NewReader(stdin))
 	root.SetArgs(args)
 	err := root.Execute()
 	if err != nil && !errors.As(err, new(exitError)) {
@@ -221,5 +230,84 @@ func TestTaskWaitCompletes(t *testing.T) {
 	json.Unmarshal([]byte(lines[len(lines)-1]), &result)
 	if result["status"] != "completed" || result["messages_received"] != 1.0 {
 		t.Fatalf("wait result: %s", out)
+	}
+}
+
+func TestSpawnDryRunChangesNothing(t *testing.T) {
+	h := newHarness(t)
+	t.Setenv("GATEWAY_KEY", "k1")
+	var res spawnResult
+	h.json(&res, "spawn", "subprocess", "--team", "ghost", "-n", "alice", "--task", "do it", "--dry-run",
+		"--env", "API_KEY=${GATEWAY_KEY}", "--", "sh", "-c", "true")
+	if res.Status != "dry-run" || res.Adapter != "generic (builtin)" || !strings.Contains(res.Prompt, "do it") {
+		t.Fatalf("dry run: %+v", res)
+	}
+	origins := map[string]string{}
+	for _, e := range res.Env {
+		origins[e.Name] = e.Origin
+	}
+	if origins["API_KEY"] != "--env" || origins["TEAM_WORKER_AGENT_NAME"] != "team-worker" {
+		t.Fatalf("env origins: %v", origins)
+	}
+	out, _ := json.Marshal(res)
+	if strings.Contains(string(out), "k1") {
+		t.Fatal("dry run leaked an environment value")
+	}
+	if out, ok := h.run("--json", "team", "status", "ghost"); ok {
+		t.Fatalf("dry run created the team: %s", out)
+	}
+
+	out2, ok := h.run("--json", "spawn", "subprocess", "--team", "ghost", "-n", "alice", "--dry-run",
+		"--env", "TEAM_WORKER_AGENT_NAME=mallory", "--", "sh")
+	if ok || !strings.Contains(out2, "team-worker manages") {
+		t.Fatalf("identity override should fail: ok=%v %s", ok, out2)
+	}
+}
+
+func TestSpawnUsesUserAdapter(t *testing.T) {
+	h := newHarness(t)
+	dir := filepath.Join(os.Getenv("HOME"), ".team-worker", "agents")
+	os.MkdirAll(dir, 0o755)
+	os.WriteFile(filepath.Join(dir, "shy.toml"), []byte(`
+match = ["sh"]
+prompt = "flag:-c"
+[env]
+SHY = "1"
+`), 0o644)
+	var res spawnResult
+	h.json(&res, "spawn", "subprocess", "--team", "t", "-n", "a", "--dry-run", "--", "sh")
+	if !strings.HasPrefix(res.Adapter, "shy (") || len(res.Args) != 3 || res.Args[1] != "-c" {
+		t.Fatalf("user adapter not used: %+v", res)
+	}
+}
+
+func TestLaunchValidatesBeforeCreatingTeam(t *testing.T) {
+	h := newHarness(t)
+	dir := t.TempDir()
+	tmpl := filepath.Join(dir, "t.toml")
+	os.WriteFile(tmpl, []byte(`
+[template]
+command = ["sh"]
+[template.env]
+TOKEN = "${NOT_SET_ANYWHERE}"
+[template.leader]
+name = "lead"
+`), 0o644)
+	out, ok := h.run("--json", "launch", tmpl, "-t", "never")
+	if ok || !strings.Contains(out, "NOT_SET_ANYWHERE") {
+		t.Fatalf("missing env reference should fail launch: ok=%v %s", ok, out)
+	}
+	os.WriteFile(tmpl, []byte(`
+[template]
+command = ["no-such-agent-cli-xyz"]
+[template.leader]
+name = "lead"
+`), 0o644)
+	out, ok = h.run("--json", "launch", tmpl, "-t", "never")
+	if ok || !strings.Contains(out, "not found in PATH") {
+		t.Fatalf("missing command should fail launch: ok=%v %s", ok, out)
+	}
+	if out, ok := h.run("--json", "team", "status", "never"); ok {
+		t.Fatalf("failed launch left a team behind: %s", out)
 	}
 }
