@@ -2,6 +2,8 @@
 // (a68f67b6 plus the wheel-selection and text-selection fixes after it).
 // ghostty-web inlines its WebAssembly (~650 KB), so it loads only when the
 // Terminals view opens.
+import { openMemberPrompt } from "./prompt-dialog.js";
+
 let Terminal, FitAddon;
 
 const THEME = { background: "#0b0f15", foreground: "#e8e0cc", cursor: "#e8c47e" };
@@ -64,6 +66,7 @@ export class AgentTerminal {
         <span class="term-role"></span><span class="term-status" role="status"></span></div>
       <p class="term-task"></p>
       <div class="term-actions">
+        <button type="button" class="prompt">Prompt</button>
         <button type="button" class="history">History</button>
         <button type="button" class="reconnect">Reconnect</button>
         <button type="button" class="expand">Full screen</button>
@@ -78,7 +81,9 @@ export class AgentTerminal {
     this.note = this.element.querySelector(".term-note");
     this.controlButton = this.element.querySelector(".control");
     this.historyButton = this.element.querySelector(".history");
+    this.promptButton = this.element.querySelector(".prompt");
     this.element.querySelector(".term-name").textContent = member.name;
+    this.promptButton.addEventListener("click", () => openMemberPrompt(this.team, this.member.name, this.member.user, this.promptButton));
     this.element.addEventListener("pointerdown", () => selectCard(this));
     this.element.addEventListener("focusin", () => selectCard(this));
     this.historyButton.addEventListener("click", () => {
@@ -111,7 +116,10 @@ export class AgentTerminal {
     // Offline cards show the reason in the terminal area, so it is not repeated here.
     this.element.querySelector(".term-task").textContent = tasks.length ? "Working on " + tasks.join("; ") : "";
     this.element.querySelector(".dot").className = "dot" + (this.state.live ? " alive" : member.agent ? " dead" : "");
-    for (const b of this.element.querySelectorAll(".term-actions button")) b.hidden = !this.state.live;
+    // The prompt is stored server-side, so it stays viewable without a terminal.
+    this.promptButton.hidden = false;
+    this.promptButton.setAttribute("aria-label", `Show ${member.name}'s prompt`);
+    for (const b of this.element.querySelectorAll(".term-actions button:not(.prompt)")) b.hidden = !this.state.live;
     this.element.classList.toggle("offline", !this.state.live);
     if (!this.state.live) {
       if (first || before.live || before.log !== this.state.log) {

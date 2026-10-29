@@ -52,6 +52,10 @@ Leader 的 Claude 进程退出后，10 秒后重启，用 `TEAM_WORKER_LEADER_RE
 
 `bins` 先用 `make web` 构建看板页面（需要宿主机有 Node.js 和 npm），再用宿主机的 Go 编译（`CGO_ENABLED=0`），不依赖容器里的 glibc。只换 `team-worker` CLI 时不重启也立即生效；`team-workerd` 和 `team-worker-ops leader watch` 是长期运行的进程，要重启容器才会换成新版本。重启会结束正在运行的 Agent。
 
+macOS 宿主机与 Linux 容器不要共用同一份 `node_modules`。在挂载的 `/workspace/internal/board/web` 中运行 `npm ci` 会把宿主机的原生构建依赖换成 Linux 版本，导致宿主机随后构建时报 `Cannot find native binding`。容器内构建应使用独立工作副本或单独的依赖卷；已经混用时，在宿主机该目录重新运行 `npm ci` 恢复。
+
+默认 Nginx 配置反向代理二进制内置的看板页面。如果部署环境另外配置了静态看板目录，更新二进制后还需同步该目录的 HTML 和 assets；否则 API 已更新，浏览器仍会加载旧界面。同步静态 HTML 时保留 `subpath.js` 的 `/team-worker` 前缀注入。
+
 ## 一个端口访问多个面板
 
 Nginx 在同一地址、同一端口下按路径分发：
