@@ -4,10 +4,17 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>team-worker board</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%230b0f15'/%3E%3Ccircle cx='8' cy='8' r='3' fill='%23e8c47e'/%3E%3C/svg%3E">
 </head>
 <body>
 <nav class="rail" aria-label="Teams and members">
-  <div class="brand">team-worker</div>
+  <div class="rail-head">
+    <div class="brand">team-worker <span>// board</span></div>
+    <button type="button" class="rail-toggle" id="rail-toggle" aria-controls="teams" aria-expanded="true">
+      <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.3">
+        <rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><path d="M5.5 2.5v11"/></svg>
+    </button>
+  </div>
   <ul class="teams" id="teams"></ul>
 </nav>
 <main id="main">
