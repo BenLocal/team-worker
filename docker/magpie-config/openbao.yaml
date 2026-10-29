@@ -1,0 +1,13 @@
+# OpenBao secrets imported when TEAM_WORKER_OPENBAO=1, after manual init and unseal.
+# The import token is read from /etc/team-worker/openbao.token (TEAM_WORKER_OPENBAO_TOKEN_FILE).
+# secrets:
+#   team-worker/env:
+#     SERVICE_TOKEN: "<value>"
+# Files rendered by OpenBao Agent (mode 0600) from the secrets above:
+# files:
+#   - path: /home/node/.config/team-worker/secrets.env
+#     template: |
+#       {{ with secret "secret/data/team-worker/env" }}{{ range $k, $v := .Data.data }}export {{ $k }}={{ $v }}
+#       {{ end }}{{ end }}
+secrets: {}
+files: []

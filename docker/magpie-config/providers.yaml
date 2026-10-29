@@ -1,0 +1,20 @@
+# 每次容器启动时按 id 创建或更新；API Key 可用 key_env 引用环境变量。
+providers:
+  - id: internal
+    api: openai
+    url_env: LLM_API_BASE
+    key: ""
+    models:
+      - deepseek-v4.1-flash
+
+# 多个 provider/model 可组合为一个自动切换的模型。
+groups: []
+# groups:
+#   - id: coding
+#     models: [internal/deepseek-v4.1-flash, backup/another-model]
+#     routing: order
+#     stays: "off"
+
+claude:
+  model: internal/deepseek-v4.1-flash
+# 外部供应商可用 api: anthropic / responses / gemini，凭据用 key_env: API_KEY。

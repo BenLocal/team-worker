@@ -1,0 +1,17 @@
+[Unit]
+Description=Magpie gateway and Web services
+
+[Service]
+Type=exec
+User=node
+Group=node
+EnvironmentFile=/run/team-worker/agent.env
+ExecStart=/usr/local/bin/team-worker-ops systemd magpie
+Restart=always
+RestartSec=3
+TimeoutStopSec=30
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

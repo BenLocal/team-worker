@@ -1,0 +1,19 @@
+[Unit]
+Description=OpenBao secrets server (enabled with TEAM_WORKER_OPENBAO=1)
+
+[Service]
+Type=exec
+User=node
+Group=node
+EnvironmentFile=/run/team-worker/agent.env
+ExecCondition=/bin/sh -c 'test "$${TEAM_WORKER_OPENBAO:-0}" = 1'
+ExecStartPre=/usr/bin/mkdir -p -m 700 /home/node/.openbao/data
+ExecStart=/usr/local/bin/bao server -config=/etc/openbao/openbao.hcl
+Restart=always
+RestartSec=3
+TimeoutStopSec=30
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

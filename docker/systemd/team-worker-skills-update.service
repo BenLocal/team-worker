@@ -1,0 +1,14 @@
+[Unit]
+Description=Update Git skills configured for team-worker
+Requisite=team-worker.service
+After=team-worker.service
+
+[Service]
+Type=oneshot
+User=node
+Group=node
+EnvironmentFile=/run/team-worker/agent.env
+ExecStart=/usr/local/bin/team-worker-ops skills --update
+TimeoutStartSec=15min
+StandardOutput=journal+console
+StandardError=journal+console
