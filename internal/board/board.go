@@ -1,34 +1,64 @@
-// Package board serves the read-only web board for watching teams.
+// Package board serves the web board for watching teams and their live
+// agent terminals.
 package board
 
 import (
 	"embed"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/benlocal/team-worker/internal/client"
 	"github.com/benlocal/team-worker/internal/proc"
 )
 
-//go:embed static
+// static holds the Vite build of the page; all: keeps files Vite names
+// with a leading underscore.
+//
+//go:embed all:static
 var static embed.FS
 
-// Handler serves the board page and a small JSON API backed by the daemon.
+// Handler serves the board page, a small JSON API backed by the daemon and
+// the live terminal endpoints.
 func Handler(c *client.Client) http.Handler {
+	return newHandler(c, daemonResolver(c))
+}
+
+func newHandler(c *client.Client, resolve resolver) http.Handler {
 	mux := http.NewServeMux()
-	page, _ := static.ReadFile("static/index.html")
-	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write(page)
+	files, _ := fs.Sub(static, "static")
+	fileServer := http.FileServerFS(files)
+	_, err := fs.Stat(files, "index.html")
+	built := err == nil
+	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+		// The page is a build artifact; a binary built without `make web`
+		// would otherwise serve a listing of the placeholder directory.
+		if !built {
+			http.Error(w, "The board page was not built into this binary; run `make web` and rebuild.", http.StatusServiceUnavailable)
+			return
+		}
+		// Vite fingerprints everything under assets/; the page itself must
+		// be revalidated so a new build is picked up.
+		if strings.HasPrefix(r.URL.Path, "/assets/") {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		} else {
+			w.Header().Set("Cache-Control", "no-cache")
+		}
+		fileServer.ServeHTTP(w, r)
 	})
+	terms := newTerminals(resolve)
+	mux.HandleFunc("POST /api/terminal/ticket", terms.handleTicket)
+	mux.HandleFunc("GET /api/terminal/ws", terms.handleWS)
 	mux.HandleFunc("GET /api/teams", func(w http.ResponseWriter, r *http.Request) {
 		teams, err := c.ListTeams(r.Context())
 		reply(w, teams, err)
 	})
 	mux.HandleFunc("GET /api/teams/{team}", func(w http.ResponseWriter, r *http.Request) {
-		b, err := c.Board(r.Context(), r.PathValue("team"), 100)
+		// The page shows the newest messages and pages back through the rest.
+		b, err := c.Board(r.Context(), r.PathValue("team"), 500)
 		reply(w, b, err)
 	})
 	mux.HandleFunc("GET /api/teams/{team}/agents/{name}/screen", func(w http.ResponseWriter, r *http.Request) {

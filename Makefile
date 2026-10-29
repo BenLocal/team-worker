@@ -1,7 +1,7 @@
 GO ?= go
 
 .DEFAULT_GOAL := help
-.PHONY: help build install test vet fmt clean
+.PHONY: help build install test vet fmt clean web
 
 help:
 	@printf '%s\n' \
@@ -10,13 +10,14 @@ help:
 		'make test     Run Go tests' \
 		'make vet      Run go vet' \
 		'make fmt      Format Go source files' \
+		'make web      Rebuild the board page into internal/board/static' \
 		'make clean    Remove bin/'
 
-build:
+build: web
 	mkdir -p bin
 	$(GO) build -o bin/ ./cmd/...
 
-install:
+install: web
 	$(GO) install ./cmd/...
 
 test:
@@ -30,3 +31,11 @@ fmt:
 
 clean:
 	rm -rf bin
+
+# The board page is embedded into team-worker; npm ci reruns only when the lockfile changes.
+WEB := internal/board/web
+web: $(WEB)/node_modules/.package-lock.json
+	cd $(WEB) && npm run build
+
+$(WEB)/node_modules/.package-lock.json: $(WEB)/package-lock.json
+	cd $(WEB) && npm ci

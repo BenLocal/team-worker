@@ -7,7 +7,7 @@
 
 ## 安装
 
-需要 Go 1.26 或更新版本。
+需要 Go 1.26 或更新版本，以及 Node.js 22 或更新版本：Web 看板页面（`internal/board/web`，Vite 构建）在 `make build` 时生成并嵌入 `team-worker`，构建产物不入库。
 
 ```bash
 make build     # 生成 bin/team-worker 和 bin/team-workerd
@@ -72,7 +72,11 @@ tmux attach -t team-worker-my-team        # 直接进入各 Agent 的窗口
 3. 注入 `TEAM_WORKER_*` 身份变量。
 4. 把身份、团队说明、任务和协作规则作为第一条提示词发给 Agent。
 
-对 claude、codex、gemini、kimi、dsh、pi 这几个 CLI，`spawn` 会自动加上跳过权限确认的参数（用 `--no-skip-permissions` 关闭），并自动确认首次进入目录时的信任提示。其他 CLI 在 tmux 后端下，提示词会在启动后粘贴到终端里；在 subprocess 后端下，提示词从 stdin 传入。
+每种 CLI 怎样启动由**适配器**决定：加哪些权限参数（可以用 `--no-skip-permissions` 关闭）、提示词怎么传进去、需要哪些环境变量、启动时的确认画面怎么处理。项目内置了 claude、codex、gemini、kimi、qwen、opencode、dsh、pi 的适配器。其他 CLI，或者想调整内置适配器的行为，都可以在 `~/.team-worker/agents/<name>.toml` 里声明，不用改代码。环境变量按"调用者环境 → 适配器 → 模板 → `--env` → 身份变量"的顺序一层层合成，值里可以用 `${NAME}` 引用调用者的环境变量。完整规则见 [docs/agents.md](docs/agents.md)。
+
+Claude Code 的 Agent 还会自动装上 team-worker 的 hook：它准备停下时，会先收到新消息、自己的待办任务，以及（对 leader 而言）团队的进展；干活途中也能收到消息；上下文被压缩后，会重新拿到团队信息。Agent 已经停在输入框时，hook 不会被触发；这时如果有未读消息，daemon 会往它的 tmux 终端里输入一行提醒，把它唤醒。这一机制对所有 tmux 后端的 CLI 都有效，也包括没有 hook 的 CLI。你在自己终端里启动的 Claude 会话也能用这套 hook：`claude --settings "$(team-worker hook settings --role leader)"`。详见 [docs/agents.md](docs/agents.md#hook让消息和任务自动送到-agent-面前)。pi 通过内置扩展接入同一套逻辑。和 Claude 不同，pi 停在输入框时，扩展会自己开启新的一轮，不需要往终端里打字提醒。Codex 的 hook 目前是实验性功能，默认关闭。
+
+想在启动前确认会执行什么，用 `--dry-run`：它会打印选中的适配器、最终命令，以及每个环境变量的来源（不打印值），不会启动任何东西。
 
 Agent 退出时，退出钩子会通知服务。如果 tmux 窗口是被直接关掉的，退出钩子来不及执行，服务每 10 秒检查一次进程，同样能发现。两种情况下，这个 Agent 手上 `in_progress` 的任务都会退回 `pending`，并通知 leader。
 
@@ -100,7 +104,7 @@ team-worker board show my-team     # 终端里查看成员状态、任务和最�
 team-worker board serve -p 8080    # 浏览器打开 http://127.0.0.1:8080，点成员可看实时终端
 ```
 
-Web 看板是只读的，默认只监听 127.0.0.1。
+Web 看板是只读的，默认只监听 127.0.0.1。 `board serve --link NAME=URL`（可重复）在页面标题栏右侧显示到其他服务的链接，例如 `--link Docs=https://example.com`。
 
 ## Agent skill
 
@@ -126,11 +130,30 @@ Web 看板是只读的，默认只监听 127.0.0.1。
 team-worker.db        SQLite 数据库（WAL 模式）
 team-workerd.sock     API socket，权限 0600
 team-workerd.lock     防止重复启动
-team-workerd.log      自动拉起时的服务日志
+team-workerd.log      自动拉起时的服务日志（按大小轮转，旧文件为 .1 到 .5）
+team-workerd.out      自动拉起时的启动错误和崩溃输出
 workspaces/<team>/<agent>/   spawn 创建的 Agent 工作目录
 logs/<team>/<agent>.log      subprocess 后端的 Agent 输出
 run/                  tmux 后端启动时临时写入的环境变量文件，读完即删
 ```
+
+## 日志
+
+team-workerd 记录这些事件：
+
+- **状态变化**（info 级别）：团队创建和删除、成员加入、任务创建、任务的状态、负责人、锁或依赖发生变化（包括由谁修改）、团队说明更新、Agent 注册和退出、消息发送和广播。消息只记发件人、收件人、类型和字数，不记正文。
+- **请求**：出错的请求按 warn 记录（5xx 按 error），带上错误信息；超过 2 秒的请求也按 warn 记为慢请求，长轮询（带 `wait=` 参数的请求）除外。其余请求按 debug 记录。
+- **后台任务**：daemon 发现 Agent 已退出、往终端打字提醒空闲的 Agent。
+
+| 参数 | 环境变量 | 默认 |
+|---|---|---|
+| `--log-level` | `TEAM_WORKER_LOG_LEVEL` | `info`（可选 `debug`、`warn`、`error`） |
+| `--log-format` | `TEAM_WORKER_LOG_FORMAT` | `text`（可选 `json`） |
+| `--log-file` | `TEAM_WORKER_LOG_FILE` | 空，写到 stderr |
+| `--log-max-size` | `TEAM_WORKER_LOG_MAX_SIZE` | 单个文件达到 20 MB 时轮转 |
+| `--log-max-files` | `TEAM_WORKER_LOG_MAX_FILES` | 保留 5 个轮转文件（`.1` 到 `.5`） |
+
+由 CLI 自动拉起的 daemon 写日志到 `<数据目录>/team-workerd.log` 并按上表轮转；启动失败或崩溃时的输出单独写在 `team-workerd.out`。手动在前台运行 `team-workerd` 时，日志写到 stderr，由 systemd、Docker 等负责收集。
 
 ## API
 

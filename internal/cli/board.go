@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -95,14 +96,37 @@ func printBoard(w io.Writer, b model.Board) {
 	}
 }
 
+// boardLink is a link to another service shown in the board header.
+type boardLink struct {
+	Name string `json:"name"`
+	URL  string `json:"url"`
+}
+
+func parseBoardLinks(pairs []string) ([]boardLink, error) {
+	links := []boardLink{}
+	for _, p := range pairs {
+		name, url, ok := strings.Cut(p, "=")
+		if !ok || strings.TrimSpace(name) == "" || strings.TrimSpace(url) == "" {
+			return nil, fmt.Errorf("invalid --link %q: use NAME=URL", p)
+		}
+		links = append(links, boardLink{Name: strings.TrimSpace(name), URL: strings.TrimSpace(url)})
+	}
+	return links, nil
+}
+
 func (a *app) boardServeCmd() *cobra.Command {
 	var host string
 	var port int
+	var linkPairs []string
 	cmd := &cobra.Command{
 		Use:   "serve",
 		Short: "Serve the web board (read-only, with live agent terminals)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			links, err := parseBoardLinks(linkPairs)
+			if err != nil {
+				return a.fail(err)
+			}
 			c := a.client()
 			if _, err := c.ListTeams(cmd.Context()); err != nil {
 				return a.fail(err)
@@ -114,7 +138,13 @@ func (a *app) boardServeCmd() *cobra.Command {
 			}
 			ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
 			defer stop()
-			srv := &http.Server{Handler: board.Handler(c), ReadHeaderTimeout: 10 * time.Second}
+			mux := http.NewServeMux()
+			mux.HandleFunc("GET /api/links", func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(links)
+			})
+			mux.Handle("/", board.Handler(c))
+			srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 			go func() {
 				<-ctx.Done()
 				shutdown, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -130,5 +160,7 @@ func (a *app) boardServeCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&host, "host", "127.0.0.1", "Address to listen on")
 	cmd.Flags().IntVarP(&port, "port", "p", 8080, "Port to listen on")
+	cmd.Flags().StringArrayVar(&linkPairs, "link", nil,
+		"Link to another service in the page header, NAME=URL (repeatable), e.g. --link Docs=https://example.com")
 	return cmd
 }
