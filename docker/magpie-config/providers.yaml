@@ -17,4 +17,8 @@ groups: []
 
 claude:
   model: internal/deepseek-v4.1-flash
+# Codex 默认沿用 claude.model；需要不同模型或推理强度时单独设置。
+# codex:
+#   model: internal/deepseek-v4.1-flash
+#   effort: high   # minimal / low / medium / high / xhigh
 # 外部供应商可用 api: anthropic / responses / gemini，凭据用 key_env: API_KEY。

@@ -75,6 +75,7 @@ type magpieConfig struct {
 	providers []map[string]any
 	groups    []map[string]any
 	claude    map[string]any
+	codex     map[string]any
 }
 
 // entryList converts a list (or an absent value) to a list of objects.
@@ -109,7 +110,7 @@ func validateProviders(raw any, env map[string]string) (magpieConfig, error) {
 	if !ok {
 		return c, errors.New("providers.yaml must be a YAML object")
 	}
-	if !keysWithin(config, "providers", "groups", "claude") {
+	if !keysWithin(config, "providers", "groups", "claude", "codex") {
 		return c, errors.New("providers.yaml contains unknown top-level fields")
 	}
 	for _, key := range []string{"providers", "groups"} {
@@ -227,6 +228,23 @@ func validateProviders(raw any, env map[string]string) (magpieConfig, error) {
 			return c, errors.New("unsupported claude.effort")
 		}
 	}
+	c.codex = map[string]any{}
+	if v, present := config["codex"]; present {
+		m, isMap := asMap(v)
+		if !isMap || !keysWithin(m, "model", "effort") {
+			return c, errors.New("codex supports only the model and effort fields")
+		}
+		c.codex = m
+	}
+	if _, isString := stringOr(c.codex, "model", ""); !isString {
+		return c, errors.New("codex.model must be a string")
+	}
+	if v, present := c.codex["effort"]; present {
+		efforts := map[string]bool{"minimal": true, "low": true, "medium": true, "high": true, "xhigh": true}
+		if s, isString := v.(string); !isString || !efforts[s] {
+			return c, errors.New("unsupported codex.effort")
+		}
+	}
 	return c, nil
 }
 
@@ -329,6 +347,21 @@ func configureMagpie(path string, env map[string]string, magpie func(...string) 
 		}
 		if err := trustWorkspace(); err != nil {
 			return "", err
+		}
+	}
+	// Codex workers use codex.model, or else the leader's model like dsh.
+	codexModel, _ := stringOr(c.codex, "model", "")
+	if codexModel == "" {
+		codexModel = model
+	}
+	if _, err := exec.LookPath("codex"); err == nil && codexModel != "" {
+		if err := magpie("codex", codexModel); err != nil {
+			return "", err
+		}
+		if effort, ok := c.codex["effort"].(string); ok {
+			if err := magpie("codex", "effort", effort); err != nil {
+				return "", err
+			}
 		}
 	}
 	if len(pending) > 0 {
