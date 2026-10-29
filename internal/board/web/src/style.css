@@ -177,7 +177,7 @@ main { height: 100vh; display: flex; flex-direction: column; min-width: 0; paddi
 
 /* ---- live terminals ---- */
 .terms { flex: 1; min-height: 0; overflow-y: auto; display: grid; gap: 14px; align-content: start;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 540px), 1fr)); padding: 2px; }
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 540px), 1fr)); grid-auto-rows: max-content; padding: 2px; }
 .terms .intro { grid-column: 1 / -1; margin: 0; color: var(--muted); max-width: 90ch; }
 .term-card { display: flex; flex-direction: column; min-width: 0; background: var(--term-bg); color: var(--term-fg);
   border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; }
@@ -202,12 +202,13 @@ main { height: 100vh; display: flex; flex-direction: column; min-width: 0; paddi
 .term-note:empty, .term-error:empty { display: none; }
 /* ghostty-web focuses an absolutely positioned hidden textarea on mousedown;
    without a positioned ancestor it sits at the page top and scrolls the page there. */
-.term-host { position: relative; flex: none; height: 380px; min-height: 120px; padding: 6px 8px; overflow: hidden; background: var(--term-bg); }
+.term-host { position: relative; flex: none; height: 380px; min-height: 380px; padding: 6px 8px; overflow: hidden; background: var(--term-bg); }
 /* A very wide agent window still scrolls sideways rather than being cut off. */
 .term-surface { overflow-x: auto; }
 .term-card.wide { grid-column: 1 / -1; }
-.term-card:fullscreen .term-host { flex: 1; height: auto; }
-.term-surface { width: 100%; height: 100%; }
+.term-card:fullscreen .term-host { flex: 1; height: auto; min-height: 120px; }
+.term-surface { width: 100%; height: 100%; caret-color: transparent; }
+.term-surface textarea { outline: none; }
 .term-surface[hidden] { display: none; }
 .term-card.offline .term-host { height: auto; min-height: 0; }
 .term-reason { margin: 0; padding: 8px 4px 12px; color: var(--muted); }

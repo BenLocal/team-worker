@@ -200,6 +200,48 @@ export class AgentTerminal {
     return new Terminal({ fontSize: 13, fontFamily: FONT, cursorBlink: blink, scrollback: 5000, theme: THEME });
   }
 
+  configureInput() {
+    const input = this.liveHost.querySelector("textarea");
+    this.imeInput = input;
+    this.liveHost.contentEditable = "false";
+    this.liveHost.style.position = "relative";
+    Object.assign(input.style, {
+      clipPath: "none", pointerEvents: "none", zIndex: "1",
+      color: THEME.foreground, background: THEME.background,
+    });
+    // Ghostty focuses its contenteditable container; IME needs a real caret
+    // anchored at the canvas cursor instead of the container's top-left corner.
+    this.liveHost.addEventListener("focusin", (event) => {
+      this.positionInput();
+      if (event.target === this.liveHost) input.focus({ preventScroll: true });
+    });
+    input.addEventListener("compositionstart", () => {
+      this.positionInput();
+      input.style.opacity = "1";
+    });
+    input.addEventListener("compositionend", () => {
+      queueMicrotask(() => { input.value = ""; input.style.opacity = "0"; });
+    });
+    this.positionInput();
+    if (document.activeElement === this.liveHost) input.focus({ preventScroll: true });
+  }
+
+  positionInput() {
+    const input = this.imeInput;
+    const canvas = this.liveHost?.querySelector("canvas");
+    if (!input || !canvas || !this.terminal?.renderer) return;
+    const { width, height } = this.terminal.renderer.getMetrics();
+    const cursor = this.terminal.buffer.active;
+    const x = Math.min(cursor.cursorX, this.terminal.cols - 1) * width;
+    Object.assign(input.style, {
+      position: "absolute", left: canvas.offsetLeft + x + "px",
+      top: canvas.offsetTop + cursor.cursorY * height + "px",
+      width: Math.max(width, canvas.offsetWidth - x) + "px", height: height + "px",
+      fontFamily: this.terminal.options.fontFamily,
+      fontSize: this.terminal.options.fontSize + "px", lineHeight: height + "px",
+    });
+  }
+
   fit() {
     if (!this.terminal || !this.host.clientWidth) return;
     if (this.historyTerminal) { this.historyFit.fit(); return; }
@@ -247,7 +289,10 @@ export class AgentTerminal {
     }
     // ghostty redraws the canvas for a new font on the next frame, so size the
     // card again once the canvas has its final height.
-    const grow = () => { this.host.style.height = full ? "" : canvas.offsetHeight + 12 + "px"; };
+    const grow = () => {
+      this.host.style.height = full ? "" : canvas.offsetHeight + 12 + "px";
+      this.positionInput();
+    };
     grow();
     requestAnimationFrame(() => requestAnimationFrame(grow));
   }
@@ -314,6 +359,7 @@ export class AgentTerminal {
     clearTimeout(this.retryTimer);
     if (this.socket) { this.socket.onclose = null; this.socket.close(); this.socket = null; }
     this.inputSubscription?.dispose();
+    this.imeInput = null;
     this.terminal?.dispose();
     this.terminal = null;
     this.control = false;
@@ -347,6 +393,7 @@ export class AgentTerminal {
       this.fitAddon = new FitAddon();
       this.terminal.loadAddon(this.fitAddon);
       this.terminal.open(this.liveHost);
+      if (control) this.configureInput();
       this.fit();
       const data = await request("api/terminal/ticket", {
         team: this.team, agent: this.member.name, control, cols: this.terminal.cols, rows: this.terminal.rows,
@@ -375,7 +422,7 @@ export class AgentTerminal {
           const message = JSON.parse(event.data);
           if (message.type === "history") this.showHistory(message);
           else if (message.type === "size") this.setPaneSize(message.cols, message.rows);
-        } else this.terminal.write(new Uint8Array(event.data));
+        } else this.terminal.write(new Uint8Array(event.data), () => this.positionInput());
       };
       socket.onclose = () => {
         if (generation !== this.generation || this.disposed) return;
