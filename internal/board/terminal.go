@@ -66,16 +66,19 @@ func tmuxRun(ctx context.Context, args ...string) (string, error) {
 
 // paneInfo looks up a live pane; a missing or dead pane is unavailable.
 func paneInfo(ctx context.Context, target string) (pane, error) {
+	// tmux 3.3 prints control characters such as tabs in formats as "_", so
+	// fields are space-separated with the session name, which may contain
+	// spaces, last.
 	out, err := tmuxRun(ctx, "display-message", "-p", "-t", target,
-		"#{pane_id}\t#{pane_dead}\t#{session_name}\t#{window_id}")
+		"#{pane_id} #{pane_dead} #{window_id} #{session_name}")
 	if err != nil {
 		return pane{}, errUnavailable
 	}
-	f := strings.Split(strings.TrimRight(out, "\n"), "\t")
+	f := strings.SplitN(strings.TrimRight(out, "\n"), " ", 4)
 	if len(f) != 4 || f[0] != target || f[1] != "0" {
 		return pane{}, errUnavailable
 	}
-	return pane{id: f[0], session: f[2], window: f[3]}, nil
+	return pane{id: f[0], session: f[3], window: f[2]}, nil
 }
 
 // daemonResolver resolves panes from the agent records kept by team-workerd.
@@ -331,7 +334,9 @@ func openViewer(ctx context.Context, p pane, tk ticket) (*viewer, error) {
 	if !tk.control {
 		flags += ",read-only"
 	}
-	cmd := exec.Command("tmux", "attach-session", "-f", flags, "-t", v.name)
+	// -u: the board's environment usually has no UTF-8 locale, and without it the
+	// tmux client draws every non-ASCII character (box drawing, CJK) as "_".
+	cmd := exec.Command("tmux", "-u", "attach-session", "-f", flags, "-t", v.name)
 	cmd.Env = append(attachEnv(), "TERM=xterm-256color")
 	f, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: uint16(tk.cols), Rows: uint16(tk.rows)})
 	if err != nil {

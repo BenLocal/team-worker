@@ -9,6 +9,7 @@
 !docker/ops/
 !docker/*.js
 !docker/nginx.conf
+!docker/nginx-proxy.conf
 !docker/openbao.hcl
 !docker/magpie-config/
 !docker/systemd/

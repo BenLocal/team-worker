@@ -110,6 +110,7 @@ RUN mkdir -p /opt/team-worker/bin \
     && printf 'export PATH="/opt/team-worker/bin:/opt/venv/bin:$PATH"\n' > /etc/profile.d/team-worker.sh
 COPY skills/team-worker/ /opt/team-worker/skills/team-worker/
 COPY docker/nginx.conf /etc/nginx/team-worker.conf
+COPY docker/nginx-proxy.conf /etc/nginx/team-worker-proxy.conf
 COPY docker/openbao.hcl /etc/openbao/openbao.hcl
 COPY docker/subpath.js /etc/nginx/subpath.js
 COPY docker/systemd/ /etc/systemd/system/
