@@ -52,6 +52,7 @@ func (h hookTarget) leader() bool { return h.role == "leader" }
 
 // hookInput is the part of the agent CLI's hook JSON that team-worker reads.
 type hookInput struct {
+	SessionID      string `json:"session_id"`
 	StopHookActive bool   `json:"stop_hook_active"`
 	Source         string `json:"source"`
 	Cwd            string `json:"cwd"`
@@ -331,7 +332,18 @@ func (a *app) hookSessionStartCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			in := a.readHookInput()
-			if !t.resolve() || in.Source == "startup" {
+			if !t.resolve() {
+				return nil
+			}
+			if runID := os.Getenv("TEAM_WORKER_RUN_ID"); runID != "" && in.SessionID != "" {
+				if session, err := a.client().GetSession(cmd.Context(), t.team, t.agent, t.user); err == nil && session.RunID == runID {
+					session.SessionID, session.Source = in.SessionID, "hook"
+					if _, err := a.client().SaveSession(cmd.Context(), session); err != nil {
+						fmt.Fprintf(a.errOut, "capture session: %v\n", err)
+					}
+				}
+			}
+			if in.Source == "startup" {
 				return nil
 			}
 			text, err := a.teamContext(cmd.Context(), t, in.Cwd)

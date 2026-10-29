@@ -3,10 +3,12 @@ package cli
 import (
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
 
+	"github.com/benlocal/team-worker/internal/client"
 	"github.com/benlocal/team-worker/internal/config"
 	"github.com/benlocal/team-worker/internal/model"
 	"github.com/benlocal/team-worker/internal/proc"
@@ -15,20 +17,24 @@ import (
 
 func (a *app) lifecycleCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "lifecycle", Short: "Agent exit, idle and shutdown signals"}
-	cmd.AddCommand(a.onExitCmd(), a.idleCmd(), a.requestShutdownCmd(),
+	cmd.AddCommand(a.onExitCmd(), a.idleCmd(), a.requestShutdownCmd(), a.superviseCmd(),
 		a.shutdownReplyCmd("approve-shutdown", "shutdown_approved", "Approve a shutdown request, then exit"),
 		a.shutdownReplyCmd("reject-shutdown", "shutdown_rejected", "Reject a shutdown request and keep working"))
 	return cmd
 }
 
 func (a *app) onExitCmd() *cobra.Command {
-	var team, agent string
+	var team, agent, runID string
+	var code int
 	cmd := &cobra.Command{
 		Use:   "on-exit",
 		Short: "Record an agent's exit (run automatically by spawn)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			res, err := a.client().AgentExited(cmd.Context(), team, agent)
+			if err := a.captureNativeSession(cmd.Context(), team, agent, runID); err != nil {
+				fmt.Fprintf(a.errOut, "capture session: %v\n", err)
+			}
+			res, err := a.client().AgentExitedRun(cmd.Context(), team, agent, runID, code)
 			if err != nil {
 				return a.fail(err)
 			}
@@ -40,6 +46,8 @@ func (a *app) onExitCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVarP(&team, "team", "t", "", "Team name")
 	cmd.Flags().StringVarP(&agent, "agent", "n", "", "Agent name")
+	cmd.Flags().StringVar(&runID, "run-id", os.Getenv("TEAM_WORKER_RUN_ID"), "Agent run id")
+	cmd.Flags().IntVar(&code, "code", 0, "Agent exit code")
 	cmd.MarkFlagRequired("team")
 	cmd.MarkFlagRequired("agent")
 	return cmd
@@ -113,6 +121,16 @@ func (a *app) shutdownReplyCmd(use string, msgType model.MessageType, short stri
 		Short: short,
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if msgType == "shutdown_approved" {
+				name := config.IdentityFromEnv().AgentName
+				ag, err := a.client().GetAgent(cmd.Context(), args[0], name)
+				if err == nil {
+					_, err = a.client().RequestAgentStop(cmd.Context(), args[0], name, ag.RunID)
+				}
+				if err != nil && !client.IsNotFound(err) {
+					return a.fail(err)
+				}
+			}
 			content := fmt.Sprintf("%s for request %s", strings.ReplaceAll(string(msgType), "_", " "), args[1])
 			if reason != "" {
 				content += ": " + reason
@@ -131,7 +149,7 @@ func (a *app) shutdownReplyCmd(use string, msgType model.MessageType, short stri
 
 func (a *app) agentCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "agent", Short: "Spawned agent processes"}
-	cmd.AddCommand(a.agentListCmd(), a.agentStopCmd(), a.agentScreenCmd(), a.agentPromptCmd())
+	cmd.AddCommand(a.agentListCmd(), a.agentStopCmd(), a.agentScreenCmd(), a.agentPromptCmd(), a.agentResumeCmd())
 	return cmd
 }
 
@@ -185,10 +203,16 @@ func (a *app) agentStopCmd() *cobra.Command {
 			if err != nil {
 				return a.fail(err)
 			}
+			if err := a.captureNativeSession(cmd.Context(), ag.Team, ag.Name, ag.RunID); err != nil {
+				fmt.Fprintf(a.errOut, "capture session: %v\n", err)
+			}
+			if _, err := c.RequestAgentStop(cmd.Context(), ag.Team, ag.Name, ag.RunID); err != nil {
+				return a.fail(err)
+			}
 			if err := proc.Stop(ag); err != nil {
 				return a.fail(err)
 			}
-			res, err := c.AgentExited(cmd.Context(), args[0], args[1])
+			res, err := c.AgentExitedRun(cmd.Context(), args[0], args[1], ag.RunID, 0)
 			if err != nil {
 				return a.fail(err)
 			}

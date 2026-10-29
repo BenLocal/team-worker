@@ -41,7 +41,7 @@ func CodexHookOverrides(workerBin, team, agentName string, leader bool) []string
 	return []string{
 		"-c", "hooks.Stop=" + entry("", cmds["stop"], stopTimeout),
 		"-c", "hooks.PostToolUse=" + entry("*", cmds["post-tool-use"], 15),
-		"-c", "hooks.SessionStart=" + entry("resume|clear|compact", cmds["session-start"], 15),
+		"-c", "hooks.SessionStart=" + entry("startup|resume|clear|compact", cmds["session-start"], 15),
 	}
 }
 
@@ -72,7 +72,7 @@ func ClaudeHookSettings(workerBin, team, agentName string, leader bool) string {
 		"Stop": {{Hooks: []hook{{Type: "command", Command: cmd("stop"), Timeout: stopTimeout,
 			StatusMessage: "Waiting for team messages and tasks..."}}}},
 		"PostToolUse":  {{Matcher: "*", Hooks: []hook{{Type: "command", Command: cmd("post-tool-use"), Timeout: 15}}}},
-		"SessionStart": {{Matcher: "resume|clear|compact", Hooks: []hook{{Type: "command", Command: cmd("session-start"), Timeout: 15}}}},
+		"SessionStart": {{Matcher: "startup|resume|clear|compact", Hooks: []hook{{Type: "command", Command: cmd("session-start"), Timeout: 15}}}},
 	}}
 	data, _ := json.Marshal(settings)
 	return string(data)

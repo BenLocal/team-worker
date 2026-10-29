@@ -9,8 +9,10 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/benlocal/team-worker/internal/client"
 	"github.com/benlocal/team-worker/internal/config"
 	"github.com/benlocal/team-worker/internal/model"
+	"github.com/benlocal/team-worker/internal/proc"
 	"github.com/benlocal/team-worker/internal/store"
 )
 
@@ -249,6 +251,18 @@ func (a *app) teamCleanupCmd() *cobra.Command {
 			name := args[0]
 			if !force && !a.jsonOut && !a.confirm(fmt.Sprintf("Delete team '%s' and all its data?", name)) {
 				return a.fail(errors.New("aborted"))
+			}
+			agents, err := a.client().StopTeamAgents(cmd.Context(), name)
+			if err != nil && !client.IsNotFound(err) {
+				return a.fail(err)
+			}
+			for _, ag := range agents {
+				if ag.Status != model.AgentRunning && ag.Backend != "tmux" {
+					continue
+				}
+				if err := proc.Stop(ag); err != nil {
+					return a.fail(err)
+				}
 			}
 			deleted, err := a.client().DeleteTeam(cmd.Context(), name)
 			if err != nil {

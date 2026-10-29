@@ -42,7 +42,7 @@ func Stop(a model.Agent) error {
 	case "tmux":
 		return tmux.KillPane(a.Target)
 	case "subprocess":
-		if a.PID <= 0 {
+		if a.PID <= 1 {
 			return nil
 		}
 		err := syscall.Kill(-a.PID, syscall.SIGTERM)

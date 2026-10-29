@@ -149,8 +149,12 @@ func (s *Server) routes() {
 
 	m.HandleFunc("GET /v1/teams/{team}/agents", s.listAgents)
 	m.HandleFunc("POST /v1/teams/{team}/agents", s.registerAgent)
+	m.HandleFunc("POST /v1/teams/{team}/agents/stop", s.stopTeamAgents)
 	m.HandleFunc("GET /v1/teams/{team}/agents/{name}", s.getAgent)
 	m.HandleFunc("POST /v1/teams/{team}/agents/{name}/exit", s.agentExited)
+	m.HandleFunc("POST /v1/teams/{team}/agents/{name}/stop", s.requestAgentStop)
+	m.HandleFunc("GET /v1/teams/{team}/sessions/{name}", s.getSession)
+	m.HandleFunc("PUT /v1/teams/{team}/sessions/{name}", s.saveSession)
 
 	m.HandleFunc("POST /v1/teams/{team}/messages", s.send)
 	m.HandleFunc("POST /v1/teams/{team}/broadcast", s.broadcast)
@@ -324,6 +328,22 @@ func (s *Server) getPrompt(w http.ResponseWriter, r *http.Request) {
 	respond(w, map[string]string{"prompt": prompt}, err)
 }
 
+func (s *Server) getAgentPrompt(w http.ResponseWriter, r *http.Request) {
+	prompt, err := s.store.AgentPrompt(r.Context(), r.PathValue("team"), r.PathValue("name"), r.URL.Query().Get("user"))
+	respond(w, map[string]string{"prompt": prompt}, err)
+}
+
+func (s *Server) setAgentPrompt(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Prompt string `json:"prompt"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	changed, err := s.store.SetAgentPrompt(r.Context(), r.PathValue("team"), r.PathValue("name"), r.URL.Query().Get("user"), in.Prompt)
+	respond(w, map[string]bool{"changed": changed}, err)
+}
+
 func (s *Server) setPrompt(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Prompt string `json:"prompt"`
@@ -399,7 +419,16 @@ func (s *Server) getAgent(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) agentExited(w http.ResponseWriter, r *http.Request) {
-	res, err := s.store.AgentExited(r.Context(), r.PathValue("team"), r.PathValue("name"))
+	code := 0
+	if value := r.URL.Query().Get("code"); value != "" {
+		var err error
+		code, err = strconv.Atoi(value)
+		if err != nil {
+			respond(w, nil, &store.Error{Kind: store.KindInvalid, Msg: "invalid exit code"})
+			return
+		}
+	}
+	res, err := s.store.AgentExitedRun(r.Context(), r.PathValue("team"), r.PathValue("name"), r.URL.Query().Get("run_id"), code)
 	if err == nil && res.Changed {
 		s.log.Info("agent exited", "team", r.PathValue("team"), "agent", res.Agent, "released", len(res.Released))
 	}
@@ -515,20 +544,4 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(v)
-}
-
-func (s *Server) getAgentPrompt(w http.ResponseWriter, r *http.Request) {
-	prompt, err := s.store.AgentPrompt(r.Context(), r.PathValue("team"), r.PathValue("name"), r.URL.Query().Get("user"))
-	respond(w, map[string]string{"prompt": prompt}, err)
-}
-
-func (s *Server) setAgentPrompt(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		Prompt string `json:"prompt"`
-	}
-	if !decode(w, r, &in) {
-		return
-	}
-	changed, err := s.store.SetAgentPrompt(r.Context(), r.PathValue("team"), r.PathValue("name"), r.URL.Query().Get("user"), in.Prompt)
-	respond(w, map[string]bool{"changed": changed}, err)
 }

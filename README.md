@@ -99,6 +99,38 @@ team-worker agent prompt set my-team alice ""   # 清空专属提示词
 
 `spawn --task "..."` 会覆盖保存的专属提示词；未传 `--task` 时复用已有内容，显式传 `--task ""` 则清空。`launch` 会保存 TOML 中每个角色经过变量替换后的 `task`。会话恢复钩子会补回专属提示词和当前任务；`--dry-run` 不修改保存值。
 
+## 会话恢复与 keepalive
+
+`spawn` 会保存原生 CLI 的会话信息，进程退出不删除这些信息。Claude 和 pi 在启动前分配明确的会话 ID；Codex 优先从启用的会话钩子获取 ID，未启用钩子时，在退出、查看或恢复时按工作目录和 Agent 身份匹配本地记录。匹配不唯一时会报错，不自动选择最近会话。其他 CLI 可用 `session save` 提供准确 ID。
+
+```bash
+team-worker session show my-team --agent alice
+team-worker session save my-team --agent alice --session-id <原生会话ID>
+team-worker agent resume my-team alice --dry-run
+team-worker agent resume my-team alice
+
+# keepalive 默认关闭；开启后在未经批准的退出后续接同一会话。
+team-worker spawn tmux --team my-team -n alice --keepalive --max-restarts 3 --restart-delay 1s -- claude
+```
+
+恢复复用原 CLI 命令、工作目录和权限设置，并重新读取团队说明、成员提示词和当前任务。已有运行中的同名 Agent 时拒绝恢复，可用 `--replace` 明确替换。`agent resume` 支持 `--task`、`--keepalive`、`--max-restarts`、`--restart-delay` 覆盖保存的设置。
+
+keepalive 适用于 tmux 和 subprocess，正常退出和异常退出均受重试上限约束；默认最多连续重启 3 次，等待时间逐次加倍、最长 1 分钟，一次运行达到 1 分钟后重置连续次数。原生会话 ID 缺失时停止恢复并报错。每轮进程使用独立 `run_id`，旧进程的退出回报不会修改新一轮的状态。退出时任务仍退回 pending，恢复后需重新检查任务归属并领取。
+
+`agent stop`、批准 shutdown 和 `team cleanup` 会先保存停止意图，阻止后续重启。整个 tmux pane 或 supervisor 被结束后不会自动创建新 pane，可使用 `agent resume` 手动恢复。daemon 重启后已保存的会话仍可读取。
+
+数据库只保存会话标识和启动信息，原生 CLI 的历史文件仍需保留。环境变量的值不随会话保存；通过模板或 `--env` 设置的变量，手动恢复时需在调用者环境或新的 `--env` 参数中提供。Claude、Codex、Gemini、Kimi、Qwen、OpenCode、pi 和 dsh 分别构造自己的精确会话恢复参数；具体可用性取决于安装的 CLI 版本，未知 CLI 不支持自动恢复。
+
+恢复流程的可重复验收（使用隔离数据目录，不影响现有团队）：
+
+```bash
+make build
+python3 scripts/verify-sessions.py --bin-dir bin
+python3 scripts/verify-sessions.py --bin-dir bin --backend tmux
+# 使用现有 Claude provider 配置，额外发起两次真实模型请求：
+python3 scripts/verify-sessions.py --bin-dir bin --native-claude "$(command -v claude)"
+```
+
 ## 模板
 
 团队结构固定时，可以写一个 TOML 模板，用一条命令建好团队、任务依赖和所有 Agent：
@@ -135,6 +167,7 @@ Web 看板是只读的，默认只监听 127.0.0.1。 `board serve --link NAME=U
 | `TEAM_WORKER_USER` | 多用户场景下的用户名，收件箱按 `<user>_<name>` 区分 | 配置文件中的 `user` |
 | `TEAM_WORKER_WORKSPACE_DIR` | spawn 为 Agent 设置的工作目录 | 由 spawn 设置 |
 | `TEAM_WORKER_NO_AUTOSTART` | 设为任意值时不自动拉起服务 | 未设置 |
+| `TEAM_WORKER_START_BLOCKED_FILE` | keepalive 在该文件移除后才启动子进程；Docker 用于等待 provider Key 配置 | 未设置 |
 
 配置文件固定为 `~/.team-worker/config.json`，可设置 `data_dir` 和 `user`。Unix socket 路径不能超过约 100 个字符；数据目录路径较长时，用 `TEAM_WORKER_SOCKET` 把 socket 放到短路径下。
 
@@ -193,7 +226,10 @@ team-workerd 记录这些事件：
 | `GET /v1/teams/{team}/board` | 看板数据：成员及进程状态、任务、统计、最近消息 |
 | `GET/POST /v1/teams/{team}/agents` | 列出 Agent（含实时存活检测）/ 登记已启动的 Agent |
 | `GET /v1/teams/{team}/agents/{name}` | Agent 详情 |
-| `POST /v1/teams/{team}/agents/{name}/exit` | 记录 Agent 退出，退回它手上的任务并通知 leader |
+| `POST /v1/teams/{team}/agents/{name}/exit?run_id=...&code=...` | 按运行标识回报退出并释放任务；无标识的旧回报只适用于旧运行记录 |
+| `POST /v1/teams/{team}/agents/{name}/stop?run_id=...` | 保存该轮运行的停止意图 |
+| `POST /v1/teams/{team}/agents/stop` | 批量保存团队的停止意图并返回进程记录 |
+| `GET/PUT /v1/teams/{team}/sessions/{name}?user=...` | 读取 / 保存原生会话；保存时校验运行标识 |
 
 ```bash
 curl --unix-socket ~/.team-worker/team-workerd.sock http://x/v1/teams/my-team/tasks
@@ -217,4 +253,7 @@ Web 看板的提示词读取接口由 `board serve` 提供：
 - 不内置模板，团队结构完全由用户的模板定义。
 - 团队说明和成员专属提示词保存在 SQLite 中，重启时复用；成员提示词支持单独修改并通知对应成员。
 - 数据库按版本自动升级，旧库升级前自动备份；备份与恢复步骤见 [数据库升级与恢复](docs/agents-dot-md/environment.md#数据库升级与恢复)。
-- 尚未实现：`profile`/`preset`、`cost`、`plan`、`join` 审批、`harness`、会话恢复（keepalive / resume）、Web 看板接管终端输入。
+- Web 看板已支持 tmux 终端的实时查看和接管输入，同一个 Agent 同时只允许一个查看者接管。
+- 已支持原生会话标识持久化、手动续接和有限重试的 keepalive；自动恢复使用准确会话 ID，并在正常关停后停止。
+
+后续需求见 [TODO.md](TODO.md)。
