@@ -13,8 +13,8 @@ coverage.out
 # Board page: dependencies and the Vite build (`make web`). The placeholder
 # keeps go:embed compiling in a fresh clone.
 node_modules/
-/internal/board/static/*
-!/internal/board/static/.gitkeep
+/internal/board/dist/*
+!/internal/board/dist/.gitkeep
 
 # Deployment configs with credentials (e.g. copied from a server); never commit.
 docker/magpie-config.local/

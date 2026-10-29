@@ -15,11 +15,11 @@ import (
 	"github.com/benlocal/team-worker/internal/proc"
 )
 
-// static holds the Vite build of the page; all: keeps files Vite names
-// with a leading underscore.
+// dist holds the Vite build of the page (`make web`, not committed); all:
+// keeps files Vite names with a leading underscore.
 //
-//go:embed all:static
-var static embed.FS
+//go:embed all:dist
+var dist embed.FS
 
 // Handler serves the board page, a small JSON API backed by the daemon and
 // the live terminal endpoints.
@@ -29,7 +29,7 @@ func Handler(c *client.Client) http.Handler {
 
 func newHandler(c *client.Client, resolve resolver) http.Handler {
 	mux := http.NewServeMux()
-	files, _ := fs.Sub(static, "static")
+	files, _ := fs.Sub(dist, "dist")
 	fileServer := http.FileServerFS(files)
 	_, err := fs.Stat(files, "index.html")
 	built := err == nil

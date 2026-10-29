@@ -364,7 +364,7 @@ func TestLiveTerminalRejectsBinaryMessages(t *testing.T) {
 }
 
 func TestPageIsServedFromTheEmbeddedBuild(t *testing.T) {
-	if _, err := fs.Stat(static, "static/index.html"); err != nil {
+	if _, err := fs.Stat(dist, "dist/index.html"); err != nil {
 		t.Skip("board page not built; run `make web`")
 	}
 	srv := httptest.NewServer(newHandler(nil, nil))

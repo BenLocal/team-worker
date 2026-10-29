@@ -5,7 +5,7 @@ import { defineConfig } from "vite";
 export default defineConfig({
   base: "./",
   build: {
-    outDir: "../static",
+    outDir: "../dist",
     emptyOutDir: true,
     target: "es2022",
     // ghostty-web is one lazily loaded chunk with its WebAssembly inlined.
