@@ -123,5 +123,8 @@ func ResumeCommand(command []string, id string, interactive bool) ([]string, err
 	if client == "kimi" || client == "opencode" || client == "pi" {
 		flag = "--session"
 	}
+	if client == "dsh" && (sessionOption(command, "--profile") == "headless" || (len(command) > 1 && command[1] == "headless")) {
+		flag = "--session-id"
+	}
 	return append(args, flag, id), nil
 }
