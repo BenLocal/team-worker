@@ -84,9 +84,11 @@ team-workerd 在容器里以前台方式运行，日志写到 stderr，和其他
 
 ## 远程 CLI API
 
-设置 `TEAM_WORKER_API_KEY` 后，容器内 daemon 默认在 `127.0.0.1:8082` 开启 HTTP API，由 Nginx 转发到现有 Web 端口的 `/team-worker-api/`。客户端使用 `TEAM_WORKER_SERVER_URL=http://127.0.0.1:18080/team-worker-api`（端口按实际部署修改），并设置相同的 `TEAM_WORKER_API_KEY`。未配置 Key 时不开启 HTTP API；本地 socket 仍免 Key。
+容器内 daemon 默认在 `127.0.0.1:8082` 开启 HTTP API，由 Nginx 转发到现有 Web 端口的 `/team-worker-api/`。客户端使用 `TEAM_WORKER_SERVER_URL=http://127.0.0.1:18080/team-worker-api`（端口按实际部署修改），并设置相同的 `TEAM_WORKER_API_KEY`。Key 首次启动自动生成并保存在 SQLite 中，Web 与 CLI HTTP 共用；可用 `docker exec --user node <容器名> team-worker key show` 读取。本地 socket 仍免 Key。
 
-Key 可通过 `TEAM_WORKER_ENV_FILE` 提供，文件放在仓库外并设为 `600`。修改后需重建容器。使用内置 Nginx 路由时保持 daemon 的监听地址为 `127.0.0.1:8082`。
+要指定 Key，可通过 `TEAM_WORKER_ENV_FILE` 提供，文件放在仓库外并设为 `600`。修改后需重建容器。使用内置 Nginx 路由时保持 daemon 的监听地址为 `127.0.0.1:8082`。
+
+看板访问需要上述共享 Key。`./docker/team-worker.sh web` 可输出带 Key 的登录链接；登录后用 `Service keys` 查看 Magpie Web Key 和 OpenBao 登录 Token。Token 和解封密钥不会出现在常规看板数据中，解封密钥也不通过页面返回。
 
 ## 容器环境变量
 
@@ -94,14 +96,15 @@ Key 可通过 `TEAM_WORKER_ENV_FILE` 提供，文件放在仓库外并设为 `60
 | --- | --- |
 | `LLM_API_BASE` | 默认 `providers.yaml` 的 OpenAI 兼容网关地址 |
 | `TEAM_WORKER_TEAM_NAME` | 容器团队名，默认 `team-worker-docker` |
-| `TEAM_WORKER_API_KEY` | 远程 CLI API 的 Key；设置后默认启用容器内 HTTP 监听 |
+| `TEAM_WORKER_API_KEY` | 覆盖并保存到 SQLite 的共享 Web / CLI HTTP Key；默认自动生成 |
 | `TEAM_WORKER_HTTP_ADDR` | HTTP 监听地址；内置 Nginx 路由使用 `127.0.0.1:8082` |
 | `TEAM_WORKER_MODEL` | Magpie 模型路由，优先于 `providers.yaml` 的 `claude.model` |
 | `TEAM_WORKER_LEADER_RESTART_DELAY` | Leader 续接的初始等待秒数，默认 10，最大 60 |
 | `TEAM_WORKER_LEADER_MAX_RESTARTS` | Leader 连续快速退出后的最大续接次数，默认 3 |
 | `TEAM_WORKER_DIND` | 设为 `1` 启用 Docker in Docker（systemd 模式） |
 | `TEAM_WORKER_MASKING` | 默认在 home 卷首次启动时打开 Magpie 的 Privacy masking（发给模型供应商的密钥、密码、token 换成占位符）；之后在 Magpie 里关掉会保持关闭。设为 `0` 跳过 |
-| `TEAM_WORKER_OPENBAO`、`TEAM_WORKER_OPENBAO_AUTO_UNSEAL` | 设为 `1` 启用 OpenBao 及自动初始化、解封 |
+| `TEAM_WORKER_OPENBAO` | 默认 `1`，安装并启动 OpenBao；设为 `0` 关闭启动 |
+| `TEAM_WORKER_OPENBAO_AUTO_UNSEAL` | 默认 `1`，自动初始化、解封并导入配置；设为 `0` 改为手动初始化、解封 |
 | `TEAM_WORKER_*_FILE` | `PROVIDERS`、`SKILLS`、`PROMPT`、`MCP`、`PLUGIN`、`OPENBAO` 配置文件的容器内路径 |
 | `MIRROR_HTTP_PROXY`、`HTTP_PROXY`、`HTTPS_PROXY`、`NO_PROXY` | 代理；`NO_PROXY` 建议包含 `localhost,127.0.0.1,::1` |
 
@@ -169,11 +172,11 @@ volumes:
 
 任一配置格式错误、技能或 MCP 导入失败时，启动中止，Leader 不运行，用 `docker logs` 查看原因。镜像自带的 team-worker skill 链接到 `~/.claude/skills/team-worker` 和 `~/.codex/skills/team-worker`。
 
-## OpenBao 密钥服务（可选）
+## OpenBao 密钥服务
 
-设置 `TEAM_WORKER_OPENBAO=1` 后启动 OpenBao 服务端（只监听容器内 `127.0.0.1:8200`，数据在 home 卷 `~/.openbao/data`），界面见 [OpenBao 界面使用指南](docs/openbao.md)。首次启用后应立即初始化。`magpie-config/openbao.yaml` 声明要导入的 KV 密钥和要用 OpenBao Agent 渲染的 0600 文件；导入令牌放在 `/etc/team-worker/openbao.token`（`TEAM_WORKER_OPENBAO_TOKEN_FILE` 可改）。授予 Agent 的只读 AppRole 名为 `team-worker-agent`。
+镜像默认安装并启动 OpenBao 服务端（`TEAM_WORKER_OPENBAO=1`，只监听容器内 `127.0.0.1:8200`，数据在 home 卷 `~/.openbao/data`）；设为 `0` 可关闭启动。界面见 [OpenBao 界面使用指南](docs/openbao.md)。`magpie-config/openbao.yaml` 声明要导入的 KV 密钥和要用 OpenBao Agent 渲染的 0600 文件；当前默认配置为空，按需填写。自备导入令牌可放在 `/etc/team-worker/openbao.token`（`TEAM_WORKER_OPENBAO_TOKEN_FILE` 可改）。授予 Agent 的只读 AppRole 名为 `team-worker-agent`。
 
-同时设置 `TEAM_WORKER_OPENBAO_AUTO_UNSEAL=1` 时全自动初始化和解封，解封密钥与 root 令牌写入 home 卷的 `~/.openbao/init.json`。这样取得卷即可解开全部密钥，需要限制卷和宿主机的访问。
+默认 `TEAM_WORKER_OPENBAO_AUTO_UNSEAL=1`：首次启动自动初始化，重启自动解封，再导入 YAML 并渲染文件。解封密钥与 root 令牌写入 home 卷的 `~/.openbao/init.json`，权限为 0600；未提供导入令牌时使用该 root 令牌完成导入。取得卷即可解开全部密钥，需要限制卷和宿主机的访问。设为 `0` 后，由管理员手动初始化、解封并提供导入令牌。
 
 ## team-worker-ops
 

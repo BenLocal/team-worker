@@ -75,7 +75,7 @@ team-worker board serve ──> internal/board (只读 Web 看板，经 client �
 
 ## 五、数据流与存储
 
-- 权威数据源：`<数据目录>/team-worker.db`，只有 `team-workerd` 写。团队模板是 `~/.team-worker/templates/*.toml` 文件，不进数据库。表：`teams`、`members`、`tasks`、`task_deps`、`messages`、`events`、`agents`、`sessions`、`workspaces`。
+- 权威数据源：`<数据目录>/team-worker.db`，只有 `team-workerd` 写。团队模板是 `~/.team-worker/templates/*.toml` 文件，不进数据库。表：`teams`、`members`、`tasks`、`task_deps`、`messages`、`events`、`agents`、`sessions`、`settings`、`workspaces`。
 - 团队公共提示词保存在 `teams.prompt`，成员专属提示词保存在 `members.prompt`，按 `(team, name, user_name)` 区分。模板渲染后的角色 `task` 和显式传入的 `spawn --task` 写入成员提示词；进程重新注册不覆盖它，启动和会话恢复钩子会重新读取。修改成员提示词与发送该成员的 inbox 通知在同一事务完成。
 - 迁移：`internal/store/migrations/*.sql` 用 `go:embed` 内置，Goose Provider 负责顺序执行和事务，进度记在 `goose_db_version`。旧库的 `PRAGMA user_version` 一次性接入 Goose 历史；各 SQL 仍同步更新 `user_version`，用于版本兼容检查。**已发布的迁移不改，只追加文件。**
 - 时间戳：字符串存储，格式对齐 Python `datetime.isoformat()`（`store.timestamp`），保持与 ClawTeam 输出一致。
@@ -103,3 +103,5 @@ team-worker board serve ──> internal/board (只读 Web 看板，经 client �
 - 新增一种 agent CLI：在 `internal/spawn/adapter.go` 加适配器（命令、环境变量、启动界面处理），参照已有适配器。
 - `workspaces` 表（git worktree）已建好，Go 侧尚未接入。
 - 明确禁止的改法：CLI 直接打开数据库；在 `server` 里写业务规则；修改已有迁移条目。
+
+Web 与 CLI HTTP 共用 SQLite `settings` 中的访问 Key；daemon 启动时生成或保存配置覆盖值，Key 只允许本地 socket 读取。看板使用同一 Key 登录并签发带有效期的 HttpOnly cookie，保护页面、API 和 WebSocket；服务密钥仅在认证后按需读取，不随看板快照返回。

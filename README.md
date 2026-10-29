@@ -155,7 +155,7 @@ team-worker board show my-team     # 终端里查看成员状态、任务和最�
 team-worker board serve -p 8080    # 浏览器打开 http://127.0.0.1:8080，点成员可看实时终端
 ```
 
-Web 看板是只读的，默认只监听 127.0.0.1。 `board serve --link NAME=URL`（可重复）在页面标题栏右侧显示到其他服务的链接，例如 `--link Docs=https://example.com`。
+Web 看板默认只监听 127.0.0.1，访问需使用与 CLI HTTP 调用相同的 Key。默认 Key 自动生成并保存在 SQLite 中，重启复用；可在本机通过 `team-worker key show` 查看。页面登录后，`Service keys` 可查看 Magpie Web Key 和 OpenBao 登录 Token，默认遮挡并支持显示、复制。 `board serve --link NAME=URL`（可重复）在页面标题栏右侧显示到其他服务的链接，例如 `--link Docs=https://example.com`。
 
 团队标题旁的 `Team prompt` 按钮显示团队公共提示词。每个 Agent 终端卡片的 `Prompt` 按钮和侧栏成员菜单的 `Show prompt` 显示该成员的专属提示词，未启动或已退出的成员也能查看。内容从 store 按需读取，未设置时显示空状态；弹窗支持长文本滚动及 Escape 关闭。
 
@@ -170,7 +170,8 @@ Web 看板是只读的，默认只监听 127.0.0.1。 `board serve --link NAME=U
 | `TEAM_WORKER_DATA_DIR` | 数据目录 | 配置文件中的 `data_dir`，否则为 `~/.team-worker` |
 | `TEAM_WORKER_SOCKET` | Unix socket 路径 | `<数据目录>/team-workerd.sock` |
 | `TEAM_WORKER_SERVER_URL` | CLI 远程 HTTP(S) 服务地址；显式设为空字符串则使用本地 socket | 配置文件中的 `server_url`，否则未设置 |
-| `TEAM_WORKER_API_KEY` | HTTP 服务端和远程 CLI 使用的 API Key；socket 不需要 | 未设置 |
+| `TEAM_WORKER_API_KEY` | CLI HTTP 与 Web 共用的 Key；服务端设置时覆盖并保存到 SQLite；socket 不需要 | 服务端自动生成并保存在 SQLite，客户端按需提供 |
+| `TEAM_WORKER_WEB_BASE_PATH` | 看板在反向代理下的公开路径前缀；Docker 为 `/team-worker` | 空 |
 | `TEAM_WORKER_HTTP_ADDR` | daemon 的可选 HTTP 监听地址，可由 `--listen` 覆盖；启用时必须配置 Key | 未设置，不监听 TCP |
 | `TEAM_WORKER_AGENT_NAME` | 当前 Agent 名称，作为发件人、锁持有者和默认收件箱 | `agent` |
 | `TEAM_WORKER_AGENT_ID` | 当前 Agent ID | 随机生成 |
@@ -179,17 +180,17 @@ Web 看板是只读的，默认只监听 127.0.0.1。 `board serve --link NAME=U
 | `TEAM_WORKER_NO_AUTOSTART` | 设为任意值时不自动拉起服务 | 未设置 |
 | `TEAM_WORKER_START_BLOCKED_FILE` | keepalive 在该文件移除后才启动子进程；Docker 用于等待 provider Key 配置 | 未设置 |
 
-配置文件固定为 `~/.team-worker/config.json`，可设置 `data_dir`、`user` 和 `server_url`。API Key 通过环境变量提供。Unix socket 路径不能超过约 100 个字符；数据目录路径较长时，用 `TEAM_WORKER_SOCKET` 把 socket 放到短路径下。
+配置文件固定为 `~/.team-worker/config.json`，可设置 `data_dir`、`user` 和 `server_url`。远程 CLI 通过环境变量提供 API Key；服务端默认值保存在 SQLite。Unix socket 路径不能超过约 100 个字符；数据目录路径较长时，用 `TEAM_WORKER_SOCKET` 把 socket 放到短路径下。
 
 ### HTTP 远程调用
 
-服务端先设置 `TEAM_WORKER_API_KEY`，再启用 HTTP 监听；原有 socket 同时保留：
+服务端启用 HTTP 监听后，使用 SQLite 中保存的共享 Key；首次启动自动生成，也可通过 `TEAM_WORKER_API_KEY` 指定并保存。原有 socket 同时保留：
 
 ```bash
 team-workerd --listen 0.0.0.0:8082
 ```
 
-客户端设置同一个 `TEAM_WORKER_API_KEY`，指定服务地址后直接使用现有命令：
+在服务端本机用 `team-worker key show` 读取 Key，再为远程客户端设置同一个 `TEAM_WORKER_API_KEY`，指定服务地址后使用现有命令：
 
 ```bash
 export TEAM_WORKER_SERVER_URL=http://server-host:8082
@@ -201,7 +202,7 @@ team-worker inbox send my-team leader "远程调用测试"
 TEAM_WORKER_SERVER_URL='' TEAM_WORKER_API_KEY='' team-worker team discover
 ```
 
-HTTP 请求使用 `Authorization: Bearer <API Key>`，包括健康检查在内的所有 API 均校验 Key；缺失或错误时返回 `401 {"error":"Unauthorized"}`。服务端未设置 Key 时拒绝启动 HTTP 监听。socket 请求按文件权限控制，不校验 Key。
+HTTP 请求使用 `Authorization: Bearer <API Key>`，包括健康检查在内的所有 API 均校验 Key；缺失或错误时返回 `401 {"error":"Unauthorized"}`。socket 请求按文件权限控制，不校验 Key。共享 Key 的读取接口仅在本地 socket 可用，已认证的远程 HTTP 请求也不能读取它。
 
 远程模式不自动拉起本地 daemon，也不在连接失败后退回 socket。客户端拒绝携带凭据、query 或 fragment 的服务地址，并拒绝自动跟随重定向。HTTPS 可通过反向代理提供。
 
@@ -252,6 +253,7 @@ team-workerd 记录这些事件：
 | 方法和路径 | 说明 |
 |---|---|
 | `GET /v1/health` | 健康检查 |
+| `GET /v1/access-key` | 读取 CLI HTTP 与 Web 共用的 Key，仅限本地 socket |
 | `GET/POST /v1/teams` | 列出 / 创建团队 |
 | `GET/DELETE /v1/teams/{team}` | 团队详情 / 删除团队及其全部数据 |
 | `POST /v1/teams/{team}/members` | 添加成员 |
@@ -282,6 +284,7 @@ Web 看板的提示词读取接口由 `board serve` 提供：
 
 | 接口 | 说明 |
 |---|---|
+| `GET /api/service-keys` | 登录后按需读取 Magpie Web Key 和 OpenBao 登录 Token，响应禁止缓存 |
 | `GET /api/teams/{team}/prompt` | 查看团队公共提示词 |
 | `GET /api/teams/{team}/members/{name}/prompt?user=...` | 查看成员专属提示词，`user` 默认空 |
 

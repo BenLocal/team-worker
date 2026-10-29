@@ -304,6 +304,14 @@ body.rail-collapsed #rail-tools { display: none; }
 .prompt-body:focus-visible { outline-offset: -2px; }
 .prompt-body.loading, .prompt-body.empty { color: var(--muted); font-style: italic; }
 .prompt-body.error { color: var(--blocked); font-style: normal; }
+.service-keys .prompt-head h2 { flex: 1; }
+.service-keys-body { padding: 8px 18px 20px; overflow: auto; }
+.service-keys-body section { padding: 16px 0; border-bottom: 1px solid var(--rule); }
+.service-keys-body section:last-child { border-bottom: 0; }
+.service-keys-body label { display: block; margin-bottom: 8px; color: var(--ink-2); }
+.service-keys-body input { width: 100%; background: var(--paper); color: var(--ink); border: 1px solid var(--rule); border-radius: 4px; padding: 10px; }
+.service-key-actions { display: flex; gap: 8px; margin-top: 10px; }
+.links form { margin: 0; }
 @media (max-width: 760px) {
   .prompt-dialog { width: calc(100vw - 16px); }
   .prompt-body { padding: 12px 14px 16px; }

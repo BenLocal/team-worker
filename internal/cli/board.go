@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/benlocal/team-worker/internal/board"
+	"github.com/benlocal/team-worker/internal/config"
 	"github.com/benlocal/team-worker/internal/model"
 )
 
@@ -128,6 +129,10 @@ func (a *app) boardServeCmd() *cobra.Command {
 				return a.fail(err)
 			}
 			c := a.client()
+			key, err := c.AccessKey(cmd.Context())
+			if err != nil {
+				return a.fail(err)
+			}
 			if _, err := c.ListTeams(cmd.Context()); err != nil {
 				return a.fail(err)
 			}
@@ -144,7 +149,12 @@ func (a *app) boardServeCmd() *cobra.Command {
 				json.NewEncoder(w).Encode(links)
 			})
 			mux.Handle("/", board.Handler(c))
-			srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+			protected, err := board.Protect(mux, key, config.WebBasePath())
+			if err != nil {
+				ln.Close()
+				return a.fail(err)
+			}
+			srv := &http.Server{Handler: protected, ReadHeaderTimeout: 10 * time.Second}
 			go func() {
 				<-ctx.Done()
 				shutdown, cancel := context.WithTimeout(context.Background(), 3*time.Second)

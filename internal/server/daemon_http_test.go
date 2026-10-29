@@ -15,6 +15,12 @@ import (
 )
 
 func TestDaemonHTTPAndSocketShareData(t *testing.T) {
+	for _, configured := range []string{"", "test-only-key"} {
+		t.Run("configured="+configured, func(t *testing.T) { daemonKeyFlow(t, configured) })
+	}
+}
+
+func daemonKeyFlow(t *testing.T, configured string) {
 	dir, err := os.MkdirTemp("/tmp", "tw-http-")
 	if err != nil {
 		t.Fatal(err)
@@ -36,7 +42,7 @@ func TestDaemonHTTPAndSocketShareData(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- Run(ctx, Options{DataDir: dir, Socket: filepath.Join(dir, "api.sock"), HTTPAddr: address, APIKey: "test-only-key"})
+		done <- Run(ctx, Options{DataDir: dir, Socket: filepath.Join(dir, "api.sock"), HTTPAddr: address, APIKey: configured})
 	}()
 	t.Cleanup(func() {
 		cancel()
@@ -57,9 +63,19 @@ func TestDaemonHTTPAndSocketShareData(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	remote, err := client.NewRemote("http://"+address, "test-only-key")
+	key, err := local.AccessKey(ctx)
+	if err != nil || key == "" {
+		t.Fatalf("local access key unavailable: %v", err)
+	}
+	if configured != "" && key != configured {
+		t.Fatal("configured key was not preserved")
+	}
+	remote, err := client.NewRemote("http://"+address, key)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if _, err := remote.AccessKey(ctx); err == nil {
+		t.Fatal("HTTP exposed access key")
 	}
 	if _, err := remote.CreateTeam(ctx, store.CreateTeamInput{Name: "remote", LeaderName: "leader"}); err != nil {
 		t.Fatal(err)
@@ -81,11 +97,5 @@ func TestDaemonHTTPAndSocketShareData(t *testing.T) {
 	info, err := os.Stat(filepath.Join(dir, "api.sock"))
 	if err != nil || info.Mode().Perm() != 0o600 {
 		t.Fatalf("socket permissions: %v %v", info, err)
-	}
-}
-
-func TestDaemonHTTPRequiresKey(t *testing.T) {
-	if err := Run(context.Background(), Options{HTTPAddr: "127.0.0.1:0"}); err == nil {
-		t.Fatal("HTTP listener started without an API key")
 	}
 }
