@@ -129,7 +129,14 @@ python3 scripts/verify-sessions.py --bin-dir bin
 python3 scripts/verify-sessions.py --bin-dir bin --backend tmux
 # 使用现有 Claude provider 配置，额外发起两次真实模型请求：
 python3 scripts/verify-sessions.py --bin-dir bin --native-claude "$(command -v claude)"
+
+# 其他原生 CLI 的真实会话验收，每次发起两次模型请求：
+python3 scripts/verify-native-sessions.py --client codex --timeout 180 -- codex --skip-git-repo-check --json
+python3 scripts/verify-native-sessions.py --client pi -- pi --no-tools --no-mcp --mode json --thinking off
+python3 scripts/verify-native-sessions.py --client dsh -- dsh --profile headless --json
 ```
+
+`verify-native-sessions.py` 检查准确会话 ID、新一轮 Run ID 和不调用工具的暗号回忆；日志保留在输出的临时目录。dsh 的会话 ID 从事件流读取后通过 `session save` 保存；如需复用网页保存的凭据或覆盖 headless 配置，在原生命令中追加本地 `--patch` 文件。
 
 ## 模板
 
