@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Terminal input regression fixture</title>
+<body>
+<script type="module">
+import "@fontsource-variable/jetbrains-mono";
+import "../src/style.css";
+import { AgentTerminal, initTerminals } from "../src/terminals.js";
+
+await initTerminals();
+const card = new AgentTerminal("fixture", { name: "ime" }, []);
+card.element.classList.remove("offline");
+card.element.style.width = "900px";
+document.body.append(card.element);
+card.liveHost = Object.assign(document.createElement("div"), { className: "term-surface" });
+card.host.replaceChildren(card.liveHost);
+card.terminal = card.newTerminal(true);
+card.terminal.open(card.liveHost);
+card.control = true;
+card.configureInput?.();
+const received = [];
+card.terminal.onData(data => received.push(data));
+window.fixture = { card, received };
+</script>
+</body>
+</html>
