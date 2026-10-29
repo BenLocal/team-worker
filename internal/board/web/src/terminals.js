@@ -4,11 +4,13 @@
 // Terminals view opens.
 let Terminal, FitAddon;
 
-const THEME = { background: "#161b22", foreground: "#d8dee6", cursor: "#e0a73c" };
+const THEME = { background: "#0b0f15", foreground: "#e8e0cc", cursor: "#e8c47e" };
+const FONT = '"JetBrains Mono Variable", "JetBrains Mono", ui-monospace, Menlo, monospace';
 let ready = null;
 export const initTerminals = () => (ready ??= import("ghostty-web").then(async (mod) => {
   ({ Terminal, FitAddon } = mod);
-  await mod.init();
+  // The canvas measures glyphs when a terminal opens, so the web font must be loaded first.
+  await Promise.all([mod.init(), document.fonts.load('13px "JetBrains Mono Variable"').catch(() => {})]);
 }));
 
 async function request(path, payload) {
@@ -104,9 +106,10 @@ export class AgentTerminal {
     const before = this.state;
     this.member = member;
     this.state = describe(member);
-    const leader = member.leader ? "Leader, " : "";
-    this.element.querySelector(".term-role").textContent = leader + (member.agentType || "");
-    this.element.querySelector(".term-task").textContent = tasks.length ? "Working on " + tasks.join("; ") : this.state.reason;
+    const role = member.agentType && member.agentType !== "leader" ? member.agentType : "";
+    this.element.querySelector(".term-role").textContent = [member.leader ? "Leader" : "", role].filter(Boolean).join(", ");
+    // Offline cards show the reason in the terminal area, so it is not repeated here.
+    this.element.querySelector(".term-task").textContent = tasks.length ? "Working on " + tasks.join("; ") : "";
     this.element.querySelector(".dot").className = "dot" + (this.state.live ? " alive" : member.agent ? " dead" : "");
     for (const b of this.element.querySelectorAll(".term-actions button")) b.hidden = !this.state.live;
     this.element.classList.toggle("offline", !this.state.live);
@@ -186,7 +189,7 @@ export class AgentTerminal {
   }
 
   newTerminal(blink) {
-    return new Terminal({ fontSize: 13, cursorBlink: blink, scrollback: 5000, theme: THEME });
+    return new Terminal({ fontSize: 13, fontFamily: FONT, cursorBlink: blink, scrollback: 5000, theme: THEME });
   }
 
   fit() {

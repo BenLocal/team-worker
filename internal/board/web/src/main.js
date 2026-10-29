@@ -1,3 +1,5 @@
+import "@fontsource-variable/jetbrains-mono";
+import "@fontsource-variable/fraunces/opsz-italic.css";
 import "./style.css";
 import { AgentTerminal, selectCard } from "./terminals.js";
 
@@ -6,11 +8,18 @@ const SVG = "http://www.w3.org/2000/svg";
 const COLUMNS = [["pending", "Pending"], ["in_progress", "In progress"], ["blocked", "Blocked"], ["completed", "Done"]];
 const PRIORITY = { urgent: 0, high: 1, medium: 2, low: 3 };
 const DONE_PAGE = 15, MSG_PAGE = 60, GAP_MS = 10 * 60 * 1000, LANE_H = 14;
+const VIEWS = [["board", "Board"], ["messages", "Messages"], ["terminals", "Terminals"]];
+const RAIL_KEY = "team-worker.rail";
+
+// Storage can be unavailable (private windows, blocked site data); the rail then just starts open.
+function stored(key) { try { return localStorage.getItem(key); } catch { return null; } }
+function store(key, value) { try { localStorage.setItem(key, value); } catch { /* keep the in-page state */ } }
+const initialView = new URLSearchParams(location.search).get("view");
 
 const state = {
   teams: [], boards: {}, team: new URLSearchParams(location.search).get("team") || "", expanded: new Set(),
-  view: new URLSearchParams(location.search).get("view") === "terminals" ? "terminals" : "board",
-  query: "", owner: "", doneShown: DONE_PAGE, open: new Set(),
+  view: VIEWS.some(([v]) => v === initialView) ? initialView : "board", railOpen: stored(RAIL_KEY) !== "closed",
+  doneShown: DONE_PAGE, open: new Set(),
   msgShown: MSG_PAGE, range: null, selected: null, follow: true,
   keys: {}, links: [],
 };
@@ -68,9 +77,36 @@ function changed(region, value) {
 const chevron = () => { const s = svg("svg", { width: 10, height: 10, viewBox: "0 0 10 10", "aria-hidden": "true" });
   s.append(svg("path", { d: "M3 1.5 6.5 5 3 8.5", fill: "none", stroke: "currentColor", "stroke-width": 1.6 })); return s; };
 
+function teamTone(s) {
+  if (!s || !s.total) return "";
+  if (s.blocked) return "blocked";
+  if (s.completed === s.total) return "done";
+  return s.in_progress ? "progress" : "";
+}
+function renderMiniRail(view) {
+  $("teams").replaceChildren(el("li", {}, el("ul", { class: "mini" }, view.map(([t, b]) => {
+    const s = b && b.taskSummary;
+    const current = t.name === state.team;
+    const facts = s && s.total ? `, ${s.completed} of ${s.total} done${s.blocked ? `, ${s.blocked} blocked` : ""}` : "";
+    return el("li", {}, el("button", { type: "button", title: t.name + facts, "aria-label": t.name + facts,
+      "aria-current": current ? "page" : null, onclick: () => selectTeam(t.name) },
+      [...t.name][0].toUpperCase(), teamTone(s) ? el("span", { class: "dot " + teamTone(s), "aria-hidden": "true" }) : null));
+  }))));
+}
+function setRail(open) {
+  state.railOpen = open;
+  store(RAIL_KEY, open ? "open" : "closed");
+  document.body.classList.toggle("rail-collapsed", !open);
+  const button = $("rail-toggle");
+  button.setAttribute("aria-expanded", String(open));
+  button.setAttribute("aria-label", open ? "Collapse sidebar" : "Expand sidebar");
+  button.title = button.getAttribute("aria-label");
+  renderRail();
+}
 function renderRail() {
   const view = state.teams.map((t) => [t, state.boards[t.name]]);
-  if (!changed("rail", [view, state.team, [...state.expanded]])) return;
+  if (!changed("rail", [view, state.team, [...state.expanded], state.railOpen])) return;
+  if (state.teams.length && !state.railOpen) { renderMiniRail(view); return; }
   if (!state.teams.length) {
     $("teams").replaceChildren(el("li", { class: "empty muted" }, "No teams yet"));
     return;
@@ -78,7 +114,7 @@ function renderRail() {
   $("teams").replaceChildren(...view.map(([t, b]) => {
     const s = b && b.taskSummary;
     const current = t.name === state.team;
-    const open = current || state.expanded.has(t.name);
+    const open = state.expanded.has(t.name);
     const members = b ? b.members : [];
     const running = members.filter((m) => agentState(m)[0] === "alive").length;
     const strip = el("div", { class: "strip", "aria-hidden": "true" });
@@ -108,9 +144,9 @@ function renderRail() {
           el("div", { class: "facts" },
             el("span", {}, s ? (s.total ? `${s.completed} of ${s.total} done` : "No tasks") : ""),
             el("span", {}, running ? `${running} running` : `${t.memberCount} members`))),
-        current ? null : el("button", { type: "button", class: "toggle", "aria-expanded": String(open),
+        members.length ? el("button", { type: "button", class: "toggle", "aria-expanded": String(open),
           "aria-controls": "people-" + t.name, "aria-label": (open ? "Hide " : "Show ") + t.name + " members",
-          onclick: () => { open ? state.expanded.delete(t.name) : state.expanded.add(t.name); renderRail(); } }, chevron())),
+          onclick: () => { open ? state.expanded.delete(t.name) : state.expanded.add(t.name); renderRail(); } }, chevron()) : null),
       people);
   }));
 }
@@ -118,21 +154,17 @@ function renderRail() {
 /* ---------------- skeleton ---------------- */
 function buildMain() {
   state.keys = {};
-  const search = el("input", { type: "search", id: "filter", placeholder: "Filter by subject, ID or owner", "aria-label": "Filter tasks",
-    oninput: (e) => { state.query = e.target.value; update(); } });
-  const owner = el("select", { id: "owner", "aria-label": "Owner", onchange: (e) => { state.owner = e.target.value; update(); } });
-  const clear = el("button", { type: "button", id: "clear-filter", class: "quiet-btn", hidden: true,
-    onclick: () => { state.query = ""; state.owner = ""; search.value = ""; update(); } }, "Clear filter");
   const tab = (view, label) => el("button", { type: "button", role: "tab", id: "tab-" + view, "aria-controls": "view-" + view,
     "aria-selected": String(state.view === view), onclick: () => setView(view) }, label);
   $("main").replaceChildren(
     el("div", { class: "head-row" }, el("header", { class: "head", id: "head" }),
-      el("div", { class: "views", role: "tablist", "aria-label": "View" }, tab("board", "Board"), tab("terminals", "Terminals")),
+      el("div", { class: "views", role: "tablist", "aria-label": "View" }, VIEWS.map(([v, label]) => tab(v, label))),
       el("nav", { class: "links", id: "links", "aria-label": "Other services" })),
     el("div", { class: "view", id: "view-board", role: "tabpanel", "aria-labelledby": "tab-board", hidden: state.view !== "board" },
     el("section", { class: "tasks", "aria-label": "Tasks" },
-      el("div", { class: "toolbar" }, search, owner, clear),
-      el("div", { class: "board", id: "board" })),
+      el("div", { class: "stats", id: "stats", role: "list", "aria-label": "Team summary" }),
+      el("div", { class: "board", id: "board" }))),
+    el("div", { class: "view", id: "view-messages", role: "tabpanel", "aria-labelledby": "tab-messages", hidden: state.view !== "messages" },
     el("section", { class: "traj", "aria-label": "Messages" },
       el("div", { class: "traj-head" }, el("h2", {}, "Messages"),
         el("button", { type: "button", class: "quiet-btn", id: "clear-range", hidden: true, onclick: () => setRange(null) }),
@@ -140,7 +172,7 @@ function buildMain() {
       el("div", { class: "overview", id: "overview" }),
       el("div", { class: "traj-body" },
         el("div", { class: "ledger", id: "ledger", tabindex: "0", role: "listbox", "aria-label": "Message ledger",
-          onscroll: (e) => { const n = e.target; state.follow = n.scrollTop + n.clientHeight >= n.scrollHeight - 8; },
+          onscroll: (e) => { state.follow = e.target.scrollTop <= 8; },
           onkeydown: ledgerKeys }),
         el("aside", { class: "inspector", id: "inspector", "aria-live": "polite" })))),
     el("div", { class: "view", id: "view-terminals", role: "tabpanel", "aria-labelledby": "tab-terminals", hidden: state.view !== "terminals" },
@@ -162,18 +194,30 @@ function renderLinks() {
 /* ---------------- header + tasks ---------------- */
 function renderHead(board) {
   const s = board.taskSummary;
-  if (!changed("head", [board.team, s])) return;
+  if (!changed("head", board.team)) return;
   $("head").replaceChildren(
-    el("div", {}, el("h1", {}, board.team.name), board.team.description ? el("p", { class: "desc" }, board.team.description) : null),
-    el("div", { class: "progress-text" },
-      el("div", {}, el("strong", {}, `${s.completed} of ${s.total}`), el("span", { class: "muted" }, " done")),
-      s.avg_duration_seconds ? el("div", { class: "muted" }, `about ${duration(s.avg_duration_seconds)} per task`) : null));
+    el("div", {}, el("h1", {}, board.team.name), board.team.description ? el("p", { class: "desc" }, board.team.description) : null));
 }
-function matches(t) {
-  if (state.owner && t.owner !== state.owner) return false;
-  if (!state.query) return true;
-  const q = state.query.toLowerCase();
-  return [t.subject, t.id, t.owner, t.description].some((v) => v && v.toLowerCase().includes(q));
+function renderStats(board) {
+  const s = board.taskSummary;
+  const members = board.members;
+  const running = members.filter((m) => agentState(m)[0] === "alive").length;
+  const unread = members.reduce((n, m) => n + (m.inboxCount || 0), 0);
+  if (!changed("stats", [s, running, members.length, unread])) return;
+  const pct = s.total ? Math.round((s.completed / s.total) * 100) : 0;
+  const stat = (tone, label, value, note, extra) => el("div", { class: "stat" + (tone ? " " + tone : ""), role: "listitem" },
+    el("div", { class: "stat-label" }, label), el("div", { class: "stat-value" }, value),
+    note ? el("div", { class: "stat-note" }, note) : null, extra || null);
+  $("stats").replaceChildren(
+    stat("done", "Done", s.total ? `${pct}%` : "–", s.total ? `${s.completed} of ${s.total} tasks` : "No tasks yet",
+      el("div", { class: "stat-bar", "aria-hidden": "true" }, el("span", { style: `width:${pct}%` }))),
+    stat("progress", "In progress", String(s.in_progress), s.in_progress ? "being worked on" : "nobody is working"),
+    stat(s.blocked ? "blocked" : "", "Blocked", String(s.blocked), s.blocked ? "waiting on other tasks" : "nothing is stuck"),
+    stat("", "Pending", String(s.pending), s.pending ? "ready to pick up" : "queue is empty"),
+    stat("", "Time per task", s.avg_duration_seconds ? duration(s.avg_duration_seconds) : "–",
+      s.timed_completed ? `average of ${s.timed_completed} timed` : "no finished timings"),
+    stat(running ? "done" : "", "Agents online", `${running}/${members.length}`, running === members.length ? "all running" : `${members.length - running} not running`),
+    stat(unread ? "blocked" : "", "Unread", String(unread), unread ? "messages waiting in inboxes" : "inboxes are clear"));
 }
 function sortTasks(status, tasks) {
   const newest = (f) => (a, b) => (b[f] || "").localeCompare(a[f] || "");
@@ -195,32 +239,24 @@ function taskCard(t, byId) {
   return card;
 }
 function renderTasks(board) {
-  const owners = [...new Set(board.tasks.map((t) => t.owner).filter(Boolean))].sort();
-  if (state.owner && !owners.includes(state.owner)) owners.push(state.owner);
-  if (changed("owners", [owners, state.owner])) {
-    $("owner").replaceChildren(el("option", { value: "" }, "Everyone"),
-      owners.map((o) => el("option", { value: o, selected: o === state.owner }, o)));
-  }
-  const filtering = Boolean(state.query || state.owner);
-  $("clear-filter").hidden = !filtering;
-  if (!changed("tasks", [board.tasks, state.query, state.owner, state.doneShown])) return;
+  if (!changed("tasks", [board.tasks, state.doneShown])) return;
   const scroll = {};
   $("board").querySelectorAll(".list").forEach((n) => { scroll[n.dataset.col] = n.scrollTop; });
   const byId = Object.fromEntries(board.tasks.map((t) => [t.id, t]));
   $("board").replaceChildren(...COLUMNS.map(([status, title]) => {
     const all = board.tasks.filter((t) => t.status === status);
-    let tasks = sortTasks(status, all.filter(matches));
+    let tasks = sortTasks(status, all);
     let hidden = 0;
-    if (status === "completed" && !filtering && tasks.length > state.doneShown) {
+    if (status === "completed" && tasks.length > state.doneShown) {
       hidden = tasks.length - state.doneShown;
       tasks = tasks.slice(0, state.doneShown);
     }
     const items = tasks.map((t) => taskCard(t, byId));
     if (hidden) items.push(el("button", { type: "button", class: "quiet-btn",
       onclick: () => { state.doneShown += hidden; update(); } }, `Show ${hidden} earlier`));
-    if (!items.length) items.push(el("div", { class: "none" }, filtering && all.length ? "No matches" : "Nothing here"));
+    if (!items.length) items.push(el("div", { class: "none" }, "Nothing here"));
     return el("section", { class: "col col-" + status, "aria-label": title },
-      el("h2", {}, el("span", {}, title), el("span", { class: "n" }, filtering ? `${tasks.length} of ${all.length}` : String(all.length))),
+      el("h2", {}, el("span", {}, title), el("span", { class: "n" }, String(all.length))),
       el("div", { class: "list", "data-col": status }, items));
   }));
   $("board").querySelectorAll(".list").forEach((n) => { n.scrollTop = scroll[n.dataset.col] || 0; });
@@ -328,15 +364,20 @@ function renderLedger(records) {
   if (state.range) clearRange.textContent = `Clear range ${shortClock(state.range[0])}–${shortClock(state.range[1])}`;
   if (!changed("ledger", [shown.map((r) => r.key), hiddenEarlier, state.selected])) return;
   const ledger = $("ledger");
-  const before = { top: ledger.scrollTop, height: ledger.scrollHeight };
+  // Newest first. While reading further down, keep the row at the top of the
+  // view in place so messages arriving above it do not push it away.
+  let anchor = null;
+  if (!state.follow) {
+    const top = ledger.getBoundingClientRect().top;
+    const row = [...ledger.querySelectorAll(".row")].find((n) => n.getBoundingClientRect().bottom > top);
+    if (row) anchor = { key: row.dataset.key, offset: row.getBoundingClientRect().top - top };
+  }
   const rows = [];
-  if (hiddenEarlier) rows.push(el("button", { type: "button", class: "quiet-btn older", onclick: () => {
-    state.follow = false; state.msgShown += MSG_PAGE; update(); } }, `Load ${Math.min(MSG_PAGE, hiddenEarlier)} earlier (${hiddenEarlier} more)`));
   let prev = null;
-  for (const r of shown) {
-    if (!prev || r.at - prev.at > GAP_MS) {
+  for (const r of [...shown].reverse()) {
+    if (!prev || prev.at - r.at > GAP_MS) {
       rows.push(el("div", { class: "gap", role: "presentation" },
-        prev ? `${shortClock(r.at)}, ${Math.round((r.at - prev.at) / 60000)} min later` : new Date(r.at).toLocaleDateString() + " " + shortClock(r.at)));
+        prev ? `${shortClock(r.at)}, ${Math.round((prev.at - r.at) / 60000)} min earlier` : new Date(r.at).toLocaleDateString() + " " + shortClock(r.at)));
     }
     prev = r;
     const first = (r.content || r.summary || r.reason || "").split("\n")[0];
@@ -346,10 +387,13 @@ function renderLedger(records) {
       el("span", { class: "route" }, el("b", {}, r.from || "unknown"), " → ", r.to || "everyone"),
       el("span", { class: "gist" }, r.lifecycle ? el("span", { class: "kind" }, r.type.replaceAll("_", " ")) : null, first)));
   }
+  if (hiddenEarlier) rows.push(el("button", { type: "button", class: "quiet-btn older", onclick: () => {
+    state.msgShown += MSG_PAGE; update(); } }, `Load ${Math.min(MSG_PAGE, hiddenEarlier)} earlier (${hiddenEarlier} more)`));
   if (!shown.length) rows.push(el("div", { class: "none" }, state.range ? "No messages in this range." : "No messages yet."));
   ledger.replaceChildren(...rows);
-  if (state.follow) ledger.scrollTop = ledger.scrollHeight;
-  else if (hiddenEarlier || before.height) ledger.scrollTop = before.top + (ledger.scrollHeight - before.height) * (before.top < 40 ? 1 : 0);
+  if (state.follow) { ledger.scrollTop = 0; return; }
+  const row = anchor && ledger.querySelector(`[data-key="${CSS.escape(anchor.key)}"]`);
+  if (row) ledger.scrollTop += row.getBoundingClientRect().top - ledger.getBoundingClientRect().top - anchor.offset;
 }
 function renderInspector(records) {
   const r = records.find((x) => x.key === state.selected);
@@ -391,7 +435,7 @@ function update() {
   if (!board || !$("board")) return;
   renderHead(board);
   if (state.view === "terminals") { renderTerminals(board); return; }
-  renderTasks(board);
+  if (state.view === "board") { renderStats(board); renderTasks(board); return; }
   const records = messageRecords(board);
   renderOverview(board, records);
   renderLedger(records);
@@ -403,6 +447,7 @@ function showNotice(text, error = false) {
 async function loadTeams() {
   state.teams = await api("api/teams");
   if (!state.teams.some((t) => t.name === state.team)) state.team = state.teams.length ? state.teams[0].name : "";
+  if (state.team && !state.seenTeam) { state.expanded.add(state.team); state.seenTeam = true; }
   renderRail();
   if (!state.team) showNotice("No teams yet. Create one with team-worker team spawn-team <name>.");
 }
@@ -425,7 +470,8 @@ async function refreshOthers() {
 function selectTeam(name) {
   if (name === state.team) return;
   state.team = name;
-  Object.assign(state, { query: "", owner: "", doneShown: DONE_PAGE, msgShown: MSG_PAGE, range: null, selected: null, follow: true });
+  state.expanded.add(name);
+  Object.assign(state, { doneShown: DONE_PAGE, msgShown: MSG_PAGE, range: null, selected: null, follow: true });
   state.open.clear();
   disposeTerminals();
   writeURL();
@@ -437,13 +483,13 @@ function selectTeam(name) {
 /* ---------------- views and live terminals ---------------- */
 function writeURL() {
   const q = new URLSearchParams({ team: state.team });
-  if (state.view === "terminals") q.set("view", "terminals");
+  if (state.view !== "board") q.set("view", state.view);
   history.replaceState(null, "", "?" + q);
 }
 function setView(view) {
   if (state.view === view) return;
   state.view = view;
-  for (const v of ["board", "terminals"]) {
+  for (const [v] of VIEWS) {
     const panel = $("view-" + v);
     if (panel) panel.hidden = v !== view;
     $("tab-" + v)?.setAttribute("aria-selected", String(v === view));
@@ -479,6 +525,8 @@ function showTerminal(team, name) {
   if (card) { selectCard(card); card.element.scrollIntoView({ block: "nearest" }); }
 }
 window.addEventListener("pagehide", disposeTerminals);
+$("rail-toggle").addEventListener("click", () => setRail(!state.railOpen));
+setRail(state.railOpen);
 
 // Older servers have no /api/links; the header then simply shows none.
 api("api/links").then((links) => { state.links = links; renderLinks(); }).catch(() => {});
