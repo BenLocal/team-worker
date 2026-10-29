@@ -68,4 +68,5 @@
 <!-- MEMORY:START -->
 - [Agent 会话恢复的参考实现问题](docs/memory/agent-lifecycle.md) — 对照 ClawTeam 时需要注意的会话标识、退出清理和重启判定。
 - [看板终端显示问题](docs/memory/known-pitfalls.md) — Ghostty 终端的浏览器光标、自动高度与网格滚动的排查结论。
+- [Web 访问鉴权与反向代理](docs/memory/web-access.md) — 看板登录经过 Nginx 路径前缀时的跳转约定和实测问题。
 <!-- MEMORY:END -->

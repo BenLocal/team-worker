@@ -3,6 +3,7 @@ import "@fontsource-variable/fraunces/opsz-italic.css";
 import "./style.css";
 import { AgentTerminal, selectCard } from "./terminals.js";
 import { openMemberPrompt, openTeamPrompt } from "./prompt-dialog.js";
+import { openServiceKeys } from "./service-keys.js";
 
 const $ = (id) => document.getElementById(id);
 const SVG = "http://www.w3.org/2000/svg";
@@ -399,6 +400,8 @@ function renderLinks() {
   const nav = $("links");
   if (!nav) return;
   nav.replaceChildren(...state.links.map((l) => el("a", { href: l.url, target: "_blank", rel: "noopener" }, l.name)));
+  nav.append(el("button", { type: "button", class: "quiet-btn", onclick: (event) => openServiceKeys(event.currentTarget) }, "Service keys"),
+    el("form", { method: "post", action: "logout" }, el("button", { type: "submit", class: "quiet-btn" }, "Sign out")));
 }
 
 /* ---------------- header + tasks ---------------- */

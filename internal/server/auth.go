@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+type localAccess struct{}
+
 // Authenticate protects only the TCP listener; Unix socket access uses file permissions.
 func Authenticate(next http.Handler, key string) http.Handler {
 	expected := sha256.Sum256([]byte(key))

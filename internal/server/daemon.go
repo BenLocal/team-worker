@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -30,9 +29,6 @@ type Options struct {
 // Run serves the API on a Unix socket and an optional authenticated HTTP listener.
 // A lock file keeps a second daemon from opening the same data directory.
 func Run(ctx context.Context, opts Options) error {
-	if opts.HTTPAddr != "" && strings.TrimSpace(opts.APIKey) == "" {
-		return fmt.Errorf("HTTP listener requires TEAM_WORKER_API_KEY")
-	}
 	log := opts.Logger
 	if log == nil {
 		log = slog.Default()
@@ -51,6 +47,13 @@ func Run(ctx context.Context, opts Options) error {
 		return err
 	}
 	defer st.Close()
+	if err := os.Chmod(config.DBPath(opts.DataDir), 0o600); err != nil {
+		return fmt.Errorf("protect database: %w", err)
+	}
+	accessKey, err := st.EnsureAccessKey(ctx, opts.APIKey)
+	if err != nil {
+		return fmt.Errorf("prepare access key: %w", err)
+	}
 	st.Probe = proc.Probe
 
 	ln, err := listenUnix(opts.Socket)
@@ -75,12 +78,12 @@ func Run(ctx context.Context, opts Options) error {
 	httpSrv := &http.Server{
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
-		BaseContext:       func(net.Listener) context.Context { return baseCtx },
+		BaseContext:       func(net.Listener) context.Context { return context.WithValue(baseCtx, localAccess{}, true) },
 	}
 	servers := []*http.Server{httpSrv}
 	listeners := []net.Listener{ln}
 	if tcp != nil {
-		servers = append(servers, &http.Server{Handler: Authenticate(handler, opts.APIKey), ReadHeaderTimeout: 10 * time.Second,
+		servers = append(servers, &http.Server{Handler: Authenticate(handler, accessKey), ReadHeaderTimeout: 10 * time.Second,
 			BaseContext: func(net.Listener) context.Context { return baseCtx }})
 		listeners = append(listeners, tcp)
 		log.Info("HTTP API listening", "address", tcp.Addr().String())

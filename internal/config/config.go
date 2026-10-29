@@ -50,6 +50,18 @@ func APIKey() string { return os.Getenv("TEAM_WORKER_API_KEY") }
 
 func HTTPAddr() string { return os.Getenv("TEAM_WORKER_HTTP_ADDR") }
 
+func WebBasePath() string { return os.Getenv("TEAM_WORKER_WEB_BASE_PATH") }
+
+func MagpieWebKeyPath() string {
+	dir := os.Getenv("XDG_CONFIG_HOME")
+	if dir == "" {
+		dir = filepath.Join(homeDir(), ".config")
+	}
+	return filepath.Join(dir, "magpie", "web.key")
+}
+
+func OpenBaoInitPath() string { return filepath.Join(homeDir(), ".openbao", "init.json") }
+
 // DataDir returns TEAM_WORKER_DATA_DIR, then config data_dir, then ~/.team-worker.
 func DataDir() string {
 	if d := os.Getenv(envDataDir); d != "" {

@@ -50,6 +50,7 @@ func newHandler(c *client.Client, resolve resolver) http.Handler {
 		fileServer.ServeHTTP(w, r)
 	})
 	terms := newTerminals(resolve)
+	mux.HandleFunc("GET /api/service-keys", serviceKeys)
 	mux.HandleFunc("POST /api/terminal/ticket", terms.handleTicket)
 	mux.HandleFunc("GET /api/terminal/ws", terms.handleWS)
 	mux.HandleFunc("GET /api/teams", func(w http.ResponseWriter, r *http.Request) {

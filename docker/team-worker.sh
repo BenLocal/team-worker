@@ -157,7 +157,15 @@ case "$action" in
     attach) exec docker exec --user node -it "$NAME" tmux attach-session -t team-worker ;;
     shell) exec docker exec --user node -it "$NAME" bash ;;
     web)
-        docker exec --user node "$NAME" bash -c 'base=${TEAM_WORKER_WEB_URL:-http://localhost:$TEAM_WORKER_WEB_PORT}; printf "team-worker: %s/team-worker/\nMagpie:      %s/magpie/?k=%s\n" "$base" "$base" "$(cat "$HOME/.config/magpie/web.key")"'
+        docker exec --user node "$NAME" python3 -c '
+import json, os, subprocess
+from urllib.parse import quote
+base = os.environ.get("TEAM_WORKER_WEB_URL") or "http://localhost:" + os.environ.get("TEAM_WORKER_WEB_PORT", "8080")
+key = json.loads(subprocess.check_output(["team-worker", "--json", "key", "show"], env=dict(os.environ, TEAM_WORKER_SERVER_URL="")))["key"]
+print("team-worker: " + base + "/team-worker/?k=" + quote(key, safe=""))
+print("Magpie:      " + base + "/magpie/")
+print("OpenBao:     " + base + "/ui/")
+'
         ;;
     magpie)
         if [[ $# == 0 ]]; then set -- tui; fi

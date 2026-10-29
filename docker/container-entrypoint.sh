@@ -95,9 +95,7 @@ team-worker-ops prompt \
     "${TEAM_WORKER_PROMPT_FILE:-/etc/team-worker/prompt.yaml}"
 # The daemon runs in the foreground here so a crash stops the container;
 # CLI autostart stays as a fallback for docker exec sessions.
-if [[ -n ${TEAM_WORKER_API_KEY:-} ]]; then
-    export TEAM_WORKER_HTTP_ADDR="${TEAM_WORKER_HTTP_ADDR:-127.0.0.1:8082}"
-fi
+export TEAM_WORKER_HTTP_ADDR="${TEAM_WORKER_HTTP_ADDR-127.0.0.1:8082}"
 team-workerd --data-dir "$TEAM_WORKER_DATA_DIR" &
 pids+=($!)
 ready=false
@@ -109,7 +107,7 @@ if [[ $ready != true ]]; then echo 'team-workerd failed to start.' >&2; exit 1; 
 # Header links to the other panels Nginx serves on the same address.
 board_links=(--link "Magpie=/magpie/")
 if [[ ${TEAM_WORKER_OPENBAO:-0} == 1 ]]; then board_links+=(--link "OpenBao=/ui/"); fi
-team-worker board serve --host 127.0.0.1 --port 8081 "${board_links[@]}" &
+TEAM_WORKER_WEB_BASE_PATH=/team-worker team-worker board serve --host 127.0.0.1 --port 8081 "${board_links[@]}" &
 pids+=($!)
 nginx -c /etc/nginx/team-worker.conf -g 'daemon off;' &
 pids+=($!)

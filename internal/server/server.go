@@ -122,6 +122,15 @@ func (r *statusRecorder) Write(b []byte) (int, error) {
 
 func (s *Server) routes() {
 	m := s.mux
+	m.HandleFunc("GET /v1/access-key", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		if allowed, _ := r.Context().Value(localAccess{}).(bool); !allowed {
+			writeError(w, http.StatusForbidden, "Access key is available only over the local Unix socket")
+			return
+		}
+		key, err := s.store.AccessKey(r.Context())
+		respond(w, map[string]string{"key": key}, err)
+	})
 	m.HandleFunc("GET /v1/health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
