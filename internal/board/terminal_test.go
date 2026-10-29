@@ -240,8 +240,9 @@ func dialTerminal(t *testing.T, base string, control bool) *websocket.Conn {
 	return conn
 }
 
-// readUntil collects binary output until it contains want or times out.
-func readUntil(t *testing.T, conn *websocket.Conn, want string) {
+// readUntil collects binary output until it contains want or times out, and
+// returns the last size message seen on the way.
+func readUntil(t *testing.T, conn *websocket.Conn, want string) (size sizeMessage) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -253,8 +254,11 @@ func readUntil(t *testing.T, conn *websocket.Conn, want string) {
 		}
 		if typ == websocket.MessageBinary {
 			seen.Write(data)
+		} else if json.Unmarshal(data, &size); size.Type != "size" {
+			size = sizeMessage{}
 		}
 	}
+	return size
 }
 
 func sendJSON(t *testing.T, conn *websocket.Conn, v any) {
@@ -279,7 +283,7 @@ func TestLiveTerminalRelaysOutputHistoryAndControlledInput(t *testing.T) {
 	defer srv.Close()
 
 	watch := dialTerminal(t, srv.URL, false)
-	readUntil(t, watch, "hello-from-agent")
+	size := readUntil(t, watch, "hello-from-agent")
 	sendJSON(t, watch, map[string]any{"type": "resize", "cols": 100, "rows": 30})
 	sendJSON(t, watch, map[string]any{"type": "input", "data": "ignored-input\r"})
 	sendJSON(t, watch, map[string]any{"type": "history"})
@@ -295,10 +299,18 @@ func TestLiveTerminalRelaysOutputHistoryAndControlledInput(t *testing.T) {
 		}
 		var h historyMessage
 		json.Unmarshal(data, &h)
+		if h.Type == "size" {
+			json.Unmarshal(data, &size)
+			continue
+		}
 		if h.Type != "history" || !strings.Contains(h.Text, "hello-from-agent") {
 			t.Fatalf("history message %s", data)
 		}
 		break
+	}
+	// The first size message reports the agent window as created (80x24).
+	if size.Cols != 80 || size.Rows != 24 {
+		t.Fatalf("size message %+v, want the agent window's 80x24", size)
 	}
 
 	control := dialTerminal(t, srv.URL, true)
