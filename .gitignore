@@ -2,3 +2,23 @@ bin/
 *.db
 *.db-wal
 *.db-shm
+
+# Go build and test output outside bin/, e.g. `go build` inside docker/ops.
+/docker/ops/ops
+/docker/ops/team-worker-ops
+*.test
+*.coverprofile
+coverage.out
+
+# Board page: dependencies and the Vite build (`make web`). The placeholder
+# keeps go:embed compiling in a fresh clone.
+node_modules/
+/internal/board/static/*
+!/internal/board/static/.gitkeep
+
+# Deployment configs with credentials (e.g. copied from a server); never commit.
+docker/magpie-config.local/
+*.env
+
+# Local notes with credentials, e.g. dev-env.local.md; never commit.
+*.local.md

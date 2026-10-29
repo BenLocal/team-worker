@@ -23,7 +23,7 @@
 | 数据库驱动 | `modernc.org/sqlite`（纯 Go，免 cgo） | v1.60.1 | 通过 `database/sql` 使用 |
 | 数据库 | SQLite，WAL 模式 | — | |
 | 日志 | 标准库 `log/slog` | — | 仅服务端 |
-| Web 看板 | 标准库 `net/http` + `embed` | — | `internal/board`，静态页面打进二进制 |
+| Web 看板 | Vite + 原生 JS，终端用 `ghostty-web`；服务端 `net/http` + `embed` + `coder/websocket` + `creack/pty` | — | 源码在 `internal/board/web`，构建产物嵌入二进制、不入库 |
 | 构建工具 | `make` + `go` | — | |
 
 > 只列**实际在用**的；同类能力已有选型时不再引入第二套（见 `code-checklist.md`）。
@@ -48,7 +48,8 @@
 改完代码至少跑一遍：
 
 ```bash
-make build      # go build -o bin/ ./cmd/...
+make web        # npm ci（锁文件变化时）+ vite build，输出到 internal/board/static（不入库）
+make build      # 先 make web，再 go build -o bin/ ./cmd/...
 make test       # go test ./...
 make vet        # go vet ./...
 make fmt        # gofmt -w .

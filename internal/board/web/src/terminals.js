@@ -1,0 +1,355 @@
+// Live agent terminals rendered with ghostty-web, ported from ClawTeam's board
+// (a68f67b6 plus the wheel-selection and text-selection fixes after it).
+// ghostty-web inlines its WebAssembly (~650 KB), so it loads only when the
+// Terminals view opens.
+let Terminal, FitAddon;
+
+const THEME = { background: "#161b22", foreground: "#d8dee6", cursor: "#e0a73c" };
+let ready = null;
+export const initTerminals = () => (ready ??= import("ghostty-web").then(async (mod) => {
+  ({ Terminal, FitAddon } = mod);
+  await mod.init();
+}));
+
+async function request(path, payload) {
+  const response = await fetch(new URL(path, location.href), payload
+    ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }
+    : { cache: "no-store" });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || `Request failed (${response.status})`);
+  return data;
+}
+
+// Only the selected card takes the mouse wheel; over any other card the wheel
+// scrolls the page and never reaches a TUI as arrow keys.
+let selected = null;
+export function selectCard(card) {
+  if (selected === card) return;
+  selected?.element.classList.remove("selected");
+  selected = card;
+  card?.element.classList.add("selected");
+}
+document.addEventListener("pointerdown", (event) => {
+  if (!event.target.closest?.(".term-card")) selectCard(null);
+}, { capture: true });
+
+// describe tells whether a member has a live terminal and, if not, why.
+export function describe(member) {
+  const a = member.agent;
+  if (!a) return { live: false, log: false, reason: "Not started yet" };
+  if (a.backend !== "tmux") {
+    return { live: false, log: a.backend === "subprocess", reason: "Runs as a background process; showing its log" };
+  }
+  if (a.status === "exited" || a.alive === false) return { live: false, log: false, reason: "Agent terminal is offline" };
+  return { live: true, log: false, reason: "" };
+}
+
+export class AgentTerminal {
+  constructor(team, member, tasks) {
+    this.team = team;
+    this.member = member;
+    this.state = describe(member);
+    this.generation = 0;
+    this.control = false;
+    this.disposed = false;
+    this.retryDelay = 1000;
+    this.element = document.createElement("section");
+    this.element.className = "term-card";
+    this.element.dataset.agent = member.name;
+    this.element.setAttribute("aria-label", `${member.name} terminal`);
+    this.element.innerHTML = `
+      <div class="term-head"><span class="dot" aria-hidden="true"></span><strong class="term-name"></strong>
+        <span class="term-role"></span><span class="term-status" role="status"></span></div>
+      <p class="term-task"></p>
+      <div class="term-actions">
+        <button type="button" class="history">History</button>
+        <button type="button" class="reconnect">Reconnect</button>
+        <button type="button" class="expand">Full screen</button>
+        <button type="button" class="control">Take control</button>
+      </div>
+      <p class="term-note" role="status"></p>
+      <div class="term-host"></div>
+      <p class="term-error" role="status"></p>`;
+    this.host = this.element.querySelector(".term-host");
+    this.statusEl = this.element.querySelector(".term-status");
+    this.error = this.element.querySelector(".term-error");
+    this.note = this.element.querySelector(".term-note");
+    this.controlButton = this.element.querySelector(".control");
+    this.historyButton = this.element.querySelector(".history");
+    this.element.querySelector(".term-name").textContent = member.name;
+    this.element.addEventListener("pointerdown", () => selectCard(this));
+    this.element.addEventListener("focusin", () => selectCard(this));
+    this.historyButton.addEventListener("click", () => {
+      if (this.historyTerminal || this.historyLoading) this.closeHistory();
+      else this.openHistory(-Math.max(5, this.terminal?.rows || 24));
+    });
+    this.controlButton.addEventListener("click", () => this.connect(!this.control));
+    this.element.querySelector(".reconnect").addEventListener("click", () => this.connect(false));
+    this.element.querySelector(".expand").addEventListener("click", async () => {
+      try {
+        if (document.fullscreenElement === this.element) await document.exitFullscreen();
+        else { selectCard(this); await this.element.requestFullscreen(); }
+      } catch (error) {
+        this.error.textContent = error.message;
+      }
+    });
+    this.host.addEventListener("wheel", (event) => this.onWheel(event), { capture: true, passive: false });
+    this.host.addEventListener("keydown", (event) => this.onKey(event), { capture: true });
+    this.observer = new ResizeObserver(() => this.fit());
+    this.observer.observe(this.host);
+    this.update(member, tasks, true);
+  }
+
+  update(member, tasks, first = false) {
+    const before = this.state;
+    this.member = member;
+    this.state = describe(member);
+    const leader = member.leader ? "Leader, " : "";
+    this.element.querySelector(".term-role").textContent = leader + (member.agentType || "");
+    this.element.querySelector(".term-task").textContent = tasks.length ? "Working on " + tasks.join("; ") : this.state.reason;
+    this.element.querySelector(".dot").className = "dot" + (this.state.live ? " alive" : member.agent ? " dead" : "");
+    for (const b of this.element.querySelectorAll(".term-actions button")) b.hidden = !this.state.live;
+    this.element.classList.toggle("offline", !this.state.live);
+    if (!this.state.live) {
+      if (first || before.live || before.log !== this.state.log) {
+        this.disconnect();
+        this.setStatus(this.state.log ? "Log" : "Offline", "offline");
+        if (this.state.log) this.startLog(); else this.host.replaceChildren(Object.assign(document.createElement("p"), { className: "term-reason", textContent: this.state.reason }));
+      }
+    } else if (first || !before.live) {
+      this.stopLog();
+      this.connect(false);
+    }
+  }
+
+  setStatus(text, state) {
+    this.statusEl.textContent = text;
+    this.statusEl.dataset.state = state;
+  }
+
+  // Subprocess agents have no tmux pane; poll their log through the screen API.
+  startLog() {
+    this.stopLog();
+    const pre = document.createElement("pre");
+    pre.className = "term-log";
+    this.host.replaceChildren(pre);
+    const poll = async () => {
+      try {
+        const res = await request(`api/teams/${encodeURIComponent(this.team)}/agents/${encodeURIComponent(this.member.name)}/screen?history=500`);
+        const atBottom = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 4;
+        pre.textContent = res.screen;
+        if (atBottom) pre.scrollTop = pre.scrollHeight;
+      } catch (error) {
+        pre.textContent = "Cannot read the log: " + error.message;
+      }
+    };
+    poll();
+    this.logTimer = setInterval(poll, 2000);
+  }
+  stopLog() { clearInterval(this.logTimer); this.logTimer = null; }
+
+  onWheel(event) {
+    if (!this.state.live || event.ctrlKey || !event.deltaY) return;
+    if (selected !== this && document.fullscreenElement !== this.element) {
+      // Keep ghostty from consuming it, but let the browser scroll the page.
+      event.stopImmediatePropagation();
+      return;
+    }
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    const lines = Math.sign(event.deltaY) * Math.max(1, Math.ceil(Math.abs(event.deltaY) / 20));
+    if (this.historyTerminal) {
+      if (lines > 0 && this.historyTerminal.viewportY === 0) this.closeHistory();
+      else this.historyTerminal.scrollLines(lines);
+    } else if (this.historyLoading) this.historyOffset += lines;
+    else if (lines < 0) this.openHistory(lines);
+  }
+
+  onKey(event) {
+    if (this.historyTerminal) {
+      const t = this.historyTerminal;
+      const actions = {
+        ArrowUp: () => t.scrollLines(-1), ArrowDown: () => t.scrollLines(1),
+        PageUp: () => t.scrollPages(-1), PageDown: () => t.scrollPages(1),
+        Home: () => t.scrollToTop(), End: () => t.scrollToBottom(), Escape: () => this.closeHistory(),
+      };
+      if (actions[event.key]) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        actions[event.key]();
+      }
+    } else if (event.shiftKey && event.key === "PageUp") {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      this.openHistory(-Math.max(5, this.terminal?.rows || 24));
+    }
+  }
+
+  newTerminal(blink) {
+    return new Terminal({ fontSize: 13, cursorBlink: blink, scrollback: 5000, theme: THEME });
+  }
+
+  fit() {
+    if (!this.terminal || !this.host.clientWidth) return;
+    if (this.historyTerminal) { this.historyFit.fit(); return; }
+    this.fitAddon.fit();
+    const cols = Math.max(20, Math.min(400, this.terminal.cols));
+    const rows = Math.max(5, Math.min(150, this.terminal.rows));
+    if (cols !== this.terminal.cols || rows !== this.terminal.rows) this.terminal.resize(cols, rows);
+    this.send({ type: "resize", cols, rows });
+  }
+
+  send(message) {
+    if (this.socket?.readyState === WebSocket.OPEN) this.socket.send(JSON.stringify(message));
+  }
+
+  openHistory(offset) {
+    if (this.socket?.readyState !== WebSocket.OPEN) return;
+    this.historyLoading = true;
+    this.historyOffset = offset;
+    this.historyButton.textContent = "Back to live";
+    this.note.textContent = "Loading history…";
+    this.send({ type: "history" });
+  }
+
+  showHistory(message) {
+    if (!this.historyLoading) return;
+    if (message.error) {
+      this.closeHistory();
+      this.error.textContent = message.error;
+      return;
+    }
+    this.historyLoading = false;
+    this.liveHost.hidden = true;
+    this.historyHost.hidden = false;
+    this.historyHost.replaceChildren();
+    const terminal = this.newTerminal(false);
+    this.historyTerminal = terminal;
+    this.historyFit = new FitAddon();
+    terminal.loadAddon(this.historyFit);
+    terminal.attachCustomKeyEventHandler(() => false);
+    terminal.open(this.historyHost);
+    this.historyFit.fit();
+    const generation = this.generation;
+    terminal.write(message.text.replace(/\n/g, "\r\n") + "\x1b[0m", () => {
+      if (generation !== this.generation || this.historyTerminal !== terminal) return;
+      terminal.scrollToBottom();
+      terminal.scrollLines(this.historyOffset);
+    });
+    terminal.focus();
+    this.note.textContent = "History snapshot, input paused. Scroll or use Page Up and Page Down; Esc returns to live."
+      + (message.truncated ? " Older output was trimmed." : "");
+  }
+
+  closeHistory(refocus = true) {
+    this.historyLoading = false;
+    this.historyTerminal?.dispose();
+    this.historyTerminal = null;
+    if (this.liveHost) this.liveHost.hidden = false;
+    if (this.historyHost) { this.historyHost.hidden = true; this.historyHost.replaceChildren(); }
+    this.historyButton.textContent = "History";
+    this.note.textContent = "";
+    if (refocus) {
+      this.fit();
+      if (this.control) this.terminal?.focus();
+    }
+  }
+
+  disconnect() {
+    this.generation++;
+    this.closeHistory(false);
+    clearTimeout(this.retryTimer);
+    if (this.socket) { this.socket.onclose = null; this.socket.close(); this.socket = null; }
+    this.inputSubscription?.dispose();
+    this.terminal?.dispose();
+    this.terminal = null;
+    this.control = false;
+    this.element.classList.remove("controlling");
+    this.controlButton.textContent = "Take control";
+  }
+
+  retry(message) {
+    this.error.textContent = message;
+    this.retryTimer = setTimeout(() => this.connect(false), this.retryDelay);
+    this.retryDelay = Math.min(10000, this.retryDelay * 2);
+  }
+
+  async connect(control) {
+    this.disconnect();
+    if (this.disposed || !this.state.live) return;
+    const generation = this.generation;
+    this.error.textContent = "";
+    this.liveHost = Object.assign(document.createElement("div"), { className: "term-surface" });
+    this.historyHost = Object.assign(document.createElement("div"), { className: "term-surface", hidden: true });
+    this.host.replaceChildren(this.liveHost, this.historyHost);
+    this.setStatus("Connecting…", "connecting");
+    this.controlButton.disabled = true;
+    try {
+      await initTerminals();
+      if (generation !== this.generation || this.disposed) return;
+      this.terminal = this.newTerminal(control);
+      this.fitAddon = new FitAddon();
+      this.terminal.loadAddon(this.fitAddon);
+      this.terminal.open(this.liveHost);
+      this.fit();
+      const data = await request("api/terminal/ticket", {
+        team: this.team, agent: this.member.name, control, cols: this.terminal.cols, rows: this.terminal.rows,
+      });
+      if (generation !== this.generation || this.disposed) return;
+      const url = new URL("api/terminal/ws", location.href);
+      url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
+      url.searchParams.set("ticket", data.ticket);
+      const socket = new WebSocket(url);
+      socket.binaryType = "arraybuffer";
+      this.socket = socket;
+      socket.onopen = () => {
+        if (generation !== this.generation) return socket.close();
+        this.retryDelay = 1000;
+        this.control = control;
+        this.element.classList.toggle("controlling", control);
+        this.controlButton.disabled = false;
+        this.controlButton.textContent = control ? "Release control" : "Take control";
+        this.setStatus(control ? "Controlling" : "Watching", "connected");
+        this.fit();
+        if (control) { selectCard(this); this.terminal.focus(); }
+      };
+      socket.onmessage = (event) => {
+        if (generation !== this.generation) return;
+        if (typeof event.data === "string") {
+          const message = JSON.parse(event.data);
+          if (message.type === "history") this.showHistory(message);
+        } else this.terminal.write(new Uint8Array(event.data));
+      };
+      socket.onclose = () => {
+        if (generation !== this.generation || this.disposed) return;
+        this.control = false;
+        this.controlButton.textContent = "Take control";
+        this.controlButton.disabled = false;
+        this.element.classList.remove("controlling");
+        this.setStatus("Disconnected", "disconnected");
+        this.retry(control
+          ? "Control ended. Reconnecting to watch; someone else may have control now."
+          : "Connection lost. Reconnecting…");
+      };
+      this.inputSubscription = this.terminal.onData((input) => {
+        if (this.control && !this.historyTerminal && !this.historyLoading && generation === this.generation) {
+          this.send({ type: "input", data: input });
+        }
+      });
+    } catch (error) {
+      if (generation !== this.generation || this.disposed) return;
+      this.controlButton.disabled = false;
+      this.setStatus("Unavailable", "disconnected");
+      this.retry(error.message);
+    }
+  }
+
+  dispose() {
+    this.disposed = true;
+    this.disconnect();
+    this.stopLog();
+    this.observer.disconnect();
+    if (selected === this) selectCard(null);
+    this.element.remove();
+  }
+}
