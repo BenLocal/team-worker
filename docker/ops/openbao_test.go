@@ -365,3 +365,21 @@ func TestAutoUnsealWaitsForUnreachableServer(t *testing.T) {
 		t.Errorf("state = %q", got)
 	}
 }
+
+func TestWaitForRenderedFiles(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "git-credentials")
+	config := filepath.Join(dir, "openbao.yaml")
+	os.WriteFile(config, []byte(`{"secrets": {"app/git": {"password": "x"}},
+"files": [{"path": "`+target+`", "template": "t"}]}`), 0o600)
+	if err := waitForRenderedFiles(config, 600*time.Millisecond); err == nil {
+		t.Fatal("missing file should time out")
+	}
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		os.WriteFile(target, []byte("https://u:p@host\n"), 0o600)
+	}()
+	if err := waitForRenderedFiles(config, 5*time.Second); err != nil {
+		t.Fatal(err)
+	}
+}

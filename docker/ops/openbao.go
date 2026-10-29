@@ -30,13 +30,20 @@ import (
 // writes the declared KV secrets, grants a read-only AppRole to the agent,
 // and execs `bao agent` to render the files.
 func openbaoCmd() *cobra.Command {
-	return &cobra.Command{
+	var waitRendered time.Duration
+	cmd := &cobra.Command{
 		Use:   "openbao FILE",
 		Short: "Import openbao.yaml into OpenBao and run OpenBao Agent",
-		Args:  cobra.ExactArgs(1),
+		Long: "Import openbao.yaml into OpenBao and run OpenBao Agent. With --wait-rendered it\n" +
+			"imports nothing and instead waits until the Agent has written every declared file,\n" +
+			"so steps that need those files (e.g. Git credentials for skills) start after them.",
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if os.Getenv("TEAM_WORKER_OPENBAO") != "1" {
 				return nil
+			}
+			if waitRendered > 0 {
+				return failWith("OpenBao files not rendered: ", waitForRenderedFiles(args[0], waitRendered))
 			}
 			tokenFile := os.Getenv("TEAM_WORKER_OPENBAO_TOKEN_FILE")
 			if tokenFile == "" {
@@ -58,6 +65,29 @@ func openbaoCmd() *cobra.Command {
 			return syscall.Exec(bao, []string{"bao", "agent", "-config=" + path}, os.Environ())
 		},
 	}
+	cmd.Flags().DurationVar(&waitRendered, "wait-rendered", 0, "Wait up to this long for the declared files instead of importing")
+	return cmd
+}
+
+// waitForRenderedFiles waits until every file openbao.yaml declares exists.
+func waitForRenderedFiles(configPath string, timeout time.Duration) error {
+	_, files, err := readOpenBaoConfig(configPath)
+	if err != nil {
+		return err
+	}
+	deadline := time.Now().Add(timeout)
+	for _, f := range files {
+		for {
+			if st, err := os.Stat(f.Path); err == nil && st.Size() > 0 {
+				break
+			}
+			if time.Now().After(deadline) {
+				return fmt.Errorf("%s did not appear within %s", f.Path, timeout)
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+	}
+	return nil
 }
 
 const (

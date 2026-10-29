@@ -79,6 +79,12 @@ done
 if [[ $ready != true ]]; then echo 'Magpie failed to start.' >&2; exit 1; fi
 team-worker-ops plugins \
     "${TEAM_WORKER_PLUGIN_FILE:-/etc/team-worker/plugin.yaml}"
+# Skill sources may need Git credentials that OpenBao Agent renders; with
+# automatic unsealing nothing waits on a person, so wait for those files.
+if [[ ${TEAM_WORKER_OPENBAO:-0} == 1 && ${TEAM_WORKER_OPENBAO_AUTO_UNSEAL:-0} == 1 ]]; then
+    team-worker-ops openbao --wait-rendered 180s \
+        "${TEAM_WORKER_OPENBAO_FILE:-/etc/team-worker/openbao.yaml}"
+fi
 team-worker-ops skills \
     "${TEAM_WORKER_SKILLS_FILE:-/etc/team-worker/skills.yaml}"
 team-worker-ops mcp \
@@ -95,7 +101,10 @@ for ((i=0; i<50; i++)); do
     sleep 0.2
 done
 if [[ $ready != true ]]; then echo 'team-workerd failed to start.' >&2; exit 1; fi
-team-worker board serve --host 127.0.0.1 --port 8081 &
+# Header links to the other panels Nginx serves on the same address.
+board_links=(--link "Magpie=/magpie/")
+if [[ ${TEAM_WORKER_OPENBAO:-0} == 1 ]]; then board_links+=(--link "OpenBao=/ui/"); fi
+team-worker board serve --host 127.0.0.1 --port 8081 "${board_links[@]}" &
 pids+=($!)
 nginx -c /etc/nginx/team-worker.conf -g 'daemon off;' &
 pids+=($!)
@@ -113,10 +122,12 @@ read -r TEAM_WORKER_AGENT_NAME TEAM_WORKER_AGENT_ID <<< "$identity"
 export TEAM_WORKER_AGENT_NAME TEAM_WORKER_AGENT_ID
 export TEAM_WORKER_AGENT_TYPE=leader TEAM_WORKER_AGENT_LEADER=1 TEAM_WORKER_WORKSPACE_DIR="$workspace"
 team=$TEAM_WORKER_TEAM_NAME
-prompt="你是团队 $team 的 Leader，名字是 $TEAM_WORKER_AGENT_NAME。团队已注册，直接使用它。请使用 team-worker skill 完成用户任务。用 team-worker spawn tmux --team $team -n <名字> --task <任务> 创建 Worker（默认运行 claude）；Leader 和所有 Worker 都必须在本容器运行。收件箱消息和新的未分配 pending 任务会以 [team-worker] 开头直接输入到你的会话中。收到任务通知时，检查任务列表，主动接手未分配的 pending 任务，按需拆分、分配并汇总结果到任务描述。用户任务：${1:-等待新任务。}"
+prompt="你是团队 $team 的 Leader，名字是 $TEAM_WORKER_AGENT_NAME。团队已注册，直接使用它。请使用 team-worker skill 完成用户任务。用 team-worker spawn tmux --team $team -n <名字> --task <任务> 创建 Worker（默认运行 claude）；Leader 和所有 Worker 都必须在本容器运行。收件箱消息、Worker 的进展和新的未分配 pending 任务会在你每轮结束时自动送到你面前（team-worker hook），你停在输入框时会收到一行提醒；不需要执行 task wait。收到任务通知时，检查任务列表，主动接手未分配的 pending 任务，按需拆分、分配并汇总结果到任务描述。用户任务：${1:-等待新任务。}"
+# The same Stop/PostToolUse/SessionStart hooks spawn gives Claude workers.
+hook_settings=$(team-worker hook settings --role leader)
 leader_args=(leader-session claude \
     "${1:-检查团队任务列表，认领并执行 pending 任务；没有任务时等待任务通知。}" \
-    --append-system-prompt "$prompt" --allowedTools 'Bash(team-worker *)')
+    --append-system-prompt "$prompt" --allowedTools 'Bash(team-worker *)' --settings "$hook_settings")
 printf -v leader_command '%q ' "${leader_args[@]}"
 # Same session that team-worker spawn uses, so workers open as sibling windows.
 team_session="team-worker-$team"
