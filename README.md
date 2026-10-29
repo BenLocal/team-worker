@@ -278,18 +278,4 @@ Web 看板的提示词读取接口由 `board serve` 提供：
 | `GET /api/teams/{team}/prompt` | 查看团队公共提示词 |
 | `GET /api/teams/{team}/members/{name}/prompt?user=...` | 查看成员专属提示词，`user` 默认空 |
 
-## 与 ClawTeam 的差异
-
-- 任务、消息不再是一个个 JSON 文件，统一存在 SQLite。依赖解锁、领取消息都在一个事务内完成，消息不会被重复投递。
-- 不支持 ZeroMQ P2P 和 Redis 唤醒；长轮询由服务内部的写入通知触发。
-- 对不存在的团队创建任务或发消息会报 `Team '<name>' not found`，ClawTeam 会静默创建目录。
-- `task list` 按创建顺序返回，ClawTeam 按任务 ID 字母序。
-- 环境变量前缀从 `CLAWTEAM_` 改为 `TEAM_WORKER_`。
-- 不做 git worktree：每个 Agent 只拿到一个普通工作目录，怎么组织代码由团队自己决定。
-- 不内置模板，团队结构完全由用户的模板定义。
-- 团队说明和成员专属提示词保存在 SQLite 中，重启时复用；成员提示词支持单独修改并通知对应成员。
-- 数据库按版本自动升级，旧库升级前自动备份；备份与恢复步骤见 [数据库升级与恢复](docs/agents-dot-md/environment.md#数据库升级与恢复)。
-- Web 看板已支持 tmux 终端的实时查看和接管输入，同一个 Agent 同时只允许一个查看者接管。
-- 已支持原生会话标识持久化、手动续接和有限重试的 keepalive；自动恢复使用准确会话 ID，并在正常关停后停止。
-
 后续需求见 [TODO.md](TODO.md)。
