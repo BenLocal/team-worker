@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -18,14 +20,19 @@ import (
 )
 
 type Options struct {
-	DataDir string
-	Socket  string
-	Logger  *slog.Logger
+	DataDir  string
+	Socket   string
+	HTTPAddr string
+	APIKey   string
+	Logger   *slog.Logger
 }
 
-// Run opens the database and serves the API on a Unix socket until ctx ends.
+// Run serves the API on a Unix socket and an optional authenticated HTTP listener.
 // A lock file keeps a second daemon from opening the same data directory.
 func Run(ctx context.Context, opts Options) error {
+	if opts.HTTPAddr != "" && strings.TrimSpace(opts.APIKey) == "" {
+		return fmt.Errorf("HTTP listener requires TEAM_WORKER_API_KEY")
+	}
 	log := opts.Logger
 	if log == nil {
 		log = slog.Default()
@@ -50,20 +57,48 @@ func Run(ctx context.Context, opts Options) error {
 	if err != nil {
 		return err
 	}
+	defer ln.Close()
 	defer os.Remove(opts.Socket)
+	var tcp net.Listener
+	if opts.HTTPAddr != "" {
+		tcp, err = net.Listen("tcp", opts.HTTPAddr)
+		if err != nil {
+			return fmt.Errorf("listen HTTP: %w", err)
+		}
+		defer tcp.Close()
+	}
 
 	// Cancelling baseCtx ends in-flight long-poll requests so shutdown is prompt.
 	baseCtx, cancelBase := context.WithCancel(context.Background())
 	defer cancelBase()
+	handler := New(st, log)
 	httpSrv := &http.Server{
-		Handler:           New(st, log),
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 		BaseContext:       func(net.Listener) context.Context { return baseCtx },
 	}
-	errCh := make(chan error, 1)
-	go func() { errCh <- httpSrv.Serve(ln) }()
-	go reapLoop(baseCtx, st, log)
-	go NewNudger(st, log).Run(baseCtx)
+	servers := []*http.Server{httpSrv}
+	listeners := []net.Listener{ln}
+	if tcp != nil {
+		servers = append(servers, &http.Server{Handler: Authenticate(handler, opts.APIKey), ReadHeaderTimeout: 10 * time.Second,
+			BaseContext: func(net.Listener) context.Context { return baseCtx }})
+		listeners = append(listeners, tcp)
+		log.Info("HTTP API listening", "address", tcp.Addr().String())
+	}
+	errCh := make(chan error, len(servers))
+	var workers sync.WaitGroup
+	defer func() {
+		cancelBase()
+		for _, srv := range servers {
+			srv.Close()
+		}
+		workers.Wait()
+	}()
+	for i, srv := range servers {
+		workers.Go(func() { errCh <- srv.Serve(listeners[i]) })
+	}
+	workers.Go(func() { reapLoop(baseCtx, st, log) })
+	workers.Go(func() { NewNudger(st, log).Run(baseCtx) })
 	log.Info("team-workerd started", "socket", opts.Socket, "db", config.DBPath(opts.DataDir), "pid", os.Getpid())
 
 	select {
@@ -75,7 +110,11 @@ func Run(ctx context.Context, opts Options) error {
 	cancelBase()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	return httpSrv.Shutdown(shutdownCtx)
+	var shutdownErr error
+	for _, srv := range servers {
+		shutdownErr = errors.Join(shutdownErr, srv.Shutdown(shutdownCtx))
+	}
+	return shutdownErr
 }
 
 // ReapInterval is how often the daemon looks for agents that died without

@@ -33,6 +33,7 @@ func envInt(key string, def int) int {
 func main() {
 	dataDir := flag.String("data-dir", config.DataDir(), "Directory for the database, socket and log")
 	socket := flag.String("socket", "", "Unix socket path (default: <data-dir>/team-workerd.sock)")
+	httpAddr := flag.String("listen", config.HTTPAddr(), "Optional HTTP listen address (env TEAM_WORKER_HTTP_ADDR); requires TEAM_WORKER_API_KEY")
 	var logOpts logging.Options
 	flag.StringVar(&logOpts.Level, "log-level", envOr("TEAM_WORKER_LOG_LEVEL", "info"),
 		"Log level: debug, info, warn or error (env TEAM_WORKER_LOG_LEVEL)")
@@ -58,7 +59,7 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	if err := server.Run(ctx, server.Options{DataDir: *dataDir, Socket: *socket, Logger: logger}); err != nil {
+	if err := server.Run(ctx, server.Options{DataDir: *dataDir, Socket: *socket, HTTPAddr: *httpAddr, APIKey: config.APIKey(), Logger: logger}); err != nil {
 		logger.Error("team-workerd failed", "err", err)
 		fmt.Fprintln(os.Stderr, "team-workerd:", err)
 		closer.Close()

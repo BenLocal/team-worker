@@ -1,10 +1,11 @@
 # 待办
 
-- [ ] team-worker CLI 支持 HTTP 远程调用及 API Key 鉴权。
+- [x] team-worker CLI 支持 HTTP 远程调用及 API Key 鉴权。
   - CLI 可配置远程服务地址，通过 HTTP 调用 team-workerd。
   - HTTP 远程调用必须携带 API Key；服务端拒绝缺失或错误的 Key。
   - 本地 Unix socket 调用不需要 API Key，保持现有使用方式。
   - 验收覆盖有效 Key、缺失 Key、错误 Key，以及未配置 Key 的本地 socket 调用。
+  - 已通过 `scripts/verify-http.py` 验证真实 CLI 的团队、任务、消息流程及免 Key socket；HTTP 模式不提供远程进程执行器。
 
 ## 后续需求
 
