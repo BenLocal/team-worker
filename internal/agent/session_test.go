@@ -15,6 +15,12 @@ func TestResumeUsesExactSessionAndKeepsModel(t *testing.T) {
 		{[]string{"codex", "--model", "chosen"}, []string{"codex", "exec", "resume", "exact", "--model", "chosen"}, false},
 		{[]string{"codex", "-c", "model=exec"}, []string{"codex", "resume", "exact", "-c", "model=exec"}, true},
 		{[]string{"gemini"}, []string{"gemini", "--resume", "exact"}, true},
+		{[]string{"dsh", "--profile", "headless", "--json"}, []string{"dsh", "--profile", "headless", "--json", "--session-id", "exact"}, false},
+		{[]string{"dsh", "headless", "--session-id", "old"}, []string{"dsh", "headless", "--session-id", "exact"}, false},
+		{[]string{"dsh", "--profile=headless", "--session-id=old", "--patch", "local.yml"}, []string{"dsh", "--profile=headless", "--patch", "local.yml", "--session-id", "exact"}, false},
+		{[]string{"dsh", "--profile", "headless"}, []string{"dsh", "--profile", "headless", "--session-id", "exact"}, true},
+		{[]string{"dsh", "--profile", "tui"}, []string{"dsh", "--profile", "tui", "--resume", "exact"}, true},
+		{[]string{"dsh"}, []string{"dsh", "--resume", "exact"}, true},
 	} {
 		got, err := ResumeCommand(tt.command, "exact", tt.interactive)
 		if err != nil || !reflect.DeepEqual(got, tt.want) {
