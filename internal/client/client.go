@@ -320,6 +320,20 @@ func (c *Client) TeamPrompt(ctx context.Context, team string) (string, error) {
 	return out.Prompt, c.do(ctx, http.MethodGet, teamPath(team, "prompt"), nil, nil, &out)
 }
 
+func (c *Client) AgentPrompt(ctx context.Context, team, name, user string) (string, error) {
+	var out struct {
+		Prompt string `json:"prompt"`
+	}
+	return out.Prompt, c.do(ctx, http.MethodGet, teamPath(team, "members", name, "prompt"), url.Values{"user": {user}}, nil, &out)
+}
+
+func (c *Client) SetAgentPrompt(ctx context.Context, team, name, user, prompt string) (bool, error) {
+	var out struct {
+		Changed bool `json:"changed"`
+	}
+	return out.Changed, c.do(ctx, http.MethodPut, teamPath(team, "members", name, "prompt"), url.Values{"user": {user}}, map[string]string{"prompt": prompt}, &out)
+}
+
 // SetTeamPrompt saves shared instructions and reports whether they changed.
 func (c *Client) SetTeamPrompt(ctx context.Context, team, prompt string) (bool, error) {
 	var out struct {

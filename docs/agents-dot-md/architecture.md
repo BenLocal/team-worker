@@ -74,7 +74,8 @@ team-worker board serve ──> internal/board (只读 Web 看板，经 client �
 ## 五、数据流与存储
 
 - 权威数据源：`<数据目录>/team-worker.db`，只有 `team-workerd` 写。团队模板是 `~/.team-worker/templates/*.toml` 文件，不进数据库。表：`teams`、`members`、`tasks`、`task_deps`、`messages`、`events`、`agents`、`workspaces`。
-- 迁移：`store.migrations` 是只追加的 SQL 列表，进度记在 `PRAGMA user_version`。**已发布的迁移不改，只追加新条目。**
+- 团队公共提示词保存在 `teams.prompt`，成员专属提示词保存在 `members.prompt`，按 `(team, name, user_name)` 区分。模板渲染后的角色 `task` 和显式传入的 `spawn --task` 写入成员提示词；进程重新注册不覆盖它，启动和会话恢复钩子会重新读取。修改成员提示词与发送该成员的 inbox 通知在同一事务完成。
+- 迁移：`internal/store/migrations/*.sql` 用 `go:embed` 内置，Goose Provider 负责顺序执行和事务，进度记在 `goose_db_version`。旧库的 `PRAGMA user_version` 一次性接入 Goose 历史；各 SQL 仍同步更新 `user_version`，用于版本兼容检查。**已发布的迁移不改，只追加文件。**
 - 时间戳：字符串存储，格式对齐 Python `datetime.isoformat()`（`store.timestamp`），保持与 ClawTeam 输出一致。
 - 通知：没有消息队列；`Hub` 是进程内「关闭旧 channel、换新 channel」的广播。
 

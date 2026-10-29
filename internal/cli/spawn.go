@@ -26,6 +26,7 @@ type spawnRequest struct {
 	AgentID   string
 	AgentType string
 	Task      string
+	TaskSet   bool
 	Backend   string
 	Command   []string
 	Cwd       string
@@ -80,6 +81,14 @@ func (a *app) spawnAgent(ctx context.Context, req spawnRequest) (spawnResult, er
 		return spawnResult{}, err
 	}
 	member := findMember(team, req.Name, id.User)
+	if member != nil && !req.TaskSet && req.Task == "" {
+		if req.Task, err = c.AgentPrompt(ctx, req.Team, req.Name, id.User); err != nil {
+			return spawnResult{}, err
+		}
+	}
+	if len(req.Task) > store.MaxAgentPromptLength {
+		return spawnResult{}, fmt.Errorf("Agent instructions must be at most %d bytes", store.MaxAgentPromptLength)
+	}
 	if member != nil {
 		req.AgentID = member.AgentID
 	} else if req.AgentID == "" {
@@ -179,6 +188,11 @@ func (a *app) spawnAgent(ctx context.Context, req spawnRequest) (spawnResult, er
 		return spawnResult{}, err
 	}
 
+	if req.TaskSet || req.Task != "" {
+		if _, err := c.SetAgentPrompt(ctx, req.Team, req.Name, id.User, req.Task); err != nil {
+			return spawnResult{}, err
+		}
+	}
 	res, err := built.Start()
 	if err != nil {
 		return spawnResult{}, err
@@ -318,6 +332,7 @@ func (a *app) spawnCmd() *cobra.Command {
 				return a.fail(err)
 			}
 			req.SkipPerms = !noSkip
+			req.TaskSet = cmd.Flags().Changed("task")
 			res, err := a.spawnAgent(cmd.Context(), req)
 			if err != nil {
 				return a.fail(err)
@@ -336,7 +351,7 @@ func (a *app) spawnCmd() *cobra.Command {
 	f.StringVarP(&req.Team, "team", "t", "", "Team name (default: TEAM_WORKER_TEAM_NAME)")
 	f.StringVarP(&req.Name, "agent-name", "n", "", "Agent name (default: random)")
 	f.StringVar(&req.AgentType, "agent-type", "general-purpose", "Agent type")
-	f.StringVar(&req.Task, "task", "", "Task for the agent's first prompt")
+	f.StringVar(&req.Task, "task", "", "Save agent instructions (default: reuse saved instructions; empty clears them)")
 	f.StringVar(&req.Cwd, "cwd", "", "Working directory (default: <data-dir>/workspaces/<team>/<agent>)")
 	f.StringArrayVar(&envPairs, "env", nil, "Extra environment variable KEY=VALUE (repeatable)")
 	f.BoolVar(&noSkip, "no-skip-permissions", false, "Keep the agent CLI's tool approval prompts")

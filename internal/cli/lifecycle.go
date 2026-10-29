@@ -131,7 +131,7 @@ func (a *app) shutdownReplyCmd(use string, msgType model.MessageType, short stri
 
 func (a *app) agentCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "agent", Short: "Spawned agent processes"}
-	cmd.AddCommand(a.agentListCmd(), a.agentStopCmd(), a.agentScreenCmd())
+	cmd.AddCommand(a.agentListCmd(), a.agentStopCmd(), a.agentScreenCmd(), a.agentPromptCmd())
 	return cmd
 }
 

@@ -129,7 +129,7 @@ LLM Agent 不会自己去查收件箱。一轮回复结束、停在输入框之�
 |---|---|---|
 | `Stop` | `team-worker hook stop` | 见下文 |
 | `PostToolUse` | `team-worker hook post-tool-use` | 每 15 秒最多检查一次收件箱。有新消息时，作为附加上下文交给 Agent，所以它在干活途中也能收到 leader 的回复 |
-| `SessionStart`（resume、clear、compact） | `team-worker hook session-start` | 会话恢复、清空或上下文被压缩后，重新给 Agent 一遍身份、工作目录、团队说明、当前任务和协作规则 |
+| `SessionStart`（resume、clear、compact） | `team-worker hook session-start` | 会话恢复、清空或上下文被压缩后，重新给 Agent 一遍身份、工作目录、团队说明、专属提示词、当前任务和协作规则 |
 
 `hook stop` 按顺序做以下判断：
 
@@ -184,7 +184,7 @@ pi 不支持 hook，但可以加载 TypeScript 扩展。team-worker 的二进制
 | `agent_settled`（这一轮结束，Agent 空闲） | 循环调用 `team-worker hook stop --wait 50` | 有新消息、可做的新任务，或者（对 leader 来说）团队有进展时，用 `pi.sendUserMessage` 开启新的一轮，不需要往终端里打字 |
 | `agent_start` | 无 | 停止空闲循环 |
 | `tool_execution_end` | `team-worker hook post-tool-use` | 干活途中收到的消息，以 `steer` 方式插进当前这一轮 |
-| `session_start`（resume、fork、new）、`session_compact` | `team-worker hook session-start` | 以 `nextTurn` 方式附上身份、团队说明和当前任务，在下一轮生效 |
+| `session_start`（resume、fork、new）、`session_compact` | `team-worker hook session-start` | 以 `nextTurn` 方式附上身份、团队说明、专属提示词和当前任务，在下一轮生效 |
 
 和 Claude Code 相比，pi 能**主动**开启新的一轮。所以 pi Agent 停在输入框时也会被扩展唤醒，用不上终端提醒。终端提醒仍然开着，只是作为备用：扩展没有加载成功时，还有它兜底。
 

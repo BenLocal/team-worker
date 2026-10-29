@@ -22,6 +22,7 @@
 | HTTP | 标准库 `net/http`（Go 1.22+ 方法 / 路径模式路由） | — | 不引入第三方路由 |
 | 数据库驱动 | `modernc.org/sqlite`（纯 Go，免 cgo） | v1.60.1 | 通过 `database/sql` 使用 |
 | 数据库 | SQLite，WAL 模式 | — | |
+| 数据库迁移 | `github.com/pressly/goose/v3` | v3.29.0 | SQL 文件用 `go:embed` 内置，启动时执行 |
 | 日志 | 标准库 `log/slog` | — | 仅服务端 |
 | Web 看板 | Vite + 原生 JS，终端用 `ghostty-web`；服务端 `net/http` + `embed` + `coder/websocket` + `creack/pty` | — | 源码在 `internal/board/web`，构建产物嵌入二进制、不入库 |
 | 构建工具 | `make` + `go` | — | |
@@ -35,7 +36,7 @@
 - 事务：写操作走 `Store.write`，提交成功后自动触发 `OnChange`；事务内复用的辅助函数接收 `queryer`。
 - 主键：团队、成员按名字；任务 ID 由 `randomHex` 生成；消息 / 事件用自增 ID。
 - 列表类字段（`blocks`、`metadata`、`command`）以 JSON 文本存储。
-- 迁移：在 `store.migrations` 末尾追加，不改已有条目。
+- 迁移：在 `internal/store/migrations/` 追加带递增版本号的 Goose SQL 文件，用 `go:embed` 内置。不改已发布文件；每份文件的 Up 部分同时设置对应的 `PRAGMA user_version`，与 Goose 版本记录在同一事务提交。
 - 错误：业务错误用 `invalidf` / `notFoundf` / `conflictf`，`server.respond` 据此映射 HTTP 状态码。
 
 ## 四、配置管理

@@ -23,10 +23,10 @@
 
 ## 1. SQL 用 `?` 占位，迁移只追加不修改
 
-数据库是 `modernc.org/sqlite` 驱动的 SQLite（WAL）。SQL 参数一律用 `?` 占位，不拼接用户输入；表结构变更在 `internal/store/store.go` 的 `migrations` 末尾追加新条目，进度由 `PRAGMA user_version` 记录。
+数据库是 `modernc.org/sqlite` 驱动的 SQLite（WAL）。SQL 参数一律用 `?` 占位，不拼接用户输入；表结构变更在 `internal/store/migrations/` 追加递增版本号的 Goose SQL 文件，用 `go:embed` 内置。Goose 记录迁移进度，各 SQL 的 Up 部分同步设置对应的 `PRAGMA user_version`。
 
 - 反例：修改已有的迁移字符串。已经建过库的数据目录不会再执行它，新旧库结构从此不一致。
-- 正例：追加一条 `ALTER TABLE ...` / `CREATE TABLE ...` 迁移，并在 `store_test.go` 里覆盖新字段。
+- 正例：追加包含 `ALTER TABLE ...` / `CREATE TABLE ...` 和对应 `PRAGMA user_version` 的 Goose SQL 文件，并在 store 测试中覆盖旧库升级和新字段。
 - 强制：无（靠自检）
 
 ## 2. 禁止 1+N：循环里不查库、不调远程接口
