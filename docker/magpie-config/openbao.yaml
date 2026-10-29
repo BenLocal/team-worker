@@ -1,5 +1,6 @@
-# OpenBao secrets imported when TEAM_WORKER_OPENBAO=1, after manual init and unseal.
-# The import token is read from /etc/team-worker/openbao.token (TEAM_WORKER_OPENBAO_TOKEN_FILE).
+# OpenBao initializes, unseals and imports this file automatically by default.
+# An optional import token is read from /etc/team-worker/openbao.token
+# (TEAM_WORKER_OPENBAO_TOKEN_FILE); otherwise automatic setup uses its saved root token.
 # secrets:
 #   team-worker/env:
 #     SERVICE_TOKEN: "<value>"

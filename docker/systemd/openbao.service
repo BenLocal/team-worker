@@ -1,5 +1,5 @@
 [Unit]
-Description=OpenBao secrets server (enabled with TEAM_WORKER_OPENBAO=1)
+Description=OpenBao secrets server (enabled by default; TEAM_WORKER_OPENBAO=0 disables it)
 
 [Service]
 Type=exec
