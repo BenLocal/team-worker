@@ -17,7 +17,7 @@ function store(key, value) { try { localStorage.setItem(key, value); } catch { /
 const initialView = new URLSearchParams(location.search).get("view");
 
 const state = {
-  teams: [], boards: {}, team: new URLSearchParams(location.search).get("team") || "", expanded: new Set(),
+  teams: [], boards: {}, team: new URLSearchParams(location.search).get("team") || "", 
   view: VIEWS.some(([v]) => v === initialView) ? initialView : "board", railOpen: stored(RAIL_KEY) !== "closed",
   doneShown: DONE_PAGE, open: new Set(),
   msgShown: MSG_PAGE, range: null, selected: null, follow: true,
@@ -73,23 +73,161 @@ function changed(region, value) {
   return true;
 }
 
-/* ---------------- rail ---------------- */
+/* ---------------- rail: teams and members, operated like dsh's Workspaces ---------------- */
+const MEMBER_PAGE = 5;
+const RAIL_PREFS = "team-worker.rail.prefs";
+const rail = (() => {
+  let saved = {};
+  try { saved = JSON.parse(stored(RAIL_PREFS) || "{}"); } catch { saved = {}; }
+  return {
+    sort: saved.sort === "manual" ? "manual" : "updated",
+    order: Array.isArray(saved.order) ? saved.order : [],
+    pins: new Set(Array.isArray(saved.pins) ? saved.pins : []),
+    folded: new Set(Array.isArray(saved.folded) ? saved.folded : []),
+    shown: {}, query: "", searching: false, menu: null, drag: null,
+  };
+})();
+function saveRail() {
+  store(RAIL_PREFS, JSON.stringify({ sort: rail.sort, order: rail.order, pins: [...rail.pins], folded: [...rail.folded] }));
+}
 const chevron = () => { const s = svg("svg", { width: 10, height: 10, viewBox: "0 0 10 10", "aria-hidden": "true" });
   s.append(svg("path", { d: "M3 1.5 6.5 5 3 8.5", fill: "none", stroke: "currentColor", "stroke-width": 1.6 })); return s; };
-
+function icon(paths) {
+  const s = svg("svg", { width: 14, height: 14, viewBox: "0 0 16 16", "aria-hidden": "true", fill: "none", stroke: "currentColor", "stroke-width": 1.4 });
+  for (const d of paths) s.append(svg("path", { d }));
+  return s;
+}
+const ICONS = {
+  search: ["M7 12.5a5.5 5.5 0 1 0 0-11 5.5 5.5 0 0 0 0 11Z", "m11 11 3.5 3.5"],
+  view: ["M2 4h12", "M4.5 8h7", "M6.5 12h3"],
+  more: ["M3.5 8h.01", "M8 8h.01", "M12.5 8h.01"],
+  pin: ["M9.5 2.5 13.5 6.5", "M11.5 4.5 8 8l-3 .5 2.5 2.5L8 14l3.5-3.5", "m5.5 10.5-3 3"],
+};
+function ago(ms) {
+  if (!ms) return "";
+  const s = Math.max(0, (Date.now() - ms) / 1000);
+  if (s < 60) return "now";
+  if (s < 3600) return Math.floor(s / 60) + "m";
+  if (s < 86400) return Math.floor(s / 3600) + "h";
+  return Math.floor(s / 86400) + "d";
+}
+// teamActivity is the latest task update or message, the team's "last updated".
+function teamActivity(t, b) {
+  let at = Date.parse(t.createdAt || "") || 0;
+  if (!b) return at;
+  for (const task of b.tasks) at = Math.max(at, Date.parse(task.updatedAt || "") || 0);
+  for (const m of b.messages) at = Math.max(at, Date.parse(m.timestamp || "") || 0);
+  return at;
+}
+function memberActivity(b, name) {
+  let at = 0;
+  for (const m of b.messages) if (m.from === name) at = Math.max(at, Date.parse(m.timestamp || "") || 0);
+  return at;
+}
 function teamTone(s) {
   if (!s || !s.total) return "";
   if (s.blocked) return "blocked";
   if (s.completed === s.total) return "done";
   return s.in_progress ? "progress" : "";
 }
-function renderMiniRail(view) {
-  $("teams").replaceChildren(el("li", {}, el("ul", { class: "mini" }, view.map(([t, b]) => {
+// orderedTeams puts pinned teams first, then sorts by activity or by the saved manual order.
+function orderedTeams() {
+  const rows = state.teams.map((t) => ({ t, b: state.boards[t.name], at: teamActivity(t, state.boards[t.name]) }));
+  const pos = (name) => { const i = rail.order.indexOf(name); return i < 0 ? Infinity : i; };
+  return rows.sort((x, y) => (rail.pins.has(y.t.name) - rail.pins.has(x.t.name))
+    || (rail.sort === "manual" ? pos(x.t.name) - pos(y.t.name) || y.at - x.at : y.at - x.at));
+}
+function copyText(text) {
+  navigator.clipboard?.writeText(text).catch(() => {});
+  closeMenu();
+}
+function closeMenu() {
+  if (!rail.menu) return;
+  rail.menu = null;
+  $("rail-menu")?.remove();
+}
+// openMenu shows a "..." menu below its button; items are [label, action] pairs.
+function openMenu(button, key, items) {
+  const again = rail.menu === key;
+  closeMenu();
+  if (again) return;
+  rail.menu = key;
+  const r = button.getBoundingClientRect();
+  const menu = el("div", { class: "rail-menu", id: "rail-menu", role: "menu", style: `top:${r.bottom + 4}px;left:${Math.max(8, r.right - 190)}px` },
+    items.map(([label, action]) => el("button", { type: "button", role: "menuitem", onclick: () => { closeMenu(); action(); } }, label)));
+  document.body.append(menu);
+  menu.querySelector("button")?.focus();
+}
+document.addEventListener("pointerdown", (e) => {
+  if (rail.menu && !e.target.closest?.(".rail-menu, .menu-trigger")) closeMenu();
+});
+
+function renderRailTools() {
+  const tools = $("rail-tools");
+  if (!changed("rail-tools", [rail.searching, rail.sort, state.railOpen])) return;
+  if (!state.railOpen) { tools.replaceChildren(); return; }
+  if (rail.searching) {
+    const input = el("input", { type: "search", id: "rail-search", value: rail.query, placeholder: "Search teams and members",
+      "aria-label": "Search teams and members", autocomplete: "off",
+      oninput: (e) => { rail.query = e.target.value; renderRail(); },
+      onkeydown: (e) => {
+        if (e.key === "Escape") { endSearch(); }
+        else if (e.key === "Enter") { $("teams").querySelector(".result")?.click(); }
+      } });
+    tools.replaceChildren(el("div", { class: "rail-search" }, input,
+      el("button", { type: "button", class: "icon-btn", "aria-label": "Close search", title: "Close search", onclick: endSearch }, "✕")));
+    input.focus();
+    return;
+  }
+  tools.replaceChildren(el("div", { class: "rail-section" },
+    el("span", { class: "rail-title" }, "Teams"),
+    el("button", { type: "button", class: "icon-btn", title: "Search teams and members (Ctrl+K)", "aria-label": "Search teams and members",
+      "aria-keyshortcuts": "Control+K Meta+K", onclick: startSearch }, icon(ICONS.search)),
+    el("button", { type: "button", class: "icon-btn menu-trigger", title: "View options", "aria-label": "View options", "aria-haspopup": "menu",
+      onclick: (e) => openMenu(e.currentTarget, "view", [
+        [(rail.sort === "updated" ? "✓ " : "  ") + "Sort by last updated", () => { rail.sort = "updated"; saveRail(); renderRail(); }],
+        [(rail.sort === "manual" ? "✓ " : "  ") + "Sort manually (drag teams)", () => { freezeOrder(); rail.sort = "manual"; saveRail(); renderRail(); }],
+      ]) }, icon(ICONS.view))));
+}
+function startSearch() {
+  if (!state.railOpen) setRail(true);
+  rail.searching = true;
+  renderRail();
+}
+function endSearch() {
+  rail.searching = false;
+  rail.query = "";
+  renderRail();
+}
+// freezeOrder records the order on screen, so manual sorting starts from it.
+function freezeOrder() { rail.order = orderedTeams().map((r) => r.t.name); }
+
+function renderSearchResults() {
+  const q = rail.query.trim().toLowerCase();
+  const results = [];
+  for (const { t, b } of orderedTeams()) {
+    if ([t.name, t.description].some((v) => v && v.toLowerCase().includes(q))) {
+      results.push(el("li", {}, el("button", { type: "button", class: "result", onclick: () => { endSearch(); selectTeam(t.name); } },
+        el("span", { class: "result-name" }, t.name), el("span", { class: "result-meta" }, "team"))));
+    }
+    for (const m of b ? b.members : []) {
+      if (m.name.toLowerCase().includes(q)) {
+        results.push(el("li", {}, el("button", { type: "button", class: "result", onclick: () => { endSearch(); showTerminal(t.name, m.name); } },
+          el("span", { class: "dot " + agentState(m)[0], "aria-hidden": "true" }),
+          el("span", { class: "result-name" }, m.name), el("span", { class: "result-meta" }, "in " + t.name))));
+      }
+    }
+  }
+  $("teams").replaceChildren(...(results.length ? results.slice(0, 20)
+    : [el("li", { class: "empty muted" }, `No team or member matches "${rail.query.trim()}"`)]));
+}
+
+function renderMiniRail(rows) {
+  $("teams").replaceChildren(el("li", {}, el("ul", { class: "mini" }, rows.map(({ t, b }) => {
     const s = b && b.taskSummary;
-    const current = t.name === state.team;
     const facts = s && s.total ? `, ${s.completed} of ${s.total} done${s.blocked ? `, ${s.blocked} blocked` : ""}` : "";
     return el("li", {}, el("button", { type: "button", title: t.name + facts, "aria-label": t.name + facts,
-      "aria-current": current ? "page" : null, onclick: () => selectTeam(t.name) },
+      "aria-current": t.name === state.team ? "page" : null, onclick: () => selectTeam(t.name) },
       [...t.name][0].toUpperCase(), teamTone(s) ? el("span", { class: "dot " + teamTone(s), "aria-hidden": "true" }) : null));
   }))));
 }
@@ -103,53 +241,118 @@ function setRail(open) {
   button.title = button.getAttribute("aria-label");
   renderRail();
 }
-function renderRail() {
-  const view = state.teams.map((t) => [t, state.boards[t.name]]);
-  if (!changed("rail", [view, state.team, [...state.expanded], state.railOpen])) return;
-  if (state.teams.length && !state.railOpen) { renderMiniRail(view); return; }
-  if (!state.teams.length) {
-    $("teams").replaceChildren(el("li", { class: "empty muted" }, "No teams yet"));
-    return;
+
+function memberRows(t, b) {
+  const members = b.members;
+  const limit = rail.shown[t.name] || MEMBER_PAGE;
+  const rows = members.slice(0, limit).map((m) => {
+    const [cls, label] = agentState(m);
+    const leader = m.agentId === b.team.leadAgentId;
+    const at = memberActivity(b, m.name);
+    return el("li", { class: "person-row" },
+      el("button", { type: "button", class: "person", title: m.agent ? `Show ${m.name}'s terminal` : `${m.name} has not been started`,
+        onclick: () => showTerminal(t.name, m.name) },
+        el("span", { class: "dot " + cls, "aria-hidden": "true" }),
+        el("span", { class: "who" }, el("span", { class: "pname" }, m.name), el("span", { class: "role" }, (leader ? "Leader, " : "") + label)),
+        m.inboxCount ? el("span", { class: "unread", title: `${m.inboxCount} unread messages` }, String(m.inboxCount))
+          : el("span", { class: "when", title: at ? "Last message " + new Date(at).toLocaleString() : "" }, ago(at))),
+      el("button", { type: "button", class: "row-more menu-trigger", "aria-label": `${m.name} actions`, "aria-haspopup": "menu",
+        onclick: (e) => openMenu(e.currentTarget, "m:" + t.name + "/" + m.name, [
+          ["Show terminal", () => showTerminal(t.name, m.name)],
+          ["Copy name", () => copyText(m.name)],
+          ["Copy agent ID", () => copyText(m.agentId)],
+        ]) }, icon(ICONS.more)));
+  });
+  const rest = members.length - limit;
+  if (rest > 0) {
+    rows.push(el("li", {}, el("button", { type: "button", class: "show-more",
+      onclick: () => { rail.shown[t.name] = limit + MEMBER_PAGE; renderRail(); } }, rest <= MEMBER_PAGE ? `Show ${rest} more` : "Show more")));
+  } else if (limit > MEMBER_PAGE) {
+    rows.push(el("li", {}, el("button", { type: "button", class: "show-more",
+      onclick: () => { delete rail.shown[t.name]; renderRail(); } }, "Show less")));
   }
-  $("teams").replaceChildren(...view.map(([t, b]) => {
-    const s = b && b.taskSummary;
-    const current = t.name === state.team;
-    const open = state.expanded.has(t.name);
-    const members = b ? b.members : [];
-    const running = members.filter((m) => agentState(m)[0] === "alive").length;
-    const strip = el("div", { class: "strip", "aria-hidden": "true" });
-    if (s && s.total) {
-      for (const [cls, n] of [["done", s.completed], ["progress", s.in_progress], ["blocked", s.blocked], ["pending", s.pending]]) {
-        if (n) strip.append(el("span", { class: cls, style: `width:${(n / s.total) * 100}%` }));
-      }
-    }
-    const people = open && members.length ? el("ul", { class: "people", id: "people-" + t.name, "aria-label": t.name + " members" },
-      members.map((m) => {
-        const [cls, label] = agentState(m);
-        const leader = b && m.agentId === b.team.leadAgentId;
-        return el("li", {}, el("button", { type: "button", class: "person",
-          title: m.agent ? `Show ${m.name}'s terminal` : `${m.name} has not been started`,
-          onclick: () => showTerminal(t.name, m.name) },
-          el("span", { class: "dot " + cls, "aria-hidden": "true" }),
-          el("span", { class: "who" }, el("span", { class: "pname" }, m.name),
-            el("span", { class: "role" }, (leader ? "Leader, " : "") + label)),
-          m.inboxCount ? el("span", { class: "unread", title: `${m.inboxCount} unread messages` }, String(m.inboxCount)) : null));
-      })) : null;
-    return el("li", { class: "team" + (current ? " current" : "") },
-      el("div", { class: "team-row" },
-        el("button", { type: "button", class: "team-tab", "aria-current": current ? "page" : null, onclick: () => selectTeam(t.name) },
-          el("div", { class: "name" }, t.name),
-          t.description ? el("div", { class: "desc", title: t.description }, t.description) : null,
-          strip,
-          el("div", { class: "facts" },
-            el("span", {}, s ? (s.total ? `${s.completed} of ${s.total} done` : "No tasks") : ""),
-            el("span", {}, running ? `${running} running` : `${t.memberCount} members`))),
-        members.length ? el("button", { type: "button", class: "toggle", "aria-expanded": String(open),
-          "aria-controls": "people-" + t.name, "aria-label": (open ? "Hide " : "Show ") + t.name + " members",
-          onclick: () => { open ? state.expanded.delete(t.name) : state.expanded.add(t.name); renderRail(); } }, chevron()) : null),
-      people);
-  }));
+  return rows;
 }
+
+function teamRow({ t, b, at }) {
+  const s = b && b.taskSummary;
+  const current = t.name === state.team;
+  const open = !rail.folded.has(t.name);
+  const members = b ? b.members : [];
+  const running = members.filter((m) => agentState(m)[0] === "alive").length;
+  const pinned = rail.pins.has(t.name);
+  const strip = el("div", { class: "strip", "aria-hidden": "true" });
+  if (s && s.total) {
+    for (const [cls, n] of [["done", s.completed], ["progress", s.in_progress], ["blocked", s.blocked], ["pending", s.pending]]) {
+      if (n) strip.append(el("span", { class: cls, style: `width:${(n / s.total) * 100}%` }));
+    }
+  }
+  const fold = () => { open ? rail.folded.add(t.name) : rail.folded.delete(t.name); delete rail.shown[t.name]; saveRail(); renderRail(); };
+  const li = el("li", { class: "team" + (current ? " current" : "") + (rail.drag === t.name ? " dragging" : ""), draggable: "true",
+    "data-team": t.name },
+    el("div", { class: "team-row" },
+      members.length ? el("button", { type: "button", class: "toggle", "aria-expanded": String(open),
+        "aria-controls": "people-" + t.name, "aria-label": (open ? "Fold " : "Unfold ") + t.name, onclick: fold }, chevron())
+        : el("span", { class: "toggle-space" }),
+      el("button", { type: "button", class: "team-tab", "aria-current": current ? "page" : null, onclick: () => selectTeam(t.name),
+        title: [t.description, s && s.total ? `${s.completed} of ${s.total} tasks done` : "", at ? "Updated " + new Date(at).toLocaleString() : ""].filter(Boolean).join("\n") },
+        el("div", { class: "name-line" }, el("span", { class: "name" }, t.name),
+          pinned ? el("span", { class: "pin", title: "Pinned" }, icon(ICONS.pin)) : null,
+          teamTone(s) ? el("span", { class: "dot " + teamTone(s), "aria-hidden": "true" }) : null,
+          el("span", { class: "when" }, ago(at))),
+        t.description ? el("div", { class: "desc" }, t.description) : null,
+        strip,
+        el("div", { class: "facts" },
+          el("span", {}, s ? (s.total ? `${s.completed} of ${s.total} done` : "No tasks") : ""),
+          el("span", {}, running ? `${running} running` : `${t.memberCount} members`))),
+      el("button", { type: "button", class: "row-more menu-trigger", "aria-label": `${t.name} actions`, "aria-haspopup": "menu",
+        onclick: (e) => openMenu(e.currentTarget, "t:" + t.name, [
+          [pinned ? "Unpin" : "Pin to top", () => { pinned ? rail.pins.delete(t.name) : rail.pins.add(t.name); saveRail(); renderRail(); }],
+          ["Open board", () => { selectTeam(t.name); setView("board"); }],
+          ["Open messages", () => { selectTeam(t.name); setView("messages"); }],
+          ["Open terminals", () => { selectTeam(t.name); setView("terminals"); }],
+          [open ? "Fold members" : "Unfold members", fold],
+          ["Copy team name", () => copyText(t.name)],
+        ]) }, icon(ICONS.more))),
+    open && b && members.length ? el("ul", { class: "people", id: "people-" + t.name, "aria-label": t.name + " members" }, memberRows(t, b)) : null);
+  // Dragging a team reorders it and switches to manual sorting, as in dsh.
+  li.addEventListener("dragstart", (e) => { rail.drag = t.name; e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", t.name); });
+  li.addEventListener("dragend", () => { rail.drag = null; state.keys.rail = ""; renderRail(); });
+  li.addEventListener("dragover", (e) => { if (rail.drag && rail.drag !== t.name) { e.preventDefault(); li.classList.add("drop-target"); } });
+  li.addEventListener("dragleave", () => li.classList.remove("drop-target"));
+  li.addEventListener("drop", (e) => {
+    e.preventDefault();
+    const from = rail.drag;
+    if (!from || from === t.name) return;
+    freezeOrder();
+    rail.order = rail.order.filter((n) => n !== from);
+    rail.order.splice(rail.order.indexOf(t.name), 0, from);
+    rail.sort = "manual";
+    rail.drag = null;
+    saveRail();
+    renderRail();
+  });
+  return li;
+}
+
+function renderRail() {
+  renderRailTools();
+  const rows = orderedTeams();
+  const minute = Math.floor(Date.now() / 60000);
+  if (!changed("rail", [rows.map((r) => [r.t, r.b && [r.b.taskSummary, r.b.members], r.at]), state.team, state.railOpen,
+    rail.sort, [...rail.pins], [...rail.folded], rail.shown, rail.query, rail.searching, minute])) return;
+  closeMenu();
+  if (rows.length && !state.railOpen) { renderMiniRail(rows); return; }
+  if (!rows.length) { $("teams").replaceChildren(el("li", { class: "empty muted" }, "No teams yet")); return; }
+  if (rail.searching && rail.query.trim()) { renderSearchResults(); return; }
+  $("teams").replaceChildren(...rows.map(teamRow));
+}
+document.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k" && !e.target.closest?.(".term-host")) {
+    e.preventDefault();
+    startSearch();
+  } else if (e.key === "Escape") closeMenu();
+});
 
 /* ---------------- skeleton ---------------- */
 function buildMain() {
@@ -447,7 +650,6 @@ function showNotice(text, error = false) {
 async function loadTeams() {
   state.teams = await api("api/teams");
   if (!state.teams.some((t) => t.name === state.team)) state.team = state.teams.length ? state.teams[0].name : "";
-  if (state.team && !state.seenTeam) { state.expanded.add(state.team); state.seenTeam = true; }
   renderRail();
   if (!state.team) showNotice("No teams yet. Create one with team-worker team spawn-team <name>.");
 }
@@ -470,7 +672,7 @@ async function refreshOthers() {
 function selectTeam(name) {
   if (name === state.team) return;
   state.team = name;
-  state.expanded.add(name);
+  rail.folded.delete(name);
   Object.assign(state, { doneShown: DONE_PAGE, msgShown: MSG_PAGE, range: null, selected: null, follow: true });
   state.open.clear();
   disposeTerminals();
