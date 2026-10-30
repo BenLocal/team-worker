@@ -264,6 +264,11 @@ func (a *app) teamCleanupCmd() *cobra.Command {
 				if ag.Status != model.AgentRunning && ag.Backend != "tmux" {
 					continue
 				}
+				if !proc.OnClient(ag, a.client().Remote()) {
+					// The stop request above reaches its --keepalive supervisor there.
+					fmt.Fprintf(a.errOut, "Agent '%s' runs on %s; asked it to stop\n", ag.Name, proc.Where(ag))
+					continue
+				}
 				if err := proc.Stop(ag); err != nil {
 					return a.fail(err)
 				}

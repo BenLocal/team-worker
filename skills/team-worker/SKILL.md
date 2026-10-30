@@ -14,6 +14,15 @@ description: 用 team-worker CLI 组织多 Agent 团队：建团队、拆分并�
 
 具体参数以 `team-worker <命令> --help` 为准。需要解析输出时加 `--json`。
 
+## 远程使用
+
+服务在另一台机器上时（例如 Docker 容器里），CLI 通过 HTTP 连接它：设置 `TEAM_WORKER_SERVER_URL`（例如 `http://<服务器>:<端口>/team-worker-api`）和 `TEAM_WORKER_API_KEY`（在服务器上用 `team-worker key show` 读取）。所有命令都能远程执行：
+
+- 团队、任务、消息、计划、加入申请、费用和 harness 等协作命令，用法和本机完全相同。
+- `spawn`、`launch`、`agent resume` 和 `harness conduct` 在**执行命令的这台机器上**启动 Agent。Agent 继承同样的地址和 Key，通过 HTTP 与服务器协作；登记时会记录它运行在哪台机器上。
+- 进程相关的操作只作用于本机的 Agent：`agent screen` 只能查看本机启动的 Agent。对其他机器上的 Agent 执行 `agent stop`、`team cleanup` 或 `harness abort` 时，只登记停止请求，由那台机器上的 `--keepalive` 守护进程在几秒内结束它；没有用 `--keepalive` 启动的 Agent，要到它所在的机器上停止。所以远程启动 worker 时建议加 `--keepalive`。
+- 看板只能显示与它在同一台机器上的 Agent 的实时终端，其他机器上的 Agent 会显示它所在的主机。
+
 ## 团队结构与工作目录
 
 - team-worker 不内置团队模板。使用 `launch` 时，团队成员、角色职责、任务和依赖完全由用户提供的 TOML 模板定义；先读取模板，再按其中的分工启动团队。模板格式见仓库的 `docs/templates.md`。

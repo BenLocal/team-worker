@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/benlocal/team-worker/internal/config"
+	"github.com/benlocal/team-worker/internal/model"
 	"github.com/benlocal/team-worker/internal/proc"
 	"github.com/benlocal/team-worker/internal/store"
 )
@@ -54,7 +55,14 @@ func Run(ctx context.Context, opts Options) error {
 	if err != nil {
 		return fmt.Errorf("prepare access key: %w", err)
 	}
-	st.Probe = proc.Probe
+	// Agents a remote CLI started run on that client; their pane ids and
+	// pids mean nothing here, so they are never probed (unknown keeps locks).
+	st.Probe = func(a model.Agent) (bool, bool) {
+		if !proc.OnServer(a) {
+			return false, false
+		}
+		return proc.Probe(a)
+	}
 
 	ln, err := listenUnix(opts.Socket)
 	if err != nil {

@@ -218,6 +218,9 @@ func (a *app) spawnAgent(ctx context.Context, req spawnRequest) (spawnResult, er
 				"Agent '%s' is already running in team '%s'. Use --replace to stop it and spawn a new instance.",
 				req.Name, req.Team)
 		}
+		if err := reachable(c, existing); err != nil {
+			return spawnResult{}, fmt.Errorf("%w (or stop it with team-worker agent stop first)", err)
+		}
 		if _, err := c.RequestAgentStop(ctx, req.Team, req.Name, existing.RunID); err != nil {
 			return spawnResult{}, err
 		}
@@ -229,8 +232,11 @@ func (a *app) spawnAgent(ctx context.Context, req spawnRequest) (spawnResult, er
 		}
 	} else if err == nil {
 		// A pane kept open after a failed start; the new instance replaces it.
-		if err := proc.Stop(existing); err != nil {
-			return spawnResult{}, err
+		// Another machine's pane id would name an unrelated pane here.
+		if proc.OnClient(existing, c.Remote()) {
+			if err := proc.Stop(existing); err != nil {
+				return spawnResult{}, err
+			}
 		}
 		if _, err := c.AgentExitedRun(ctx, req.Team, req.Name, existing.RunID, existing.ExitCode); err != nil {
 			return spawnResult{}, err
@@ -248,7 +254,7 @@ func (a *app) spawnAgent(ctx context.Context, req spawnRequest) (spawnResult, er
 	}
 
 	rec := model.Agent{Team: req.Team, Name: req.Name, AgentID: req.AgentID, RunID: req.RunID, Backend: req.Backend,
-		Command: req.Command, Cwd: cwd, Nudge: req.Backend == "tmux" && adapter.Nudge()}
+		Command: req.Command, Cwd: cwd, Nudge: req.Backend == "tmux" && adapter.Nudge(), Host: proc.Host()}
 	if _, err := c.RegisterAgent(ctx, rec); err != nil {
 		return spawnResult{}, err
 	}

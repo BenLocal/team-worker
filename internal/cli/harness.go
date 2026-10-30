@@ -246,6 +246,14 @@ func (a *app) stopAgent(ctx context.Context, team, name string) error {
 	if err != nil {
 		return err
 	}
+	if !proc.OnClient(ag, c.Remote()) {
+		// Its --keepalive supervisor on that machine acts on the request.
+		if _, err := c.RequestAgentStop(ctx, ag.Team, ag.Name, ag.RunID); err != nil {
+			return err
+		}
+		fmt.Fprintf(a.errOut, "Agent '%s' runs on %s; asked it to stop\n", ag.Name, proc.Where(ag))
+		return nil
+	}
 	if err := a.captureNativeSession(ctx, ag.Team, ag.Name, ag.RunID); err != nil {
 		fmt.Fprintf(a.errOut, "capture session: %v\n", err)
 	}

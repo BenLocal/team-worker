@@ -6,6 +6,7 @@ import (
 	"embed"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"strconv"
@@ -72,6 +73,11 @@ func newHandler(c *client.Client, resolve resolver) http.Handler {
 		prompt, err := c.AgentPrompt(r.Context(), r.PathValue("team"), r.PathValue("name"), r.URL.Query().Get("user"))
 		reply(w, map[string]string{"prompt": prompt}, err)
 	})
+	// Host tells the page which agents run on this machine, so their
+	// terminals can connect and the others say where they run.
+	mux.HandleFunc("GET /api/host", func(w http.ResponseWriter, r *http.Request) {
+		reply(w, map[string]any{"host": proc.Host(), "remote": c.Remote()}, nil)
+	})
 	// Oversight is what waits on the leader or limits the team: plans, join
 	// requests and spending. It is polled separately from the snapshot.
 	mux.HandleFunc("GET /api/teams/{team}/oversight", func(w http.ResponseWriter, r *http.Request) {
@@ -82,6 +88,10 @@ func newHandler(c *client.Client, resolve resolver) http.Handler {
 		a, err := c.GetAgent(r.Context(), r.PathValue("team"), r.PathValue("name"))
 		if err != nil {
 			reply(w, nil, err)
+			return
+		}
+		if !proc.OnClient(a, c.Remote()) {
+			reply(w, nil, fmt.Errorf("Agent runs on %s; its log is only readable there", proc.Where(a)))
 			return
 		}
 		history, _ := strconv.Atoi(r.URL.Query().Get("history"))
