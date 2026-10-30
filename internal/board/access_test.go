@@ -28,6 +28,11 @@ func TestBoardAccessProtectsAllRoutesAndSupportsLogin(t *testing.T) {
 	if w.Code != 200 || !strings.Contains(w.Body.String(), "Access key") {
 		t.Fatal("missing sign-in page")
 	}
+	// no-referrer makes browsers post "Origin: null", which fails the
+	// cross-origin check when the board is served over plain HTTP.
+	if got := w.Header().Get("Referrer-Policy"); got != "same-origin" {
+		t.Fatalf("Referrer-Policy = %q, want same-origin", got)
+	}
 	w = httptest.NewRecorder()
 	r := httptest.NewRequest("POST", "/login", strings.NewReader(url.Values{"key": {"wrong"}}.Encode()))
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
