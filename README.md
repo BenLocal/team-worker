@@ -149,6 +149,7 @@ team-worker harness task my-team "实现标签接口" -d "按 spec.md 第 2 节"
 team-worker spawn tmux --team my-team -n alice --agent-type developer --task "实现 OAuth2"
 team-worker spawn tmux --team my-team -n bob --task "编写测试" -- codex --model gpt-5
 team-worker spawn subprocess --team my-team -n carol --task "整理文档"   # 后台运行，输出写日志
+team-worker spawn tmux --team my-team -n dave --task-file task.md        # 较长的任务说明从文件读取
 
 team-worker agent list my-team            # 进程是否存活
 team-worker agent screen my-team alice    # 查看终端当前内容
@@ -188,7 +189,7 @@ team-worker agent prompt set my-team alice ""   # 清空专属提示词
 
 `set` 也接受直接传入文本或从 stdin 读取。`--user` 默认取当前用户，可指定其他用户的成员。修改后只有对应成员收到重新读取提示词的通知。团队说明和成员专属提示词都保存在 SQLite 中。每份成员专属提示词最多 65536 字节。
 
-`spawn --task "..."` 会覆盖保存的专属提示词；未传 `--task` 时复用已有内容，显式传 `--task ""` 则清空。`launch` 会保存 TOML 中每个角色经过变量替换后的 `task`。会话恢复钩子会补回专属提示词和当前任务；`--dry-run` 不修改保存值。
+`spawn --task "..."` 会覆盖保存的专属提示词；未传 `--task` 时复用已有内容，显式传 `--task ""` 则清空。说明较长时用 `--task-file <路径>` 从文件读取，效果与 `--task` 相同（文件末尾的换行会去掉），两者不能同时使用；文件由执行命令的这台机器读取，所以远程 CLI 也能用。`launch` 会保存 TOML 中每个角色经过变量替换后的 `task`。会话恢复钩子会补回专属提示词和当前任务；`--dry-run` 不修改保存值。
 
 ## 运行配置与端点预设
 
@@ -226,7 +227,7 @@ team-worker agent resume my-team alice
 team-worker spawn tmux --team my-team -n alice --keepalive --max-restarts 3 --restart-delay 1s -- claude
 ```
 
-恢复复用原 CLI 命令、工作目录和权限设置，并重新读取团队说明、成员提示词和当前任务。已有运行中的同名 Agent 时拒绝恢复，可用 `--replace` 明确替换。`agent resume` 支持 `--task`、`--keepalive`、`--max-restarts`、`--restart-delay` 覆盖保存的设置。
+恢复复用原 CLI 命令、工作目录和权限设置，并重新读取团队说明、成员提示词和当前任务。已有运行中的同名 Agent 时拒绝恢复，可用 `--replace` 明确替换。`agent resume` 支持 `--task`（或 `--task-file`）、`--keepalive`、`--max-restarts`、`--restart-delay` 覆盖保存的设置。
 
 keepalive 适用于 tmux 和 subprocess，正常退出和异常退出均受重试上限约束；默认最多连续重启 3 次，等待时间逐次加倍、最长 1 分钟，一次运行达到 1 分钟后重置连续次数。原生会话 ID 缺失时停止恢复并报错。每轮进程使用独立 `run_id`，旧进程的退出回报不会修改新一轮的状态。退出时任务仍退回 pending，恢复后需重新检查任务归属并领取。
 
