@@ -1,33 +1,12 @@
-# Build from the repository root: docker build -f docker/Dockerfile .
+# Build with docker/team-worker.sh build: it compiles team-worker on the host
+# and passes the binaries in as the "bins" build context, so the image only
+# packages them.
 ARG MAGPIE_VERSION=latest
 ARG DOCKER_VERSION=29.9.2
 ARG OPENBAO_VERSION=2.7.2
-ARG GO_VERSION=1.26
 FROM ghcr.io/yetone/magpie:${MAGPIE_VERSION} AS magpie
 FROM quay.io/openbao/openbao:${OPENBAO_VERSION} AS openbao
 FROM docker:${DOCKER_VERSION}-dind AS docker
-# The board page is a Vite build that team-worker embeds; it is not committed.
-FROM node:22-bookworm-slim AS web
-ARG NPM_REGISTRY=https://registry.npmjs.org/
-WORKDIR /src/internal/board/web
-COPY internal/board/web/package.json internal/board/web/package-lock.json ./
-RUN npm_config_registry="$NPM_REGISTRY" npm ci --no-audit --no-fund
-COPY internal/board/web/ ./
-RUN npm run build
-FROM golang:${GO_VERSION}-bookworm AS team-worker
-ARG GOPROXY=https://proxy.golang.org,direct
-WORKDIR /src
-COPY go.mod go.sum ./
-RUN GOPROXY="$GOPROXY" go mod download
-COPY cmd/ cmd/
-COPY internal/ internal/
-COPY --from=web /src/internal/board/dist/ internal/board/dist/
-RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /out/ ./cmd/...
-WORKDIR /src/docker/ops
-COPY docker/ops/go.mod docker/ops/go.sum ./
-RUN GOPROXY="$GOPROXY" go mod download
-COPY docker/ops/ ./
-RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /out/team-worker-ops .
 FROM node:22-bookworm-slim
 ARG CLAUDE_VERSION=latest
 ARG CODEX_VERSION=latest
@@ -57,13 +36,16 @@ RUN /opt/venv/bin/pip install --no-cache-dir "playwright==${PLAYWRIGHT_VERSION}"
     && chmod -R a+rX "$PLAYWRIGHT_BROWSERS_PATH"
 # dsh-tui accepts only the dsh releases it names, so both stay pinned. Its
 # profile is built here and seeded into the home volume on first start.
+# dsh's own pnpm ignores npm_config_registry, so the mirror is also passed
+# through pnpm_config_registry and a temporary ~/.npmrc.
 ARG DSH_VERSION=0.2.1-rc.2
 ARG DSH_TUI_VERSION=0.17.0
 ARG PNPM_VERSION=12.15.0
 RUN npm_config_registry="$NPM_REGISTRY" npm install -g "@deepseek-ai/dsh@${DSH_VERSION}" "pnpm@${PNPM_VERSION}" \
-    && npm_config_registry="$NPM_REGISTRY" DSH_HOME=/opt/dsh dsh plugin --profile tui add \
-        "@deepseek-harness-tui/dsh-tui@${DSH_TUI_VERSION}" \
-    && rm -rf /opt/dsh/profiles/tui/.plugin-manager /root/.local/share/pnpm /root/.cache \
+    && echo "registry=$NPM_REGISTRY" > /root/.npmrc \
+    && npm_config_registry="$NPM_REGISTRY" pnpm_config_registry="$NPM_REGISTRY" DSH_HOME=/opt/dsh \
+        dsh plugin --profile tui add "@deepseek-harness-tui/dsh-tui@${DSH_TUI_VERSION}" \
+    && rm -rf /opt/dsh/profiles/tui/.plugin-manager /root/.local/share/pnpm /root/.cache /root/.npmrc \
     && chmod -R a+rX /opt/dsh
 ARG BUN_VERSION=1.4.2
 ARG TARGETARCH
@@ -104,7 +86,7 @@ COPY --from=docker /usr/local/bin/docker /usr/local/bin/dockerd \
     /usr/local/bin/containerd-shim-runc-v2 \
     /usr/local/bin/ctr /usr/local/bin/runc /usr/local/bin/
 COPY --from=docker /usr/local/libexec/docker/cli-plugins/ /usr/local/libexec/docker/cli-plugins/
-COPY --from=team-worker /out/team-worker /out/team-workerd /out/team-worker-ops /usr/local/bin/
+COPY --from=bins team-worker team-workerd team-worker-ops /usr/local/bin/
 # Login shells (a window opened by hand in tmux) reset PATH from /etc/profile;
 # keep the mounted binaries first there too.
 RUN mkdir -p /opt/team-worker/bin \
