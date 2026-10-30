@@ -19,7 +19,7 @@ func Probe(a model.Agent) (alive, known bool) {
 		if a.Target == "" {
 			return false, false
 		}
-		exists, dead, _ := tmux.PaneState(a.Target)
+		exists, dead := paneState(a)
 		return exists && !dead, true
 	case "subprocess":
 		if a.PID <= 0 {
@@ -28,6 +28,18 @@ func Probe(a model.Agent) (alive, known bool) {
 		return pidAlive(a.PID), true
 	}
 	return false, false
+}
+
+// paneState reports the agent's own tmux pane. Pane ids restart at %0 with a
+// new tmux server, so after a restart a recorded id can name another agent's
+// pane; a pane started with a different process than the recorded one is not
+// the agent's and counts as gone.
+func paneState(a model.Agent) (exists, dead bool) {
+	exists, dead, pid := tmux.PaneState(a.Target)
+	if exists && a.PID > 0 && pid != a.PID {
+		return false, false
+	}
+	return exists, dead
 }
 
 func pidAlive(pid int) bool {
@@ -40,6 +52,12 @@ func pidAlive(pid int) bool {
 func Stop(a model.Agent) error {
 	switch a.Backend {
 	case "tmux":
+		if a.Target == "" {
+			return nil
+		}
+		if exists, _ := paneState(a); !exists {
+			return nil
+		}
 		return tmux.KillPane(a.Target)
 	case "subprocess":
 		if a.PID <= 1 {
@@ -58,7 +76,7 @@ func Stop(a model.Agent) error {
 // subprocess agent's log. history adds that many earlier lines.
 func Screen(a model.Agent, history int) (string, error) {
 	if a.Backend == "tmux" {
-		if exists, _, _ := tmux.PaneState(a.Target); !exists {
+		if exists, _ := paneState(a); !exists {
 			return "", errors.New("the agent's terminal is closed; the agent has exited")
 		}
 		return tmux.Capture(a.Target, history)
