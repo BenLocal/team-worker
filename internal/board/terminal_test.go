@@ -261,6 +261,23 @@ func readUntil(t *testing.T, conn *websocket.Conn, want string) (size sizeMessag
 	return size
 }
 
+// readSize reads until the next size message, skipping terminal output.
+func readSize(t *testing.T, conn *websocket.Conn) sizeMessage {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for {
+		typ, data, err := conn.Read(ctx)
+		if err != nil {
+			t.Fatalf("waiting for a size message: %v", err)
+		}
+		var size sizeMessage
+		if typ == websocket.MessageText && json.Unmarshal(data, &size) == nil && size.Type == "size" {
+			return size
+		}
+	}
+}
+
 func sendJSON(t *testing.T, conn *websocket.Conn, v any) {
 	t.Helper()
 	raw, _ := json.Marshal(v)
@@ -284,6 +301,14 @@ func TestLiveTerminalRelaysOutputHistoryAndControlledInput(t *testing.T) {
 
 	watch := dialTerminal(t, srv.URL, false)
 	size := readUntil(t, watch, "hello-from-agent")
+	// The size report runs beside the output relay; take the first one before
+	// resizing, since with no other client the window then follows the viewer.
+	for size.Type == "" {
+		size = readSize(t, watch)
+	}
+	if size.Cols != 80 || size.Rows != 24 {
+		t.Fatalf("size message %+v, want the agent window's 80x24", size)
+	}
 	sendJSON(t, watch, map[string]any{"type": "resize", "cols": 100, "rows": 30})
 	sendJSON(t, watch, map[string]any{"type": "input", "data": "ignored-input\r"})
 	sendJSON(t, watch, map[string]any{"type": "history"})
@@ -300,7 +325,6 @@ func TestLiveTerminalRelaysOutputHistoryAndControlledInput(t *testing.T) {
 		var h historyMessage
 		json.Unmarshal(data, &h)
 		if h.Type == "size" {
-			json.Unmarshal(data, &size)
 			continue
 		}
 		if h.Type != "history" || !strings.Contains(h.Text, "hello-from-agent") {
@@ -308,11 +332,6 @@ func TestLiveTerminalRelaysOutputHistoryAndControlledInput(t *testing.T) {
 		}
 		break
 	}
-	// The first size message reports the agent window as created (80x24).
-	if size.Cols != 80 || size.Rows != 24 {
-		t.Fatalf("size message %+v, want the agent window's 80x24", size)
-	}
-
 	control := dialTerminal(t, srv.URL, true)
 	_, second := postTicket(t, srv.URL, map[string]any{"team": "demo", "agent": "alice", "control": true}, srv.URL)
 	conflict, resp, err := websocket.Dial(context.Background(),
