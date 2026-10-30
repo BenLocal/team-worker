@@ -95,17 +95,19 @@ Agent 的环境变量按下表顺序一层层合成，后面的层覆盖前面�
 | 1 | 调用 `spawn` 的进程的环境 | 适配器设了 `inherit = false` 时，只保留 `pass` 里列出的变量 |
 | 2 | team-worker 的通用修正 | `TERM` 是 `dumb` 或为空时改成 `xterm-256color`；去掉 `TMUX` 和 `TMUX_PANE` |
 | 3 | 适配器 | 内置适配器的设置，或者 TOML 文件里的 `env` 和 `unset`；跳过权限确认时，再加上 `skip_permissions_env` |
-| 4 | 模板的 `[template.env]` | 只在 `launch` 时生效 |
-| 5 | 模板中某个 Agent 的 `env` | 只在 `launch` 时生效 |
-| 6 | `--env KEY=VALUE` | `spawn` 和 `launch` 都可以用，可以写多次 |
-| 7 | team-worker 身份变量 | `TEAM_WORKER_AGENT_ID`、`TEAM_WORKER_AGENT_NAME`、`TEAM_WORKER_AGENT_TYPE`、`TEAM_WORKER_TEAM_NAME`、`TEAM_WORKER_AGENT_LEADER`、`TEAM_WORKER_DATA_DIR`、`TEAM_WORKER_SOCKET`、`TEAM_WORKER_WORKSPACE_DIR`、`TEAM_WORKER_BIN`，以及有设置时的 `TEAM_WORKER_USER`。前面任何一层试图设置这些变量都会报错 |
-| 8 | `PATH` | 在最前面加上 team-worker 所在的目录，确保 Agent 能找到 `team-worker` |
+| 4 | 运行配置（profile） | `--profile` 或默认运行配置的 `env`、`env_map`、端点和 API Key 变量，`--dry-run` 里显示为 `profile <名字>`；见 README 的《运行配置与端点预设》 |
+| 5 | 模板的 `[template.env]` | 只在 `launch` 时生效 |
+| 6 | 模板中某个 Agent 的 `env` | 只在 `launch` 时生效 |
+| 7 | `--env KEY=VALUE` | `spawn` 和 `launch` 都可以用，可以写多次 |
+| 8 | team-worker 身份变量 | `TEAM_WORKER_AGENT_ID`、`TEAM_WORKER_AGENT_NAME`、`TEAM_WORKER_AGENT_TYPE`、`TEAM_WORKER_TEAM_NAME`、`TEAM_WORKER_AGENT_LEADER`、`TEAM_WORKER_DATA_DIR`、`TEAM_WORKER_SOCKET`、`TEAM_WORKER_WORKSPACE_DIR`、`TEAM_WORKER_BIN`，以及有设置时的 `TEAM_WORKER_USER`。前面任何一层试图设置这些变量都会报错 |
+| 9 | `PATH` | 在最前面加上 team-worker 所在的目录，确保 Agent 能找到 `team-worker` |
 
 规则：
 
 - 值里的 `${NAME}` 取自**调用者**的环境变量。如果这个变量没有设置，启动会直接失败，并在报错里给出变量名，不会替换成空字符串。这样密钥可以只放在调用者的环境里，模板和适配器文件提交到仓库也没问题。
 - tmux 后端会先清空 tmux 服务器自带的环境，再写入合成结果，所以 `unset` 掉的变量一定不会出现在 Agent 里。合成结果写在一个权限为 0600 的临时文件里，窗格读取后立即删除。
 - team-worker 不会把环境变量的值存进数据库。`--dry-run` 的输出里也只有变量名和它来自哪一层。
+- 运行配置引用的密钥（`api_key_env`、`env_map` 的来源变量）在这一层里写成 `${来源变量}`，启动时才从调用者的环境读取，配置文件和合成过程中都不保存密钥本身。
 
 ```bash
 team-worker spawn tmux --team demo -n alice --dry-run -- codex

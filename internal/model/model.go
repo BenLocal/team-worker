@@ -76,6 +76,8 @@ type Member struct {
 	AgentID   string `json:"agentId"`
 	AgentType string `json:"agentType"`
 	JoinedAt  string `json:"joinedAt"`
+	// PlanRequired members need an approved plan before they start or finish tasks.
+	PlanRequired bool `json:"planRequired,omitempty"`
 }
 
 // InboxName is the inbox key for a member: "<user>_<name>" when scoped by user.

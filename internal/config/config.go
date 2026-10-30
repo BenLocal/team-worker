@@ -116,6 +116,8 @@ type Identity struct {
 	AgentType string `json:"agentType"`
 	TeamName  string `json:"teamName"`
 	IsLeader  bool   `json:"isLeader"`
+	// PlanModeRequired is set for agents spawned with --plan-required.
+	PlanModeRequired bool `json:"planModeRequired"`
 }
 
 func IdentityFromEnv() Identity {
@@ -130,6 +132,8 @@ func IdentityFromEnv() Identity {
 		AgentType: envOr("TEAM_WORKER_AGENT_TYPE", "general-purpose"),
 		TeamName:  os.Getenv("TEAM_WORKER_TEAM_NAME"),
 		IsLeader:  isTrue(os.Getenv("TEAM_WORKER_AGENT_LEADER")),
+
+		PlanModeRequired: isTrue(os.Getenv("TEAM_WORKER_PLAN_MODE_REQUIRED")),
 	}
 }
 

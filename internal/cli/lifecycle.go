@@ -34,6 +34,9 @@ func (a *app) onExitCmd() *cobra.Command {
 			if err := a.captureNativeSession(cmd.Context(), team, agent, runID); err != nil {
 				fmt.Fprintf(a.errOut, "capture session: %v\n", err)
 			}
+			if _, _, err := a.syncSessionUsage(cmd.Context(), team, agent); err != nil {
+				fmt.Fprintf(a.errOut, "record session usage: %v\n", err)
+			}
 			res, err := a.client().AgentExitedRun(cmd.Context(), team, agent, runID, code)
 			if err != nil {
 				return a.fail(err)

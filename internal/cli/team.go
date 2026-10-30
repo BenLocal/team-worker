@@ -20,6 +20,7 @@ func (a *app) teamCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "team", Short: "Team management"}
 	cmd.AddCommand(a.teamSpawnCmd(), a.teamAddMemberCmd(), a.teamDiscoverCmd(), a.teamStatusCmd(),
 		a.teamCleanupCmd(), a.teamPromptCmd())
+	cmd.AddCommand(a.joinCmds()...)
 	return cmd
 }
 
@@ -104,16 +105,18 @@ func (a *app) teamPromptCmd() *cobra.Command {
 
 func (a *app) teamAddMemberCmd() *cobra.Command {
 	var agentType, agentID string
+	var planRequired bool
 	cmd := &cobra.Command{
 		Use:   "add-member TEAM NAME",
 		Short: "Add a member to a team",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			member, err := a.client().AddMember(cmd.Context(), args[0], store.AddMemberInput{
-				Name:      args[1],
-				AgentID:   agentID,
-				AgentType: agentType,
-				User:      config.IdentityFromEnv().User,
+				Name:         args[1],
+				AgentID:      agentID,
+				AgentType:    agentType,
+				User:         config.IdentityFromEnv().User,
+				PlanRequired: planRequired,
 			})
 			if err != nil {
 				return a.fail(err)
@@ -126,6 +129,7 @@ func (a *app) teamAddMemberCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&agentType, "agent-type", "general-purpose", "Agent type")
 	cmd.Flags().StringVar(&agentID, "agent-id", "", "Agent ID (default: auto-generated)")
+	cmd.Flags().BoolVar(&planRequired, "plan-required", false, "Require an approved plan before the member starts or completes tasks")
 	return cmd
 }
 
@@ -301,6 +305,7 @@ func (a *app) identityCmd() *cobra.Command {
 				fmt.Fprintf(w, "Team:   %s\n", id.TeamName)
 				fmt.Fprintf(w, "User:   %s\n", id.User)
 				fmt.Fprintf(w, "Leader: %t\n", id.IsLeader)
+				fmt.Fprintf(w, "Plan approval required: %t\n", id.PlanModeRequired)
 			})
 			return nil
 		},

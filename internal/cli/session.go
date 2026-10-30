@@ -86,6 +86,7 @@ func (a *app) agentResumeCmd() *cobra.Command {
 	var delay time.Duration
 	var task string
 	var envPairs []string
+	var profileName string
 	cmd := &cobra.Command{Use: "resume TEAM NAME", Short: "Resume an agent's exact saved CLI session", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
 		session, err := a.client().GetSession(cmd.Context(), args[0], args[1], config.IdentityFromEnv().User)
 		if err != nil {
@@ -107,6 +108,12 @@ func (a *app) agentResumeCmd() *cobra.Command {
 		if err != nil {
 			return a.fail(err)
 		}
+		// A profile's variables come back from the profile, not the caller.
+		profileLayers, err := profileEnvLayer(profileName, session.Command)
+		if err != nil {
+			return a.fail(err)
+		}
+		layers = append(profileLayers, layers...)
 		for _, key := range session.EnvKeys {
 			_, supplied := os.LookupEnv(key)
 			for _, layer := range layers {
@@ -147,5 +154,6 @@ func (a *app) agentResumeCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&replace, "replace", false, "Stop the current run before resuming")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show the resume command without starting")
 	cmd.Flags().StringArrayVar(&envPairs, "env", nil, "Environment variable KEY=VALUE (repeatable)")
+	cmd.Flags().StringVar(&profileName, "profile", "", "Runtime profile whose environment the resumed agent gets again")
 	return cmd
 }

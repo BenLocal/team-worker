@@ -98,7 +98,7 @@ func getTeam(ctx context.Context, q queryer, name string) (model.Team, error) {
 
 func listMembers(ctx context.Context, q queryer, team string) ([]model.Member, error) {
 	rows, err := q.QueryContext(ctx,
-		`SELECT name, user_name, agent_id, agent_type, joined_at
+		`SELECT name, user_name, agent_id, agent_type, joined_at, plan_required
 		 FROM members WHERE team = ? ORDER BY seq`, team)
 	if err != nil {
 		return nil, err
@@ -107,7 +107,7 @@ func listMembers(ctx context.Context, q queryer, team string) ([]model.Member, e
 	members := []model.Member{}
 	for rows.Next() {
 		var m model.Member
-		if err := rows.Scan(&m.Name, &m.User, &m.AgentID, &m.AgentType, &m.JoinedAt); err != nil {
+		if err := rows.Scan(&m.Name, &m.User, &m.AgentID, &m.AgentType, &m.JoinedAt, &m.PlanRequired); err != nil {
 			return nil, err
 		}
 		members = append(members, m)
@@ -140,6 +140,8 @@ type AddMemberInput struct {
 	AgentID   string `json:"agentId"`
 	AgentType string `json:"agentType"`
 	User      string `json:"user"`
+	// PlanRequired makes the member wait for an approved plan before working on tasks.
+	PlanRequired bool `json:"planRequired,omitempty"`
 }
 
 func (s *Store) AddMember(ctx context.Context, team string, in AddMemberInput) (model.Member, error) {
@@ -156,7 +158,7 @@ func (s *Store) AddMember(ctx context.Context, team string, in AddMemberInput) (
 		in.AgentType = "general-purpose"
 	}
 	m := model.Member{Name: in.Name, User: in.User, AgentID: in.AgentID, AgentType: in.AgentType,
-		JoinedAt: s.timestamp()}
+		JoinedAt: s.timestamp(), PlanRequired: in.PlanRequired}
 	err := s.write(ctx, func(tx *sql.Tx) error {
 		if err := requireTeam(ctx, tx, team); err != nil {
 			return err
@@ -176,9 +178,9 @@ func (s *Store) AddMember(ctx context.Context, team string, in AddMemberInput) (
 			return err
 		}
 		_, err = tx.ExecContext(ctx,
-			`INSERT INTO members (team, name, user_name, agent_id, agent_type, joined_at)
-			 VALUES (?, ?, ?, ?, ?, ?)`,
-			team, m.Name, m.User, m.AgentID, m.AgentType, m.JoinedAt)
+			`INSERT INTO members (team, name, user_name, agent_id, agent_type, joined_at, plan_required)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			team, m.Name, m.User, m.AgentID, m.AgentType, m.JoinedAt, m.PlanRequired)
 		return err
 	})
 	return m, err
