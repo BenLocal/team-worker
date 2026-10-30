@@ -104,3 +104,15 @@ func TestNudgeRespectsAgentSetting(t *testing.T) {
 		t.Fatalf("nudge disabled for this agent: %q", pane.typed)
 	}
 }
+
+func TestNoNudgeForAgentsOnAnotherMachine(t *testing.T) {
+	n, st, pane, now := newNudgeFixture(t, true)
+	ctx := context.Background()
+	// A remote CLI registered this agent; %1 would name an unrelated pane here.
+	st.RegisterAgent(ctx, model.Agent{Team: "demo", Name: "alice", Backend: "tmux", Target: "%1", Nudge: true, Host: "other-machine.example"})
+	st.Send(ctx, "demo", store.SendInput{From: "leader", To: "alice", Content: "hi"})
+	advance(n, now, 30*time.Second)
+	if len(pane.typed) != 0 {
+		t.Fatalf("typed into a pane of another machine: %q", pane.typed)
+	}
+}

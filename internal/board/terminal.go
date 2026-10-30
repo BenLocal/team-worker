@@ -23,6 +23,7 @@ import (
 	"github.com/creack/pty"
 
 	"github.com/benlocal/team-worker/internal/client"
+	"github.com/benlocal/team-worker/internal/proc"
 )
 
 const (
@@ -98,6 +99,9 @@ func daemonResolver(c *client.Client) resolver {
 		}
 		if a.Status != "running" || a.Target == "" {
 			return pane{}, userError("Agent terminal is offline")
+		}
+		if !proc.OnClient(a, c.Remote()) {
+			return pane{}, userError("Agent runs on " + proc.Where(a) + "; live terminals only reach agents on this machine")
 		}
 		return paneInfo(ctx, a.Target)
 	}

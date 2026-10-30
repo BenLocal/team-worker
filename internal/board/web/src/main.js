@@ -1,7 +1,7 @@
 import "@fontsource-variable/jetbrains-mono";
 import "@fontsource-variable/fraunces/opsz-italic.css";
 import "./style.css";
-import { AgentTerminal, selectCard } from "./terminals.js";
+import { AgentTerminal, selectCard, setBoardHost, onBoardHost, hostLabel } from "./terminals.js";
 import { openMemberPrompt, openTeamPrompt } from "./prompt-dialog.js";
 import { openServiceKeys } from "./service-keys.js";
 
@@ -63,6 +63,8 @@ function agentState(m) {
   const a = m.agent;
   if (!a) return ["", "not started"];
   if (a.status === "exited") return ["dead", "exited"];
+  // The server cannot probe another machine's process; trust its record.
+  if (!onBoardHost(a)) return ["remote", "running on " + hostLabel(a)];
   if (a.alive === true) return ["alive", "running"];
   if (a.alive === false) return ["dead", "stopped"];
   return ["", "unknown"];
@@ -287,7 +289,7 @@ function teamRow({ t, b, at }) {
   const current = t.name === state.team;
   const open = !rail.folded.has(t.name);
   const members = b ? b.members : [];
-  const running = members.filter((m) => agentState(m)[0] === "alive").length;
+  const running = members.filter((m) => ["alive", "remote"].includes(agentState(m)[0])).length;
   const pinned = rail.pins.has(t.name);
   const strip = el("div", { class: "strip", "aria-hidden": "true" });
   if (s && s.total) {
@@ -418,7 +420,7 @@ function renderHead(board) {
 function renderStats(board) {
   const s = board.taskSummary;
   const members = board.members;
-  const running = members.filter((m) => agentState(m)[0] === "alive").length;
+  const running = members.filter((m) => ["alive", "remote"].includes(agentState(m)[0])).length;
   const unread = members.reduce((n, m) => n + (m.inboxCount || 0), 0);
   const ov = state.oversight[state.team];
   if (!changed("stats", [s, running, members.length, unread, ov && [ov.budget, ov.cost]])) return;
@@ -845,6 +847,7 @@ window.addEventListener("pagehide", disposeTerminals);
 $("rail-toggle").addEventListener("click", () => setRail(!state.railOpen));
 setRail(state.railOpen);
 
+api("api/host").then((h) => { setBoardHost(h); state.keys = {}; update(); renderRail(); }).catch(() => {});
 // Older servers have no /api/links; the header then simply shows none.
 api("api/links").then((links) => { state.links = links; renderLinks(); }).catch(() => {});
 loadTeams().then(() => Promise.all([refreshSelected(), refreshOthers()]))

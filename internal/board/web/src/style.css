@@ -360,3 +360,4 @@ body.rail-collapsed #rail-tools { display: none; }
 .phase.current.failed, .phase.current.aborted { border-top-color: var(--dead); }
 .harness-gate { margin: 8px 0 0; font-size: 12px; color: var(--ink-2); overflow-wrap: anywhere; }
 .harness-gate.ready { color: var(--done); }
+.dot.remote { background: var(--progress); }

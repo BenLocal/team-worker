@@ -11,13 +11,13 @@ import (
 	"github.com/benlocal/team-worker/internal/model"
 )
 
-const agentColumns = `team, name, agent_id, backend, target, pid, command, cwd, status, started_at, exited_at, nudge, run_id, stop_requested, exit_code`
+const agentColumns = `team, name, agent_id, backend, target, pid, command, cwd, status, started_at, exited_at, nudge, run_id, stop_requested, exit_code, host`
 
 func scanAgent(row scanner) (model.Agent, error) {
 	var a model.Agent
 	var command string
 	err := row.Scan(&a.Team, &a.Name, &a.AgentID, &a.Backend, &a.Target, &a.PID, &command, &a.Cwd,
-		&a.Status, &a.StartedAt, &a.ExitedAt, &a.Nudge, &a.RunID, &a.StopRequested, &a.ExitCode)
+		&a.Status, &a.StartedAt, &a.ExitedAt, &a.Nudge, &a.RunID, &a.StopRequested, &a.ExitCode, &a.Host)
 	if err != nil {
 		return a, err
 	}
@@ -67,9 +67,9 @@ func (s *Store) RegisterAgent(ctx context.Context, a model.Agent) (model.Agent, 
 			}
 		}
 		_, err = tx.ExecContext(ctx,
-			`INSERT OR REPLACE INTO agents (`+agentColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			`INSERT OR REPLACE INTO agents (`+agentColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			a.Team, a.Name, a.AgentID, a.Backend, a.Target, a.PID, string(command), a.Cwd,
-			a.Status, a.StartedAt, a.ExitedAt, a.Nudge, a.RunID, a.StopRequested, a.ExitCode)
+			a.Status, a.StartedAt, a.ExitedAt, a.Nudge, a.RunID, a.StopRequested, a.ExitCode, a.Host)
 		return err
 	})
 	return a, err

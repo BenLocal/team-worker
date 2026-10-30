@@ -9,6 +9,7 @@ import (
 
 	"github.com/benlocal/team-worker/internal/agent"
 	"github.com/benlocal/team-worker/internal/model"
+	"github.com/benlocal/team-worker/internal/proc"
 	"github.com/benlocal/team-worker/internal/store"
 	"github.com/benlocal/team-worker/internal/tmux"
 )
@@ -82,7 +83,8 @@ func (n *Nudger) Tick(ctx context.Context) {
 	defer n.mu.Unlock()
 	seen := map[string]bool{}
 	for _, a := range agents {
-		if !a.Nudge || a.Backend != "tmux" {
+		// A pane id from another machine could name an unrelated pane here.
+		if !a.Nudge || a.Backend != "tmux" || !proc.OnServer(a) {
 			continue
 		}
 		key := a.Team + "/" + a.Name

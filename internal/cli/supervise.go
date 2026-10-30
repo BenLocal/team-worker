@@ -14,6 +14,7 @@ import (
 
 	"github.com/benlocal/team-worker/internal/agent"
 	"github.com/benlocal/team-worker/internal/config"
+	"github.com/benlocal/team-worker/internal/model"
 	"github.com/benlocal/team-worker/internal/spawn"
 	"github.com/benlocal/team-worker/internal/store"
 	"github.com/spf13/cobra"
@@ -128,7 +129,8 @@ func (a *app) supervise(ctx context.Context, team, name, runID, paste string, co
 			return err
 		}
 		started := time.Now()
-		child := exec.CommandContext(ctx, command[0], command[1:]...)
+		childCtx, cancelChild := context.WithCancel(ctx)
+		child := exec.CommandContext(childCtx, command[0], command[1:]...)
 		child.Dir = session.Cwd
 		child.Stdin, child.Stdout, child.Stderr = stdin, a.out, a.errOut
 		child.Env = append(os.Environ(), "TEAM_WORKER_RUN_ID="+runID)
@@ -136,11 +138,16 @@ func (a *app) supervise(ctx context.Context, team, name, runID, paste string, co
 		child.WaitDelay = 5 * time.Second
 		code := 127
 		if err := child.Start(); err != nil {
+			cancelChild()
 			if _, recordErr := c.AgentExitedRun(ctx, team, name, runID, code); recordErr != nil {
 				return errors.Join(err, recordErr)
 			}
 			return fmt.Errorf("start agent: %w", err)
 		}
+		// `agent stop` may run on another machine; it can only record the
+		// request, so this machine ends the child when it sees one.
+		watchDone := make(chan struct{})
+		go watchStop(childCtx, watchDone, cancelChild, func() (model.Agent, error) { return c.GetAgent(ctx, team, name) }, runID)
 		readyCtx, readyCancel := context.WithCancel(ctx)
 		waitDone := make(chan error, 1)
 		go func() {
@@ -151,6 +158,8 @@ func (a *app) supervise(ctx context.Context, team, name, runID, paste string, co
 			spawn.WaitReady(readyCtx, rec.Target, registry.For(session.Command), paste)
 		}
 		waitErr := <-waitDone
+		close(watchDone)
+		cancelChild()
 		readyCancel()
 		code = 0
 		if waitErr != nil {
@@ -257,5 +266,28 @@ func (a *app) supervise(ctx context.Context, team, name, runID, paste string, co
 			stdin = strings.NewReader(plan.Stdin)
 		}
 		restarts++
+	}
+}
+
+// stopPollInterval is how often a running child checks for a stop request.
+var stopPollInterval = 2 * time.Second
+
+// watchStop cancels the child when its record asks it to stop or a newer run
+// replaced it, until done closes or ctx ends.
+func watchStop(ctx context.Context, done <-chan struct{}, cancel context.CancelFunc, read func() (model.Agent, error), runID string) {
+	ticker := time.NewTicker(stopPollInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-done:
+			return
+		case <-ticker.C:
+			if rec, err := read(); err == nil && (rec.StopRequested || rec.RunID != runID) {
+				cancel()
+				return
+			}
+		}
 	}
 }

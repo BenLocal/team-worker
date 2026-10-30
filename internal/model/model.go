@@ -177,6 +177,9 @@ type Agent struct {
 	Status        AgentStatus `json:"status"`
 	StartedAt     string      `json:"startedAt"`
 	ExitedAt      string      `json:"exitedAt"`
+	// Host is the machine the agent's process runs on; empty means the
+	// server's own machine. Only that machine can probe, stop or show it.
+	Host string `json:"host,omitempty"`
 	// Nudge lets the daemon type a reminder into the agent's tmux pane when
 	// messages wait while the agent sits idle at its prompt.
 	Nudge bool `json:"nudge"`

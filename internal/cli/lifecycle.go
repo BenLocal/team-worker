@@ -206,6 +206,18 @@ func (a *app) agentStopCmd() *cobra.Command {
 			if err != nil {
 				return a.fail(err)
 			}
+			if !proc.OnClient(ag, c.Remote()) {
+				// Only the agent's machine can end its process: record the
+				// request, which its --keepalive supervisor acts on.
+				if _, err := c.RequestAgentStop(cmd.Context(), ag.Team, ag.Name, ag.RunID); err != nil {
+					return a.fail(err)
+				}
+				a.emit(map[string]string{"status": "stop_requested", "agent": ag.Name, "host": ag.Host}, func(w io.Writer) {
+					fmt.Fprintf(w, "OK Stop requested for '%s', which runs on %s. A --keepalive agent stops within a few seconds; "+
+						"otherwise run team-worker agent stop on that machine.\n", ag.Name, proc.Where(ag))
+				})
+				return nil
+			}
 			if err := a.captureNativeSession(cmd.Context(), ag.Team, ag.Name, ag.RunID); err != nil {
 				fmt.Fprintf(a.errOut, "capture session: %v\n", err)
 			}
@@ -238,6 +250,9 @@ func (a *app) agentScreenCmd() *cobra.Command {
 			if err != nil {
 				return a.fail(err)
 			}
+			if err := reachable(a.client(), ag); err != nil {
+				return a.fail(err)
+			}
 			text, err := proc.Screen(ag, lines)
 			if err != nil {
 				return a.fail(err)
@@ -248,4 +263,13 @@ func (a *app) agentScreenCmd() *cobra.Command {
 	}
 	cmd.Flags().IntVarP(&lines, "lines", "l", 0, "Extra scrollback lines to include")
 	return cmd
+}
+
+// reachable errors when ag's process runs on a machine other than this CLI's,
+// where its pane id or pid would name an unrelated process.
+func reachable(c *client.Client, ag model.Agent) error {
+	if proc.OnClient(ag, c.Remote()) {
+		return nil
+	}
+	return fmt.Errorf("Agent '%s' runs on %s; run this command there", ag.Name, proc.Where(ag))
 }

@@ -52,6 +52,7 @@ type Client struct {
 	base    string
 	http    *http.Client
 	apiKey  string
+	remote  bool
 	initErr error
 	// start launches the daemon when the socket is not answering; nil disables it.
 	start func(context.Context) error
@@ -83,6 +84,10 @@ func New(dataDir string) *Client {
 	return c
 }
 
+// Remote reports whether the client reaches the daemon over HTTP from
+// another machine rather than through the local socket.
+func (c *Client) Remote() bool { return c.remote }
+
 // NewHTTP returns a client for an arbitrary base URL; tests use it with httptest.
 func NewHTTP(base string, hc *http.Client) *Client { return &Client{base: base, http: hc} }
 
@@ -94,7 +99,7 @@ func NewRemote(base, apiKey string) (*Client, error) {
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.ResponseHeaderTimeout = 70 * time.Second
-	return &Client{base: strings.TrimRight(base, "/"), apiKey: apiKey, http: &http.Client{
+	return &Client{base: strings.TrimRight(base, "/"), apiKey: apiKey, remote: true, http: &http.Client{
 		Transport: transport, Timeout: 70 * time.Second,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}}, nil
