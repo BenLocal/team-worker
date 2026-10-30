@@ -106,6 +106,9 @@ const ICONS = {
   view: ["M2 4h12", "M4.5 8h7", "M6.5 12h3"],
   more: ["M3.5 8h.01", "M8 8h.01", "M12.5 8h.01"],
   pin: ["M9.5 2.5 13.5 6.5", "M11.5 4.5 8 8l-3 .5 2.5 2.5L8 14l3.5-3.5", "m5.5 10.5-3 3"],
+  external: ["M9 2.5h4.5V7", "M13.5 2.5 7.5 8.5", "M12 9.5V13a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V5.5a1 1 0 0 1 1-1H7"],
+  key: ["M5 13.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z", "M6.8 9.2 13.5 2.5", "m11.5 4.5 1.5 1.5", "m9.5 6.5 1.5 1.5"],
+  signOut: ["M6 13.5H3.5a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1H6", "M10.5 11 13.5 8l-3-3", "M13.5 8H6"],
 };
 function ago(ms) {
   if (!ms) return "";
@@ -370,9 +373,9 @@ function buildMain() {
   const tab = (view, label) => el("button", { type: "button", role: "tab", id: "tab-" + view, "aria-controls": "view-" + view,
     "aria-selected": String(state.view === view), onclick: () => setView(view) }, label);
   $("main").replaceChildren(
+    el("div", { class: "topbar" }, el("nav", { class: "links", id: "links", "aria-label": "Other services" })),
     el("div", { class: "head-row" }, el("header", { class: "head", id: "head" }),
-      el("div", { class: "views", role: "tablist", "aria-label": "View" }, VIEWS.map(([v, label]) => tab(v, label))),
-      el("nav", { class: "links", id: "links", "aria-label": "Other services" })),
+      el("div", { class: "views", role: "tablist", "aria-label": "View" }, VIEWS.map(([v, label]) => tab(v, label)))),
     el("div", { class: "view", id: "view-board", role: "tabpanel", "aria-labelledby": "tab-board", hidden: state.view !== "board" },
     el("section", { class: "tasks", "aria-label": "Tasks" },
       el("div", { class: "harness", id: "harness", hidden: true }),
@@ -404,9 +407,12 @@ function buildMain() {
 function renderLinks() {
   const nav = $("links");
   if (!nav) return;
-  nav.replaceChildren(...state.links.map((l) => el("a", { href: l.url, target: "_blank", rel: "noopener" }, l.name)));
-  nav.append(el("button", { type: "button", class: "quiet-btn", onclick: (event) => openServiceKeys(event.currentTarget) }, "Service keys"),
-    el("form", { method: "post", action: "logout" }, el("button", { type: "submit", class: "quiet-btn" }, "Sign out")));
+  const label = (name, text) => [icon(ICONS[name]), el("span", {}, text)];
+  nav.replaceChildren(...state.links.map((l) => el("a", { class: "tool-btn", href: l.url, target: "_blank", rel: "noopener",
+    title: "Open " + l.name + " in a new tab" }, ...label("external", l.name))));
+  nav.append(el("button", { type: "button", class: "tool-btn", onclick: (event) => openServiceKeys(event.currentTarget) },
+    ...label("key", "Service keys")),
+    el("form", { method: "post", action: "logout" }, el("button", { type: "submit", class: "tool-btn" }, ...label("signOut", "Sign out"))));
 }
 
 /* ---------------- header + tasks ---------------- */
@@ -438,7 +444,8 @@ function renderStats(board) {
       s.timed_completed ? `average of ${s.timed_completed} timed` : "no finished timings"),
     stat(running ? "done" : "", "Agents online", `${running}/${members.length}`, running === members.length ? "all running" : `${members.length - running} not running`),
     stat(unread ? "blocked" : "", "Unread", String(unread), unread ? "messages waiting in inboxes" : "inboxes are clear"),
-    ov ? spendStat(stat, ov) : null);
+    // replaceChildren would print a null as text; spend waits for oversight.
+    ...(ov ? [spendStat(stat, ov)] : []));
 }
 // spendStat shows cost when agents reported it, else the tokens captured from
 // their sessions, against the budget.
@@ -721,10 +728,11 @@ function renderInspector(records) {
   const fields = [["From", r.from], ["To", r.to || "everyone"], ["Type", r.type ? r.type.replaceAll("_", " ") : "message"],
     ["Sent", new Date(r.at).toLocaleString()], ["Request", r.requestId], ["Status", r.status], ["Summary", r.summary],
     ["Reason", r.reason], ["Last task", r.lastTask], ["Plan file", r.planFile], ["Feedback", r.feedback]].filter(([, v]) => v);
-  $("inspector").replaceChildren(
+  // replaceChildren would print a null as text, so absent parts are dropped.
+  $("inspector").replaceChildren(...[
     el("dl", {}, fields.flatMap(([k, v]) => [el("dt", {}, k), el("dd", {}, v)])),
     r.content ? el("div", { class: "content" }, r.content) : null,
-    r.plan ? el("div", { class: "content" }, r.plan) : null);
+    r.plan ? el("div", { class: "content" }, r.plan) : null].filter(Boolean));
 }
 function select(key, reveal) {
   state.selected = key;
