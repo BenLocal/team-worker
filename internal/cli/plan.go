@@ -140,16 +140,3 @@ func planFirstLine(s string) string {
 	line, _, _ := strings.Cut(strings.TrimSpace(s), "\n")
 	return line
 }
-
-// planApprovalPrompt is added to the first prompt of plan-required agents.
-func planApprovalPrompt(team, agent string) string {
-	return fmt.Sprintf(`
-## Plan approval
-
-- Before starting any task, write your plan and submit it:
-  `+"`team-worker plan submit %s %s <plan text or file> --summary \"<one line>\"`"+`
-- Then wait for a plan_approved message in your inbox. Until a plan is approved,
-  moving a task to in_progress or completed is refused.
-- If the leader sends plan_rejected, read the feedback, revise the plan and submit it again.
-`, team, agent)
-}

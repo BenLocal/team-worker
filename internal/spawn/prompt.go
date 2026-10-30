@@ -16,6 +16,8 @@ type PromptParams struct {
 	Workspace  string
 	TeamPrompt string
 	Task       string
+	// PlanRequired adds how to get a plan approved before starting work.
+	PlanRequired bool
 }
 
 // IsLeader reports whether the prompt is for the team's leader, who gets the

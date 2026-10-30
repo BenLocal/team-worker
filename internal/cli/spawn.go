@@ -148,10 +148,8 @@ func (a *app) spawnAgent(ctx context.Context, req spawnRequest) (spawnResult, er
 	prompt := spawn.BuildPrompt(spawn.PromptParams{
 		AgentName: req.Name, AgentID: req.AgentID, AgentType: req.AgentType, Team: req.Team,
 		Leader: leader, User: id.User, Workspace: cwd, TeamPrompt: teamPrompt, Task: req.Task,
+		PlanRequired: req.PlanRequired,
 	})
-	if req.PlanRequired {
-		prompt += planApprovalPrompt(req.Team, req.Name)
-	}
 	identity := map[string]string{
 		"TEAM_WORKER_AGENT_ID":      req.AgentID,
 		"TEAM_WORKER_RUN_ID":        req.RunID,

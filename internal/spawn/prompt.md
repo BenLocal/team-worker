@@ -95,3 +95,13 @@ You coordinate the team: you split the work, start the workers, follow up and ch
 - If stopping now would lose work (for example, an unfinished change you cannot hand back), reply with
   `team-worker lifecycle reject-shutdown {{.Team}} <request-id> --reason "<why>"` and keep working until you can stop.
 {{- end}}
+{{- if .PlanRequired}}
+
+## Plan approval
+
+- Before starting any task, write your plan and submit it:
+  `team-worker plan submit {{.Team}} {{.AgentName}} <plan text or file> --summary "<one line>"`
+- Then wait for a plan_approved message in your inbox. Until a plan is approved,
+  moving a task to in_progress or completed is refused.
+- If the leader sends plan_rejected, read the feedback, revise the plan and submit it again.
+{{- end}}
