@@ -225,7 +225,7 @@ HTTP_PROXY=http://127.0.0.1:7897 HTTPS_PROXY=http://127.0.0.1:7897 \
   ./docker/team-worker.sh build
 ```
 
-`build` 先在宿主机执行 `bins`（`make web` 加静态 `go build`，产物在 `TEAM_WORKER_BIN_DIR`，默认 `bin/docker`），再把这个目录作为名为 `bins` 的构建上下文交给 `docker build`，Dockerfile 只 `COPY` 现成的二进制，不在镜像里编译。因此宿主机需要 Go 和 Node；`GOPROXY`、`NPM_REGISTRY` 也作用于这一步。直接用 `docker build` 时要自己传 `--build-context bins=<二进制目录>`。默认镜像名 `team-worker-local:latest`，容器名 `team-worker`，用 `TEAM_WORKER_IMAGE`、`TEAM_WORKER_CONTAINER` 覆盖。镜像设置 `DISABLE_AUTOUPDATER=1`，工具版本随镜像固定；同时预装 Bun（Magpie 插件运行时）、Python Playwright 与 Chromium（浏览器测试）、dsh 与 dsh-tui。
+`build` 先在宿主机执行 `bins`（`make web` 加静态 `go build`，产物在 `TEAM_WORKER_BIN_DIR`，默认 `bin/docker`），再把这个目录作为名为 `bins` 的构建上下文交给 `docker build`，Dockerfile 只 `COPY` 现成的二进制，不在镜像里编译。因此宿主机需要 Go 和 Node；`GOPROXY`、`NPM_REGISTRY` 也作用于这一步。直接用 `docker build` 时要自己传 `--build-context bins=<二进制目录>`。默认镜像名 `team-worker-local:latest`，容器名 `team-worker`，用 `TEAM_WORKER_IMAGE`、`TEAM_WORKER_CONTAINER` 覆盖。镜像设置 `DISABLE_AUTOUPDATER=1`，工具版本随镜像固定；同时预装 Bun（Magpie 插件运行时）、Python Playwright 与 Chromium（浏览器测试）、dsh 与 dsh-tui，以及 Agent 常用的命令行工具：rg、fd、jq、make、tree、file、less、zip/unzip、wget、rsync、sqlite3、lsof、ssh。
 
 项目挂载到 `/workspace`，修改直接写回宿主机；Linux 上项目需允许容器用户 UID 1000 读写。`<容器名>-home` 卷保存 Claude 登录状态、原生会话历史、team-worker 数据库和 Magpie 配置。重启容器时，Leader 有准确会话标识就续接原会话，否则创建新会话；Worker 需用 `team-worker agent resume` 手动续接。tmux 会话会重新创建。
 

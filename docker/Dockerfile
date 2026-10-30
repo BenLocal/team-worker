@@ -65,10 +65,13 @@ RUN case "${TARGETARCH:-amd64}" in \
     && chmod 755 /usr/local/bin/bun \
     && rm /tmp/bun.zip \
     && bun --version
-# jq is here rather than in the first apt layer so adding it keeps the large
-# layers above cached; agent skills such as the Vikunja helper need it.
+# Everyday command-line tools for agents (jq is needed by skills such as the
+# Vikunja helper). They sit here rather than in the first apt layer so adding
+# one keeps the large layers above cached. Debian names fd "fdfind".
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    iptables iproute2 util-linux xz-utils systemd systemd-sysv dbus procps jq \
+    iptables iproute2 util-linux xz-utils systemd systemd-sysv dbus procps \
+    jq fd-find make tree file less zip unzip wget rsync sqlite3 lsof openssh-client \
+    && ln -sf /usr/bin/fdfind /usr/local/bin/fd \
     && rm -rf /var/lib/apt/lists/*
 # NARB_DISABLE_NATIVE_CACHE: dsh loads native addons from node_modules instead of
 # copying them into /tmp, which the systemd mode mounts as a noexec tmpfs.
