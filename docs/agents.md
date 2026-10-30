@@ -50,6 +50,7 @@ unset = ["OPENAI_ORG_ID"]         # 从环境中去掉的变量
 AIDER_MODEL = "${TEAM_AIDER_MODEL}"
 
 nudge = true                      # false：不让 daemon 往这个 CLI 的终端里打字提醒（见下文）
+# ask_user = true                 # 仅 claude：允许它弹出终端提问菜单（AskUserQuestion）。默认禁用，因为被 spawn 的 Agent 无人值守，菜单会让它一直卡住
 # hooks = true                    # 仅在 extends 了 claude、codex 或 pi 时可用：开启或关闭 team-worker 的 hook 或扩展
 
 [[startup]]                       # 启动画面规则，可以写多条

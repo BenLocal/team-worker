@@ -36,7 +36,10 @@ func builtins() []*cli {
 	return []*cli{
 		{
 			name: "claude", names: []string{"claude", "claude-code"},
-			skipArgs:   []string{"--dangerously-skip-permissions"},
+			skipArgs: []string{"--dangerously-skip-permissions"},
+			// The = form matters: --disallowedTools takes several values and
+			// would swallow the prompt that follows as another tool name.
+			noAskArgs:  []string{"--disallowedTools=AskUserQuestion"},
 			tmuxPrompt: arg, batchPrompt: flag("-p"),
 			// A leader running inside Claude Code must not make workers think they are nested.
 			env: EnvPlan{Unset: []string{"CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SESSION"}},
