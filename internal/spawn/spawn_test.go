@@ -211,3 +211,16 @@ func TestBuildPromptPicksProtocolByRole(t *testing.T) {
 		t.Errorf("prompts should end with one newline")
 	}
 }
+
+func TestBuildPromptAddsPlanApprovalOnlyWhenRequired(t *testing.T) {
+	base := PromptParams{AgentName: "alice", Team: "demo", Leader: "lead"}
+	if p := BuildPrompt(base); strings.Contains(p, "## Plan approval") {
+		t.Errorf("plan approval without --plan-required:\n%s", p)
+	}
+	base.PlanRequired = true
+	p := BuildPrompt(base)
+	if !strings.Contains(p, "\n\n## Plan approval\n\n") || !strings.Contains(p, "`team-worker plan submit demo alice <plan text or file>") ||
+		!strings.HasSuffix(p, "revise the plan and submit it again.\n") {
+		t.Errorf("plan approval section missing or misplaced:\n%s", p)
+	}
+}
