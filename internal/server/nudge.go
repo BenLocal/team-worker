@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/benlocal/team-worker/internal/agent"
+	"github.com/benlocal/team-worker/internal/agent/builtin"
+	"github.com/benlocal/team-worker/internal/config"
 	"github.com/benlocal/team-worker/internal/model"
 	"github.com/benlocal/team-worker/internal/proc"
 	"github.com/benlocal/team-worker/internal/store"
@@ -20,15 +22,19 @@ import (
 // already ended, which no hook can reach.
 //
 // Whether the agent waits at its prompt comes from its hooks (see
-// model.AgentActivity): the Stop hook knows when it let the turn end. Only
-// agents whose CLI reports nothing, e.g. one without hooks, are judged by
-// reading their screen.
+// model.AgentActivity): the Stop hook knows when it let the turn end. Agents
+// whose CLI reports nothing, e.g. Codex without hooks, are judged by their
+// adapter's screen rules; an adapter without screen rules is never typed
+// into, since a guess could answer a menu.
 type Nudger struct {
 	Store *store.Store
 	Log   *slog.Logger
-	// Capture and Type reach the agent's pane; tests replace them.
-	Capture func(pane string) (string, error)
-	Type    func(pane, text string) error
+	// Screen, Title and Type reach the agent's pane; tests replace them.
+	Screen func(pane string) (string, error)
+	Title  func(pane string) (string, error)
+	Type   func(pane, text string) error
+	// Adapter returns the adapter that runs an agent's command.
+	Adapter func(command []string) agent.Agent
 	Now     func() time.Time
 	// IdleFor is how long an agent must wait with unread messages (or, read
 	// from the screen, keep it unchanged) before a nudge. It leaves time for
@@ -57,7 +63,9 @@ func NewNudger(st *store.Store, log *slog.Logger) *Nudger {
 	return &Nudger{
 		Store:   st,
 		Log:     log,
-		Capture: func(pane string) (string, error) { return tmux.Capture(pane, 0) },
+		Screen:  tmux.Screen,
+		Title:   tmux.Title,
+		Adapter: adapters(log).For,
 		Type:    tmux.Paste,
 		Now:     time.Now,
 		IdleFor: 8 * time.Second,
@@ -159,17 +167,33 @@ func (n *Nudger) check(ctx context.Context, a model.Agent, key string) {
 }
 
 // screenIdle judges an agent whose CLI reports no activity by its screen:
-// unchanged for IdleFor and showing an input prompt rather than a menu.
+// unchanged for IdleFor, and its adapter's rules see the input prompt itself.
+// The rules' idle fallback (no rule matched) is not enough: an unknown menu
+// would look the same.
 func (n *Nudger) screenIdle(a model.Agent, st *nudgeState, now time.Time) bool {
-	screen, err := n.Capture(a.Target)
+	screen, err := n.Screen(a.Target)
 	if err != nil {
 		return false
 	}
-	if screen != st.screen {
-		st.screen, st.stableSince = screen, now
+	title, _ := n.Title(a.Target)
+	if seen := screen + "\x00" + title; seen != st.screen {
+		st.screen, st.stableSince = seen, now
 		return false
 	}
-	// A working CLI redraws its spinner; a menu or permission question has no
-	// input prompt. Typing into either would be wrong, so wait for a quiet prompt.
-	return now.Sub(st.stableSince) >= n.IdleFor && agent.InputPromptVisible(screen)
+	if now.Sub(st.stableSince) < n.IdleFor {
+		return false
+	}
+	d, ok := n.Adapter(a.Command).DetectScreen(agent.ScreenInput{Screen: screen, Title: title})
+	return ok && d.State == agent.ScreenIdle && d.VisibleIdle && !d.SkipStateUpdate
+}
+
+// adapters loads the agent adapters once for the daemon; a broken user
+// adapter file falls back to the built-in adapters.
+func adapters(log *slog.Logger) *agent.Registry {
+	r, err := builtin.Load(config.AgentsDir())
+	if err != nil {
+		log.Warn("agent adapters: using the built-in ones", "err", err)
+		return builtin.Registry()
+	}
+	return r
 }

@@ -17,25 +17,63 @@ type Registry struct {
 	agents []Agent
 }
 
-// Builtin returns a registry with only the built-in adapters.
-func Builtin() *Registry {
+// Def describes a built-in adapter. The agent/builtin package holds one per
+// CLI; this package knows no CLI itself, only how adapters behave.
+type Def struct {
+	Name  string
+	Names []string
+	// SkipArgs and SkipEnv turn off the CLI's tool approvals.
+	SkipArgs []string
+	SkipEnv  map[string]string
+	// NoAskArgs keep the CLI from opening a question menu at its terminal,
+	// unless an adapter that extends it sets ask_user = true.
+	NoAskArgs   []string
+	TmuxPrompt  PromptMode
+	BatchPrompt PromptMode
+	Env         EnvPlan
+	Startup     []StartupRule
+	// Adjust rewrites the arguments, e.g. Codex's exec subcommand.
+	Adjust func(args []string, s Session) []string
+	// Hooks adds the arguments that install team-worker hooks; HooksOn says
+	// whether they are installed by default.
+	Hooks   func(args []string, s Session, p *Plan) []string
+	HooksOn bool
+	// NoNudge turns off terminal reminders where typing into the pane is unsafe.
+	NoNudge bool
+	// Screen tells the agent's state from its terminal (herdr's detection
+	// manifest format); nil when the CLI has no such rules.
+	Screen *ScreenRules
+}
+
+func (d Def) cli() *cli {
+	c := &cli{name: d.Name, source: "builtin", tmuxPrompt: d.TmuxPrompt, batchPrompt: d.BatchPrompt, env: d.Env,
+		adjust: d.Adjust, hooks: d.Hooks, hooksOn: d.HooksOn, noNudge: d.NoNudge,
+		names: d.Names, skipArgs: d.SkipArgs, skipEnv: d.SkipEnv, noAskArgs: d.NoAskArgs, startup: d.Startup,
+		screen: d.Screen}
+	// clone gives the adapter its own slices and maps, so changing one
+	// adapter never reaches the definition or another adapter.
+	return c.clone()
+}
+
+// NewRegistry returns a registry with only the given built-in adapters.
+func NewRegistry(defs []Def) *Registry {
 	r := &Registry{}
-	for _, c := range builtins() {
-		c.source = "builtin"
-		r.agents = append(r.agents, c)
+	for _, d := range defs {
+		r.agents = append(r.agents, d.cli())
 	}
 	return r
 }
 
-// Load reads every *.toml adapter in dir on top of the built-ins. A missing
-// directory is not an error.
-func Load(dir string) (*Registry, error) {
-	base := Builtin()
+// LoadDir reads every *.toml adapter in dir on top of the built-in adapters
+// defs; an adapter file can extend one of them. A missing directory is not an
+// error.
+func LoadDir(defs []Def, dir string) (*Registry, error) {
+	base := NewRegistry(defs)
 	paths, _ := filepath.Glob(filepath.Join(dir, "*.toml"))
 	sort.Strings(paths)
 	var user []Agent
 	for _, p := range paths {
-		a, err := loadFile(p)
+		a, err := loadFile(p, defs)
 		if err != nil {
 			return nil, err
 		}
@@ -80,7 +118,7 @@ type file struct {
 
 var envNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
-func loadFile(path string) (Agent, error) {
+func loadFile(path string, defs []Def) (Agent, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -93,19 +131,19 @@ func loadFile(path string) (Agent, error) {
 	if undecoded := md.Undecoded(); len(undecoded) > 0 {
 		return nil, fmt.Errorf("agent adapter %s: unknown key %s", path, undecoded[0])
 	}
-	c, err := f.build(path)
+	c, err := f.build(path, defs)
 	if err != nil {
 		return nil, fmt.Errorf("agent adapter %s: %w", path, err)
 	}
 	return c, nil
 }
 
-func (f file) build(path string) (*cli, error) {
+func (f file) build(path string, defs []Def) (*cli, error) {
 	var c *cli
 	if f.Extends != "" {
-		for _, b := range builtins() {
-			if b.name == f.Extends {
-				c = b.clone()
+		for _, d := range defs {
+			if d.Name == f.Extends {
+				c = d.cli()
 			}
 		}
 		if c == nil {
@@ -199,4 +237,10 @@ func keys(m map[string]string) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// generic handles any other CLI: no permission flags, prompt pasted into
+// the terminal or fed on stdin.
+func generic() *cli {
+	return &cli{name: "generic", source: "builtin", tmuxPrompt: PromptMode{Kind: "paste"}, batchPrompt: PromptMode{Kind: "stdin"}}
 }

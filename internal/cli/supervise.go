@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/benlocal/team-worker/internal/agent"
+	"github.com/benlocal/team-worker/internal/agent/builtin"
 	"github.com/benlocal/team-worker/internal/config"
 	"github.com/benlocal/team-worker/internal/model"
 	"github.com/benlocal/team-worker/internal/spawn"
@@ -96,7 +97,7 @@ func (a *app) supervise(ctx context.Context, team, name, runID, paste string, co
 			return nil
 		}
 	}
-	registry, err := agent.Load(config.AgentsDir())
+	registry, err := builtin.Load(config.AgentsDir())
 	if err != nil {
 		return err
 	}

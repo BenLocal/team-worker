@@ -156,6 +156,9 @@ func (fileAdapter) Source() string              { return "test" }
 func (fileAdapter) Match([]string) bool         { return true }
 func (fileAdapter) StartupKeys(string) []string { return nil }
 func (fileAdapter) Nudge() bool                 { return false }
+func (fileAdapter) DetectScreen(agent.ScreenInput) (agent.Detection, bool) {
+	return agent.Detection{}, false
+}
 func (f fileAdapter) Prepare(s agent.Session) agent.Plan {
 	return agent.Plan{Args: s.Command, Files: []agent.File{{Path: f.path, Content: []byte("ext")}}}
 }

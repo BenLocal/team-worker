@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 func run(args ...string) (string, error) {
@@ -80,6 +81,34 @@ func Capture(pane string, history int) (string, error) {
 		args = append(args, "-S", "-"+strconv.Itoa(history))
 	}
 	return run(args...)
+}
+
+// Screen returns the rows a pane shows now, as screen rules read them: no
+// trailing spaces, no trailing blank rows, joined with "\n" and ending in
+// "\n". Wrapped lines stay separate rows, unlike Capture's joined lines.
+func Screen(pane string) (string, error) {
+	out, err := run("capture-pane", "-p", "-t", pane)
+	if err != nil {
+		return "", err
+	}
+	rows := strings.Split(out, "\n")
+	for i, r := range rows {
+		rows[i] = strings.TrimRightFunc(r, unicode.IsSpace)
+	}
+	for len(rows) > 0 && rows[len(rows)-1] == "" {
+		rows = rows[:len(rows)-1]
+	}
+	if len(rows) == 0 {
+		return "", nil
+	}
+	return strings.Join(rows, "\n") + "\n", nil
+}
+
+// Title returns the title the pane's program set (OSC 0/2). -u keeps it
+// UTF-8 when the caller's locale is not; tmux would print "_" otherwise.
+func Title(pane string) (string, error) {
+	out, err := run("-u", "display-message", "-p", "-t", pane, "#{pane_title}")
+	return strings.TrimSuffix(out, "\n"), err
 }
 
 func SendKeys(pane string, keys ...string) error {

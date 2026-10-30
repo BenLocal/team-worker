@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/benlocal/team-worker/internal/agent"
+	"github.com/benlocal/team-worker/internal/agent/builtin"
 	"github.com/benlocal/team-worker/internal/config"
 	"github.com/benlocal/team-worker/internal/profile"
 	"github.com/benlocal/team-worker/internal/spawn"
@@ -620,7 +621,7 @@ func (a *app) testProfile(ctx context.Context, name, prompt, cwd string) (profil
 	if err != nil {
 		return profileTestResult{}, err
 	}
-	registry, err := agent.Load(config.AgentsDir())
+	registry, err := builtin.Load(config.AgentsDir())
 	if err != nil {
 		return profileTestResult{}, err
 	}
