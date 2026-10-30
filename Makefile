@@ -1,12 +1,13 @@
 GO ?= go
 
 .DEFAULT_GOAL := help
-.PHONY: help build install test vet fmt clean web
+.PHONY: help build install install-cli test vet fmt clean web
 
 help:
 	@printf '%s\n' \
 		'make build    Build bin/team-worker and bin/team-workerd' \
 		'make install  Install both binaries to GOBIN or GOPATH/bin' \
+		'make install-cli  Install only the team-worker CLI to BINDIR (default ~/.local/bin)' \
 		'make test     Run Go tests' \
 		'make vet      Run go vet' \
 		'make fmt      Format Go source files' \
@@ -19,6 +20,15 @@ build: web
 
 install: web
 	$(GO) install ./cmd/...
+
+# Only the CLI, e.g. for remote use. The rename replaces a binary that running
+# agents or supervisors still execute without "text file busy".
+BINDIR ?= $(HOME)/.local/bin
+install-cli: web
+	mkdir -p $(BINDIR)
+	$(GO) build -trimpath -o $(BINDIR)/.team-worker.tmp ./cmd/team-worker
+	mv -f $(BINDIR)/.team-worker.tmp $(BINDIR)/team-worker
+	@echo "installed $(BINDIR)/team-worker"
 
 test:
 	$(GO) test ./...
