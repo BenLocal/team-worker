@@ -1,7 +1,0 @@
-interface:
-  display_name: "team-worker"
-  short_description: "用 team-worker 把工作拆给多个 Agent，跟踪任务并收发消息"
-  default_prompt: "使用 $team-worker 建立团队，把这项工作拆成任务分给多个 Agent，协调直到全部完成并核对结果。"
-
-policy:
-  allow_implicit_invocation: true

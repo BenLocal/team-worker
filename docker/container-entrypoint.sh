@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 mkdir -p "$HOME/.claude/skills" "$HOME/.codex/skills" "$TEAM_WORKER_DATA_DIR"
-ln -sfn /opt/team-worker/skills/team-worker "$HOME/.claude/skills/team-worker"
-ln -sfn /opt/team-worker/skills/team-worker "$HOME/.codex/skills/team-worker"
+# Earlier images linked a team-worker skill here; agents now get the protocol in
+# their first prompt, so drop those links. Skills the user installed stay.
+for link in "$HOME/.claude/skills/team-worker" "$HOME/.codex/skills/team-worker"; do
+    if [[ $(readlink "$link" 2>/dev/null) == /opt/team-worker/skills/team-worker ]]; then rm -f "$link"; fi
+done
 # Seed dsh's TUI profile once; later plugin changes and Magpie patches stay in the volume.
 if [[ -d /opt/dsh/profiles/tui && ! -e $HOME/.dsh/profiles/tui ]]; then
     mkdir -p "$HOME/.dsh/profiles"
@@ -126,7 +129,7 @@ read -r TEAM_WORKER_AGENT_NAME TEAM_WORKER_AGENT_ID <<< "$identity"
 export TEAM_WORKER_AGENT_NAME TEAM_WORKER_AGENT_ID
 export TEAM_WORKER_AGENT_TYPE=leader TEAM_WORKER_AGENT_LEADER=1 TEAM_WORKER_WORKSPACE_DIR="$workspace"
 team=$TEAM_WORKER_TEAM_NAME
-prompt="你是团队 $team 的 Leader，名字是 $TEAM_WORKER_AGENT_NAME。团队已注册，直接使用它。请使用 team-worker skill 完成用户任务。用 team-worker spawn tmux --team $team -n <名字> --task <任务> 创建 Worker（默认运行 claude）；Leader 和所有 Worker 都必须在本容器运行。收件箱消息、Worker 的进展和新的未分配 pending 任务会在你每轮结束时自动送到你面前（team-worker hook），你停在输入框时会收到一行提醒；不需要执行 task wait。收到任务通知时，检查任务列表，主动接手未分配的 pending 任务，按需拆分、分配并汇总结果到任务描述。工作目标以成员专属提示词和当前任务列表为准。"
+prompt="你是团队 $team 的 Leader，名字是 $TEAM_WORKER_AGENT_NAME。团队已注册，直接使用它。按第一条提示词里的 Leader Protocol 完成用户任务。用 team-worker spawn tmux --team $team -n <名字> --task <任务> 创建 Worker（默认运行 claude）；Leader 和所有 Worker 都必须在本容器运行。收件箱消息、Worker 的进展和新的未分配 pending 任务会在你每轮结束时自动送到你面前（team-worker hook），你停在输入框时会收到一行提醒；不需要执行 task wait。收到任务通知时，检查任务列表，主动接手未分配的 pending 任务，按需拆分、分配并汇总结果到任务描述。工作目标以成员专属提示词和当前任务列表为准。"
 # Use the CLI's shared bounded supervisor and exact-session persistence.
 export TEAM_WORKER_START_BLOCKED_FILE=/tmp/team-worker-provider-pending
 leader_delay=${TEAM_WORKER_LEADER_RESTART_DELAY:-10}

@@ -1,5 +1,4 @@
 *
-!skills/team-worker/
 !docker/Dockerfile
 !docker/*.sh
 !docker/*.js

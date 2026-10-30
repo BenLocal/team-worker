@@ -7,7 +7,7 @@
 ## 一、项目概览
 
 - 定位：用 Go 重写的 [ClawTeam](https://github.com/HKUDS/ClawTeam) 多 Agent 协作工具，单机使用，给 Agent 和人用的团队 / 任务 / 收件箱 CLI。
-- 仓库形态：单 Go module `github.com/benlocal/team-worker`，两个入口 `cmd/team-worker`、`cmd/team-workerd`；`skills/team-worker` 是随仓库分发的 agent skill。
+- 仓库形态：单 Go module `github.com/benlocal/team-worker`，两个入口 `cmd/team-worker`、`cmd/team-workerd`；`skills/teamworker` 是随仓库分发的远程操作 skill；Agent 的协作规则在 `internal/spawn/prompt.md`（嵌入二进制，作为第一条提示词）。
 - 主要语言与版本：Go 1.26（`go.mod` 中 `go 1.26.0`）。
 - 结构总览：见 `architecture.md`。
 

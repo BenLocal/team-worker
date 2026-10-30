@@ -1,11 +1,11 @@
 ---
 name: teamworker
-description: 从团队外部远程操作已部署的 team-worker 多 Agent 团队（默认 115 上的部署，替代原 ClawTeam OpenAPI）：查看团队和看板、给成员派任务、给 Leader 发消息、等任务完成、查 Agent 存活和费用。用户提到 teamworker、ClawTeam、115 上的团队，要给已部署团队派活、查进度或等结果时使用。在本机建团队、作为 Leader 或 Worker 参与协作，用同仓库的 team-worker skill。
+description: 从团队外部远程操作已部署的 team-worker 多 Agent 团队（默认 115 上的部署，替代原 ClawTeam OpenAPI）：查看团队和看板、给成员派任务、给 Leader 发消息、等任务完成、查 Agent 存活和费用。用户提到 teamworker、ClawTeam、115 上的团队，要给已部署团队派活、查进度或等结果时使用。在本机建团队或启动 Agent 不用本 skill：直接用 team-worker CLI（见仓库 README），被 spawn 的 Agent 在第一条提示词里收到 Leader 或 Worker 的协作规则。
 ---
 
 # 远程操作 team-worker 团队
 
-[scripts/teamworker.py](scripts/teamworker.py) 包装 `team-worker` CLI：注入远程地址和 Key，以操作者身份（默认 `operator`）发起请求，拦截不适合远程做的命令，并提供只读的 `wait`。建团队和 Leader / Worker 的协作流程见 [team-worker skill](../team-worker/SKILL.md)。下文 `tw` 指 `python3 {baseDir}/scripts/teamworker.py`；除 `doctor`、`wait` 外，参数原样交给 `team-worker`，用法以 `team-worker <命令> --help` 为准，需要解析时加 `--json`。
+[scripts/teamworker.py](scripts/teamworker.py) 包装 `team-worker` CLI：注入远程地址和 Key，以操作者身份（默认 `operator`）发起请求，拦截不适合远程做的命令，并提供只读的 `wait`。建团队和启动 Agent 见仓库 [README](../../README.md)；Leader 和 Worker 的协作规则在 spawn 时随第一条提示词给出。下文 `tw` 指 `python3 {baseDir}/scripts/teamworker.py`；除 `doctor`、`wait` 外，参数原样交给 `team-worker`，用法以 `team-worker <命令> --help` 为准，需要解析时加 `--json`。
 
 ## 准备
 
