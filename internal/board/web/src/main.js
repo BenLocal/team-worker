@@ -10,7 +10,7 @@ const SVG = "http://www.w3.org/2000/svg";
 const COLUMNS = [["pending", "Pending"], ["in_progress", "In progress"], ["blocked", "Blocked"], ["completed", "Done"]];
 const PRIORITY = { urgent: 0, high: 1, medium: 2, low: 3 };
 const DONE_PAGE = 15, MSG_PAGE = 60, GAP_MS = 10 * 60 * 1000, LANE_H = 14;
-const VIEWS = [["board", "Board"], ["messages", "Messages"], ["terminals", "Terminals"]];
+const VIEWS = [["board", "Board"], ["messages", "Messages"], ["approvals", "Approvals"], ["terminals", "Terminals"]];
 const RAIL_KEY = "team-worker.rail";
 
 // Storage can be unavailable (private windows, blocked site data); the rail then just starts open.
@@ -21,7 +21,7 @@ const initialView = new URLSearchParams(location.search).get("view");
 const state = {
   teams: [], boards: {}, team: new URLSearchParams(location.search).get("team") || "", 
   view: VIEWS.some(([v]) => v === initialView) ? initialView : "board", railOpen: stored(RAIL_KEY) !== "closed",
-  doneShown: DONE_PAGE, open: new Set(),
+  doneShown: DONE_PAGE, open: new Set(), oversight: {}, openPlans: new Set(),
   msgShown: MSG_PAGE, range: null, selected: null, follow: true,
   keys: {}, links: [],
 };
@@ -373,6 +373,7 @@ function buildMain() {
       el("nav", { class: "links", id: "links", "aria-label": "Other services" })),
     el("div", { class: "view", id: "view-board", role: "tabpanel", "aria-labelledby": "tab-board", hidden: state.view !== "board" },
     el("section", { class: "tasks", "aria-label": "Tasks" },
+      el("div", { class: "harness", id: "harness", hidden: true }),
       el("div", { class: "stats", id: "stats", role: "list", "aria-label": "Team summary" }),
       el("div", { class: "board", id: "board" }))),
     el("div", { class: "view", id: "view-messages", role: "tabpanel", "aria-labelledby": "tab-messages", hidden: state.view !== "messages" },
@@ -386,6 +387,8 @@ function buildMain() {
           onscroll: (e) => { state.follow = e.target.scrollTop <= 8; },
           onkeydown: ledgerKeys }),
         el("aside", { class: "inspector", id: "inspector", "aria-live": "polite" })))),
+    el("div", { class: "view", id: "view-approvals", role: "tabpanel", "aria-labelledby": "tab-approvals", hidden: state.view !== "approvals" },
+      el("div", { class: "approvals", id: "approvals" })),
     el("div", { class: "view", id: "view-terminals", role: "tabpanel", "aria-labelledby": "tab-terminals", hidden: state.view !== "terminals" },
       el("div", { class: "terms", id: "terms" },
         el("p", { class: "intro" }, "Click a terminal to select it: the mouse wheel then scrolls that terminal, otherwise it scrolls this list. "
@@ -417,7 +420,8 @@ function renderStats(board) {
   const members = board.members;
   const running = members.filter((m) => agentState(m)[0] === "alive").length;
   const unread = members.reduce((n, m) => n + (m.inboxCount || 0), 0);
-  if (!changed("stats", [s, running, members.length, unread])) return;
+  const ov = state.oversight[state.team];
+  if (!changed("stats", [s, running, members.length, unread, ov && [ov.budget, ov.cost]])) return;
   const pct = s.total ? Math.round((s.completed / s.total) * 100) : 0;
   const stat = (tone, label, value, note, extra) => el("div", { class: "stat" + (tone ? " " + tone : ""), role: "listitem" },
     el("div", { class: "stat-label" }, label), el("div", { class: "stat-value" }, value),
@@ -431,7 +435,103 @@ function renderStats(board) {
     stat("", "Time per task", s.avg_duration_seconds ? duration(s.avg_duration_seconds) : "–",
       s.timed_completed ? `average of ${s.timed_completed} timed` : "no finished timings"),
     stat(running ? "done" : "", "Agents online", `${running}/${members.length}`, running === members.length ? "all running" : `${members.length - running} not running`),
-    stat(unread ? "blocked" : "", "Unread", String(unread), unread ? "messages waiting in inboxes" : "inboxes are clear"));
+    stat(unread ? "blocked" : "", "Unread", String(unread), unread ? "messages waiting in inboxes" : "inboxes are clear"),
+    ov ? spendStat(stat, ov) : null);
+}
+// spendStat shows cost when agents reported it, else the tokens captured from
+// their sessions, against the budget.
+function spendStat(stat, ov) {
+  const { budget, cost } = ov;
+  const dollars = (cents) => "$" + (cents / 100).toFixed(cents >= 10000 ? 0 : 2);
+  const tokens = cost.totalInputTokens + cost.totalOutputTokens;
+  const value = cost.totalCostCents ? dollars(cost.totalCostCents) : tokens ? compact(tokens) + " tok" : "–";
+  let note = budget.budgetCents ? `of ${dollars(budget.budgetCents)} budget${budget.enforce ? ", enforced" : ""}` : "no budget set";
+  if (budget.exhausted) note = budget.enforce ? "budget spent: new work is blocked" : "budget spent";
+  const pct = budget.budgetCents ? Math.min(100, Math.round((budget.spentCents / budget.budgetCents) * 100)) : 0;
+  return stat(budget.exhausted ? "blocked" : "", "Spend", value, note,
+    budget.budgetCents ? el("div", { class: "stat-bar" + (budget.exhausted ? " over" : ""), "aria-hidden": "true" }, el("span", { style: `width:${pct}%` })) : null);
+}
+function compact(n) {
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + "M";
+  if (n >= 1e3) return Math.round(n / 1e3) + "k";
+  return String(n);
+}
+
+/* ---------------- harness: the team's phased run ---------------- */
+const PHASES = ["discuss", "plan", "execute", "verify", "ship"];
+function renderHarness() {
+  const box = $("harness");
+  const h = state.oversight[state.team]?.harness;
+  if (!changed("harness", h || null)) return;
+  box.hidden = !h;
+  if (!h) return;
+  const at = PHASES.indexOf(h.phase);
+  const finished = h.status === "completed";
+  const steps = PHASES.map((p, i) => el("li", {
+    class: "phase " + (finished || i < at ? "done" : i === at ? "current " + h.status : "todo"),
+    "aria-current": i === at && !finished ? "step" : null }, p));
+  const waiting = h.status === "running" && !h.can_advance && h.gate_reason;
+  box.replaceChildren(
+    el("div", { class: "harness-head" },
+      el("span", { class: "harness-label" }, "Harness"),
+      el("span", { class: "harness-goal", title: h.goal }, h.goal),
+      el("span", { class: "chip " + (h.status === "running" ? "pending" : h.status === "completed" ? "approved" : "rejected") }, h.status),
+      h.attempt > 1 ? el("span", { class: "harness-meta" }, `attempt ${h.attempt} of ${h.max_attempts}`) : null),
+    el("ol", { class: "phases", "aria-label": "Phases" }, steps),
+    waiting ? el("p", { class: "harness-gate" }, "Waiting for: " + h.gate_reason)
+      : h.status === "running" && h.can_advance ? el("p", { class: "harness-gate ready" }, "Ready to move on; the conductor advances it on its next check.") : null);
+}
+
+/* ---------------- approvals: plans and join requests ---------------- */
+const STATUS_ORDER = { pending: 0, approved: 1, rejected: 2 };
+function pendingCount(ov) {
+  return ov ? ov.plans.filter((p) => p.status === "pending").length + ov.joinRequests.filter((j) => j.status === "pending").length : 0;
+}
+function renderApprovalsTab() {
+  const n = pendingCount(state.oversight[state.team]);
+  const tab = $("tab-approvals");
+  if (tab) tab.textContent = n ? `Approvals ${n}` : "Approvals";
+}
+function renderApprovals() {
+  const ov = state.oversight[state.team];
+  const team = state.team;
+  if (!changed("approvals", [team, ov && [ov.plans, ov.joinRequests], [...state.openPlans]])) return;
+  const box = $("approvals");
+  if (!ov) { box.replaceChildren(el("p", { class: "muted" }, "Loading approvals…")); return; }
+  const byStatus = (a, b) => (STATUS_ORDER[a.status] - STATUS_ORDER[b.status]) || (b.createdAt || "").localeCompare(a.createdAt || "");
+  const when = (ts) => ts ? new Date(ts).toLocaleString() : "";
+  const plans = [...ov.plans].sort(byStatus).map((p) => {
+    const card = el("details", { class: "approval " + p.status, open: state.openPlans.has(p.id) },
+      el("summary", {},
+        el("span", { class: "chip " + p.status }, p.status),
+        el("span", { class: "approval-title" }, p.summary || p.plan.split("\n")[0]),
+        el("span", { class: "approval-meta" }, `${p.agent}, ${when(p.createdAt)}`)),
+      el("div", { class: "approval-body" },
+        el("pre", { class: "plan-text" }, p.plan),
+        p.feedback ? el("p", { class: "feedback" }, `${p.status === "rejected" ? "Rejected" : "Approved"} by ${p.decidedBy || "the leader"}: ${p.feedback}`)
+          : p.decidedBy ? el("p", { class: "feedback" }, `${p.status === "rejected" ? "Rejected" : "Approved"} by ${p.decidedBy} ${when(p.decidedAt)}`) : null,
+        p.status === "pending" ? el("p", { class: "hint" }, "Decide from the leader's terminal: ",
+          el("code", {}, `team-worker plan approve ${team} ${p.id} ${p.agent}`), " or ",
+          el("code", {}, `team-worker plan reject ${team} ${p.id} ${p.agent} -f "<why>"`)) : null));
+    card.addEventListener("toggle", () => card.open ? state.openPlans.add(p.id) : state.openPlans.delete(p.id));
+    return card;
+  });
+  const joins = [...ov.joinRequests].sort(byStatus).map((j) => el("div", { class: "approval " + j.status },
+    el("div", { class: "join-line" },
+      el("span", { class: "chip " + j.status }, j.status),
+      el("span", { class: "approval-title" }, j.assignedName && j.assignedName !== j.proposedName ? `${j.proposedName} → ${j.assignedName}` : j.proposedName),
+      el("span", { class: "approval-meta" }, when(j.createdAt))),
+    j.capabilities ? el("p", { class: "join-caps" }, j.capabilities) : null,
+    j.reason ? el("p", { class: "feedback" }, "Reason: " + j.reason) : null,
+    j.status === "pending" ? el("p", { class: "hint" }, el("code", {}, `team-worker team approve-join ${team} ${j.requestId}`), " or ",
+      el("code", {}, `team-worker team reject-join ${team} ${j.requestId} -r "<why>"`)) : null));
+  box.replaceChildren(
+    el("section", { class: "approval-group", "aria-label": "Plans" },
+      el("h2", {}, "Plans", el("span", { class: "n" }, String(ov.plans.length))),
+      plans.length ? plans : el("p", { class: "muted" }, "No plans yet. Members started with --plan-required submit one before they start work.")),
+    el("section", { class: "approval-group", "aria-label": "Join requests" },
+      el("h2", {}, "Join requests", el("span", { class: "n" }, String(ov.joinRequests.length))),
+      joins.length ? joins : el("p", { class: "muted" }, "No join requests. Agents ask to join with team-worker team request-join.")));
 }
 function sortTasks(status, tasks) {
   const newest = (f) => (a, b) => (b[f] || "").localeCompare(a[f] || "");
@@ -649,7 +749,9 @@ function update() {
   if (!board || !$("board")) return;
   renderHead(board);
   if (state.view === "terminals") { renderTerminals(board); return; }
-  if (state.view === "board") { renderStats(board); renderTasks(board); return; }
+  renderApprovalsTab();
+  if (state.view === "board") { renderHarness(); renderStats(board); renderTasks(board); return; }
+  if (state.view === "approvals") { renderApprovals(); return; }
   const records = messageRecords(board);
   renderOverview(board, records);
   renderLedger(records);
@@ -690,7 +792,9 @@ function selectTeam(name) {
   writeURL();
   renderRail();
   if (state.boards[name]) { buildMain(); update(); } else showNotice("Loading " + name + "…");
+  state.openPlans.clear();
   refreshSelected();
+  refreshOversight();
 }
 
 /* ---------------- views and live terminals ---------------- */
@@ -746,5 +850,16 @@ api("api/links").then((links) => { state.links = links; renderLinks(); }).catch(
 loadTeams().then(() => Promise.all([refreshSelected(), refreshOthers()]))
   .catch((e) => showNotice("Cannot reach team-workerd: " + e.message, true));
 setInterval(refreshSelected, 2000);
+// Approvals and spending change slowly and cost four daemon reads, so they poll less often.
+async function refreshOversight() {
+  const team = state.team;
+  if (!team) return;
+  try {
+    state.oversight[team] = await api("api/teams/" + encodeURIComponent(team) + "/oversight");
+    update();
+  } catch { /* an older daemon without these routes simply shows no approvals or spend */ }
+}
+setInterval(refreshOversight, 5000);
+refreshOversight();
 setInterval(refreshOthers, 10000);
 setInterval(() => loadTeams().catch(() => {}), 15000);
