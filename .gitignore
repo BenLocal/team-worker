@@ -22,3 +22,6 @@ docker/magpie-config.local/
 
 # Local notes with credentials, e.g. dev-env.local.md; never commit.
 *.local.md
+
+# Python bytecode from running skill scripts and their tests.
+__pycache__/
