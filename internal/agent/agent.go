@@ -83,11 +83,18 @@ func InputPromptVisible(screen string) bool {
 	prompt := false
 	for i := len(lines) - 1; i >= max(0, len(lines)-15); i-- {
 		l := strings.TrimLeft(lines[i], " \t│┃|╭╰")
+		cursor := strings.HasPrefix(l, "❯") || strings.HasPrefix(l, ">") || strings.HasPrefix(l, "›")
 		rest := strings.TrimLeft(strings.TrimLeft(l, "❯>›"), " ")
 		if menuOptionRE.MatchString(rest) {
-			return false
+			// A cursor on a numbered entry, or entries below the input line,
+			// is a menu; a numbered list above the input line is only the
+			// agent's last reply.
+			if cursor || !prompt {
+				return false
+			}
+			continue
 		}
-		if strings.HasPrefix(l, "❯") || strings.HasPrefix(l, ">") || strings.HasPrefix(l, "›") {
+		if cursor {
 			prompt = true
 		}
 	}
