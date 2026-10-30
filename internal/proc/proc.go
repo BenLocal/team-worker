@@ -5,9 +5,9 @@ import (
 	"errors"
 	"os"
 	"strings"
-	"syscall"
 
 	"github.com/benlocal/team-worker/internal/model"
+	"github.com/benlocal/team-worker/internal/sysproc"
 	"github.com/benlocal/team-worker/internal/tmux"
 )
 
@@ -42,10 +42,7 @@ func paneState(a model.Agent) (exists, dead bool) {
 	return exists, dead
 }
 
-func pidAlive(pid int) bool {
-	err := syscall.Kill(pid, 0)
-	return err == nil || errors.Is(err, syscall.EPERM)
-}
+func pidAlive(pid int) bool { return sysproc.Alive(pid) }
 
 // Stop ends an agent's process: the tmux pane, or the subprocess's whole
 // process group (subprocess agents run in their own session).
@@ -63,11 +60,7 @@ func Stop(a model.Agent) error {
 		if a.PID <= 1 {
 			return nil
 		}
-		err := syscall.Kill(-a.PID, syscall.SIGTERM)
-		if errors.Is(err, syscall.ESRCH) {
-			return nil
-		}
-		return err
+		return sysproc.TerminateGroup(a.PID)
 	}
 	return nil
 }

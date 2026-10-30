@@ -1,11 +1,12 @@
 GO ?= go
 
 .DEFAULT_GOAL := help
-.PHONY: help build install install-cli test vet fmt clean web
+.PHONY: help build dist install install-cli test vet fmt clean web
 
 help:
 	@printf '%s\n' \
 		'make build    Build bin/team-worker and bin/team-workerd' \
+		'make dist     Cross-build the team-worker CLI into bin/dist/ for every platform' \
 		'make install  Install both binaries to GOBIN or GOPATH/bin' \
 		'make install-cli  Install only the team-worker CLI to BINDIR (default ~/.local/bin)' \
 		'make test     Run Go tests' \
@@ -17,6 +18,17 @@ help:
 build: web
 	mkdir -p bin
 	$(GO) build -o bin/ ./cmd/...
+
+# The CLI for remote use on other machines; team-workerd stays Linux/macOS only.
+DIST_PLATFORMS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64
+dist: web
+	mkdir -p bin/dist
+	@set -e; for p in $(DIST_PLATFORMS); do \
+		os=$${p%/*}; arch=$${p#*/}; ext=; [ "$$os" = windows ] && ext=.exe; \
+		out=bin/dist/team-worker-$$os-$$arch$$ext; \
+		echo "build $$out"; \
+		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch $(GO) build -trimpath -o $$out ./cmd/team-worker; \
+	done
 
 install: web
 	$(GO) install ./cmd/...

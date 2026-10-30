@@ -22,6 +22,7 @@ import (
 	"github.com/benlocal/team-worker/internal/config"
 	"github.com/benlocal/team-worker/internal/model"
 	"github.com/benlocal/team-worker/internal/store"
+	"github.com/benlocal/team-worker/internal/sysproc"
 )
 
 // APIError is an error reported by the daemon.
@@ -198,7 +199,7 @@ func startDaemon(ctx context.Context, c *Client, dataDir string) error {
 	}
 	cmd := exec.Command(path, args...)
 	cmd.Stdout, cmd.Stderr = out, out
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	cmd.SysProcAttr = sysproc.Detached()
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start team-workerd: %w", err)
 	}
