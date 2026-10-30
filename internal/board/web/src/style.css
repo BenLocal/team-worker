@@ -239,7 +239,7 @@ main { height: 100vh; display: flex; flex-direction: column; min-width: 0; paddi
 @media (prefers-reduced-motion: reduce) { .toggle svg { transition: none; } }
 
 /* ---- team summary cards ---- */
-.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 8px; }
 .stat { --tone: var(--ink); position: relative; background: rgb(17 22 29 / .8); border: 1px solid var(--rule-soft);
   border-radius: 4px; padding: 9px 12px 10px; min-width: 0; }
 .stat.done { --tone: var(--done); } .stat.progress { --tone: var(--progress); } .stat.blocked { --tone: var(--blocked); }
@@ -316,3 +316,47 @@ body.rail-collapsed #rail-tools { display: none; }
   .prompt-dialog { width: calc(100vw - 16px); }
   .prompt-body { padding: 12px 14px 16px; }
 }
+
+/* ---- approvals: plans and join requests ---- */
+.approvals { flex: 1; min-height: 0; overflow-y: auto; display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: 16px; align-content: start; padding: 2px; }
+.approval-group h2 { font-size: 11px; font-weight: 500; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-2);
+  margin: 0 0 8px; display: flex; justify-content: space-between; }
+.approval-group h2 .n { color: var(--muted); letter-spacing: .04em; }
+.approval-group > .muted { margin: 0; }
+.approval { background: var(--card); border: 1px solid var(--rule); border-left: 2px solid var(--muted); border-radius: 4px;
+  padding: 8px 12px; margin-bottom: 8px; }
+.approval.pending { border-left-color: var(--progress); }
+.approval.approved { border-left-color: var(--done); }
+.approval.rejected { border-left-color: var(--dead); }
+.approval summary { list-style: none; cursor: pointer; display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.approval summary::-webkit-details-marker { display: none; }
+.join-line { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.approval-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.approval-meta { font-size: 11px; color: var(--muted); flex: none; }
+.chip { font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; padding: 1px 6px; border-radius: 3px;
+  border: 1px solid currentColor; flex: none; }
+.chip.pending { color: var(--progress); } .chip.approved { color: var(--done); } .chip.rejected { color: var(--dead); }
+.approval-body { margin-top: 8px; border-top: 1px solid var(--rule); padding-top: 8px; }
+.plan-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; color: var(--ink-2); max-height: 50vh; overflow-y: auto; }
+.feedback, .join-caps { margin: 8px 0 0; color: var(--ink-2); overflow-wrap: anywhere; }
+.hint { margin: 8px 0 0; font-size: 11.5px; color: var(--muted); overflow-wrap: anywhere; }
+.hint code { color: var(--ink-2); background: var(--panel); padding: 1px 4px; border-radius: 3px; }
+.stat-bar.over span { background: var(--blocked); }
+@media (max-width: 1180px) { .approvals { grid-template-columns: 1fr; } }
+
+/* ---- harness phase strip ---- */
+.harness { background: rgb(17 22 29 / .8); border: 1px solid var(--rule-soft); border-radius: 4px; padding: 10px 12px; }
+.harness[hidden] { display: none; }
+.harness-head { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.harness-label { font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); flex: none; }
+.harness-goal { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: italic 500 15px/1.3 var(--serif); }
+.harness-meta { font-size: 11px; color: var(--progress); flex: none; }
+.phases { list-style: none; margin: 10px 0 0; padding: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; }
+.phase { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; text-align: center; padding: 5px 4px 4px;
+  border-top: 2px solid var(--rule); color: var(--muted); }
+.phase.done { border-top-color: var(--done); color: var(--done); }
+.phase.current { border-top-color: var(--progress); color: var(--ink); }
+.phase.current.failed, .phase.current.aborted { border-top-color: var(--dead); }
+.harness-gate { margin: 8px 0 0; font-size: 12px; color: var(--ink-2); overflow-wrap: anywhere; }
+.harness-gate.ready { color: var(--done); }

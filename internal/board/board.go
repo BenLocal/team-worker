@@ -72,6 +72,12 @@ func newHandler(c *client.Client, resolve resolver) http.Handler {
 		prompt, err := c.AgentPrompt(r.Context(), r.PathValue("team"), r.PathValue("name"), r.URL.Query().Get("user"))
 		reply(w, map[string]string{"prompt": prompt}, err)
 	})
+	// Oversight is what waits on the leader or limits the team: plans, join
+	// requests and spending. It is polled separately from the snapshot.
+	mux.HandleFunc("GET /api/teams/{team}/oversight", func(w http.ResponseWriter, r *http.Request) {
+		v, err := oversight(r.Context(), c, r.PathValue("team"))
+		reply(w, v, err)
+	})
 	mux.HandleFunc("GET /api/teams/{team}/agents/{name}/screen", func(w http.ResponseWriter, r *http.Request) {
 		a, err := c.GetAgent(r.Context(), r.PathValue("team"), r.PathValue("name"))
 		if err != nil {
