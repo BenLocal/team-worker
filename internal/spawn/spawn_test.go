@@ -178,3 +178,36 @@ func TestStartWritesAdapterFiles(t *testing.T) {
 		t.Fatalf("support file: %q %v", data, err)
 	}
 }
+
+func TestBuildPromptOptionalSectionsAndLiteralText(t *testing.T) {
+	bare := BuildPrompt(PromptParams{AgentName: "alice", AgentID: "id1", AgentType: "dev", Team: "demo", Leader: "lead"})
+	for _, absent := range []string{"- User:", "## Workspace", "## Team Instructions", "## Task\n"} {
+		if strings.Contains(bare, absent) {
+			t.Errorf("empty field still renders %q", absent)
+		}
+	}
+	if !strings.Contains(bare, "- Leader: lead\n\n## Coordination Protocol\n") {
+		t.Errorf("sections are not separated by one blank line:\n%s", bare)
+	}
+	// Instructions are data: template syntax and markup in them stay literal.
+	p := BuildPrompt(PromptParams{AgentName: "alice", Team: "demo", Leader: "lead",
+		TeamPrompt: "Use {{.Team}} & <tags>", Task: "Fix {{x}}"})
+	if !strings.Contains(p, "Use {{.Team}} & <tags>\n\n## Task\n\nFix {{x}}\n\n## Coordination") {
+		t.Errorf("instructions not kept literally:\n%s", p)
+	}
+}
+
+func TestBuildPromptPicksProtocolByRole(t *testing.T) {
+	worker := BuildPrompt(PromptParams{AgentName: "alice", Team: "demo", Leader: "lead"})
+	leader := BuildPrompt(PromptParams{AgentName: "lead", Team: "demo", Leader: "lead"})
+	if !strings.Contains(worker, "## Worker Loop Protocol") || strings.Contains(worker, "## Leader Protocol") {
+		t.Errorf("worker prompt has the wrong protocol:\n%s", worker)
+	}
+	if !strings.Contains(leader, "## Leader Protocol") || !strings.Contains(leader, "team-worker spawn tmux --team demo") ||
+		strings.Contains(leader, "## Worker Loop Protocol") || strings.Contains(leader, "inbox send demo lead") {
+		t.Errorf("leader prompt has the wrong protocol:\n%s", leader)
+	}
+	if !strings.HasSuffix(worker, "keep working until you can stop.\n") || !strings.HasSuffix(leader, "while the workspaces stay.\n") {
+		t.Errorf("prompts should end with one newline")
+	}
+}
