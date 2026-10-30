@@ -11,10 +11,10 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/benlocal/team-worker/internal/agent"
+	"github.com/benlocal/team-worker/internal/sysproc"
 	"github.com/benlocal/team-worker/internal/tmux"
 )
 
@@ -247,7 +247,7 @@ func (b Built) startSubprocess() (Result, error) {
 	}
 	// A new session makes the agent its own process group, so stopping it
 	// reaches every child and closing the CLI's terminal does not kill it.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	cmd.SysProcAttr = sysproc.Detached()
 	if err := cmd.Start(); err != nil {
 		return Result{}, err
 	}
