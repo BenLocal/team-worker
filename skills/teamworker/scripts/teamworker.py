@@ -41,8 +41,8 @@ BLOCKED = {
     ("inbox", "watch"): "会消费收件箱里的消息；查看历史用 inbox log，等任务用 wait",
     (
         "spawn",
-    ): "会在本机启动 Agent，不属于远程操作；需要时直接用 team-worker，参考 team-worker skill",
-    ("launch",): "会在本机建团队并启动 Agent，不属于远程操作；参考 team-worker skill",
+    ): "会在本机启动 Agent，不属于远程操作；需要时直接用 team-worker（用法见仓库 README）",
+    ("launch",): "会在本机建团队并启动 Agent，不属于远程操作；用法见仓库 README",
     ("agent", "resume"): "会在本机恢复 Agent 进程，不属于远程操作",
     ("harness", "conduct"): "会在本机启动 Agent，不属于远程操作",
 }

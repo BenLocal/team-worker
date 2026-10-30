@@ -276,9 +276,11 @@ Web 看板访问需使用与 CLI HTTP 调用相同的 Key，`board serve` 默认
 
 团队标题旁的 `Team prompt` 按钮显示团队公共提示词。每个 Agent 终端卡片的 `Prompt` 按钮和侧栏成员菜单的 `Show prompt` 显示该成员的专属提示词，未启动或已退出的成员也能查看。内容从 store 按需读取，未设置时显示空状态；弹窗支持长文本滚动及 Escape 关闭。
 
-## Agent skill
+## 协作规则与 skill
 
-[`skills/team-worker`](skills/team-worker/SKILL.md) 说明 leader 和 worker 怎样用这个 CLI 协作，以及 worker 的循环流程。安装时把整个目录复制或软链到 `~/.claude/skills/team-worker`（Claude Code）或 `~/.codex/skills/team-worker`（Codex）。
+被 `spawn` 启动的 Agent 在第一条提示词里收到协作规则：Leader 收到 Leader Protocol（拆任务、启动 Worker、跟进、审批、收尾），其他成员收到 Coordination Protocol 和 Worker Loop Protocol（领任务、汇报、待命、关闭）。规则写在 [`internal/spawn/prompt.md`](internal/spawn/prompt.md)，编译时嵌入二进制，改这个文件即可调整。
+
+[`skills/teamworker`](skills/teamworker/SKILL.md) 用于从团队外部远程操作已部署的团队（查看看板、派任务、等结果）。
 
 ## 配置
 

@@ -170,7 +170,7 @@ volumes:
 - **mcp.yaml**：按名称创建或更新 MCP 服务，`install` 可声明安装和检查命令（参数列表，不经 Shell）。
 - **plugin.yaml**：预装 Magpie 插件；单个插件安装失败只记警告，下次启动重试。
 
-任一配置格式错误、技能或 MCP 导入失败时，启动中止，Leader 不运行，用 `docker logs` 查看原因。镜像自带的 team-worker skill 链接到 `~/.claude/skills/team-worker` 和 `~/.codex/skills/team-worker`。
+任一配置格式错误、技能或 MCP 导入失败时，启动中止，Leader 不运行，用 `docker logs` 查看原因。Agent 的协作规则在 spawn 时随第一条提示词给出（Leader 和 Worker 各一套），镜像不再附带 team-worker skill；旧镜像留在 home 卷里的 skill 链接会在启动时清理。
 
 ## OpenBao 密钥服务
 
