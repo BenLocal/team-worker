@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -97,34 +96,19 @@ func printBoard(w io.Writer, b model.Board) {
 	}
 }
 
-// boardLink is a link to another service shown in the board header.
-type boardLink struct {
-	Name string `json:"name"`
-	URL  string `json:"url"`
-}
-
-func parseBoardLinks(pairs []string) ([]boardLink, error) {
-	links := []boardLink{}
-	for _, p := range pairs {
-		name, url, ok := strings.Cut(p, "=")
-		if !ok || strings.TrimSpace(name) == "" || strings.TrimSpace(url) == "" {
-			return nil, fmt.Errorf("invalid --link %q: use NAME=URL", p)
-		}
-		links = append(links, boardLink{Name: strings.TrimSpace(name), URL: strings.TrimSpace(url)})
-	}
-	return links, nil
-}
-
 func (a *app) boardServeCmd() *cobra.Command {
 	var host string
 	var port int
 	var linkPairs []string
 	cmd := &cobra.Command{
 		Use:   "serve",
-		Short: "Serve the web board (read-only, with live agent terminals)",
-		Args:  cobra.NoArgs,
+		Short: "Serve the web board from this machine (read-only, with live agent terminals)",
+		Long: "Serves the web board for the daemon this CLI reaches. team-workerd can serve the same\n" +
+			"board itself (--board); this command is for viewing a remote daemon from another\n" +
+			"machine, whose live terminals then show the agents running on that machine.",
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			links, err := parseBoardLinks(linkPairs)
+			links, err := board.ParseLinks(linkPairs)
 			if err != nil {
 				return a.fail(err)
 			}
@@ -143,13 +127,7 @@ func (a *app) boardServeCmd() *cobra.Command {
 			}
 			ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
 			defer stop()
-			mux := http.NewServeMux()
-			mux.HandleFunc("GET /api/links", func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(links)
-			})
-			mux.Handle("/", board.Handler(c))
-			protected, err := board.Protect(mux, key, config.WebBasePath())
+			protected, err := board.Site(c, key, config.WebBasePath(), links)
 			if err != nil {
 				ln.Close()
 				return a.fail(err)

@@ -9,8 +9,10 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 
+	"github.com/benlocal/team-worker/internal/board"
 	"github.com/benlocal/team-worker/internal/config"
 	"github.com/benlocal/team-worker/internal/logging"
 	"github.com/benlocal/team-worker/internal/server"
@@ -30,10 +32,23 @@ func envInt(key string, def int) int {
 	return def
 }
 
+// linkFlags collects repeated --board-link values.
+type linkFlags []string
+
+func (l *linkFlags) String() string     { return strings.Join(*l, ",") }
+func (l *linkFlags) Set(v string) error { *l = append(*l, v); return nil }
+
 func main() {
 	dataDir := flag.String("data-dir", config.DataDir(), "Directory for the database, socket and log")
 	socket := flag.String("socket", "", "Unix socket path (default: <data-dir>/team-workerd.sock)")
 	httpAddr := flag.String("listen", config.HTTPAddr(), "Optional HTTP listen address (env TEAM_WORKER_HTTP_ADDR); uses the shared SQLite access key")
+	boardOn := flag.Bool("board", os.Getenv("TEAM_WORKER_BOARD") == "1",
+		"Also serve the web board on the --listen address, behind the access key (env TEAM_WORKER_BOARD=1)")
+	var links linkFlags
+	if env := os.Getenv("TEAM_WORKER_BOARD_LINKS"); env != "" {
+		links = strings.Split(env, ",")
+	}
+	flag.Var(&links, "board-link", "Link to another service in the board header, NAME=URL (repeatable; env TEAM_WORKER_BOARD_LINKS, comma-separated)")
 	var logOpts logging.Options
 	flag.StringVar(&logOpts.Level, "log-level", envOr("TEAM_WORKER_LOG_LEVEL", "info"),
 		"Log level: debug, info, warn or error (env TEAM_WORKER_LOG_LEVEL)")
@@ -49,6 +64,11 @@ func main() {
 	if *socket == "" {
 		*socket = config.SocketPath(*dataDir)
 	}
+	boardLinks, err := board.ParseLinks(links)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "team-workerd:", err)
+		os.Exit(2)
+	}
 
 	logger, closer, err := logging.New(logOpts)
 	if err != nil {
@@ -59,7 +79,8 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	if err := server.Run(ctx, server.Options{DataDir: *dataDir, Socket: *socket, HTTPAddr: *httpAddr, APIKey: config.APIKey(), Logger: logger}); err != nil {
+	if err := server.Run(ctx, server.Options{DataDir: *dataDir, Socket: *socket, HTTPAddr: *httpAddr, APIKey: config.APIKey(), Logger: logger,
+		Board: *boardOn, BoardLinks: boardLinks, WebBasePath: config.WebBasePath()}); err != nil {
 		logger.Error("team-workerd failed", "err", err)
 		fmt.Fprintln(os.Stderr, "team-workerd:", err)
 		closer.Close()

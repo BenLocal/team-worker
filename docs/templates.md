@@ -163,7 +163,7 @@ blocked_by = ["backend", "frontend"]
 echo "代码仓库在 /src/app，测试命令是 make test" > team-prompt.md          # 可选：团队说明
 team-worker launch software-dev -t dev-team -g "给待办应用加上标签功能" --team-prompt-file team-prompt.md
 tmux attach -t team-worker-dev-team    # 观察各 Agent 的终端
-team-worker board serve                # 或在浏览器里打开看板
+team-worker board serve                # 或在浏览器里打开看板（daemon 开了 --board 时直接访问它的地址）
 ```
 
 ## 调试模板
