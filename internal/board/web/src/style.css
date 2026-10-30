@@ -101,10 +101,16 @@ main { height: 100vh; display: flex; flex-direction: column; min-width: 0; paddi
 .views { display: inline-flex; gap: 2px; padding: 2px; border-radius: 6px; border: 1px solid var(--rule); background: var(--rail); align-self: center; }
 .views button { border: 0; background: none; border-radius: 4px; padding: 4px 14px; cursor: pointer; color: var(--muted); }
 .views button[aria-selected="true"] { background: var(--card); color: var(--ink); }
-.links { display: inline-flex; gap: 14px; align-self: center; }
-.links:empty { display: none; }
-.links a { color: var(--ink-2); text-decoration: none; }
-.links a:hover { color: var(--progress); text-decoration: underline; text-underline-offset: 3px; }
+/* Page header: links to other services and account actions, one button style. */
+.topbar { display: flex; justify-content: flex-end; padding-bottom: 12px; margin-bottom: -2px; border-bottom: 1px solid var(--rule-soft); }
+.links { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.links form { margin: 0; }
+.tool-btn { display: inline-flex; align-items: center; gap: 7px; height: 28px; padding: 0 11px; box-sizing: border-box;
+  border: 1px solid var(--rule); border-radius: 4px; background: var(--panel); color: var(--ink-2);
+  font: inherit; font-size: 12px; text-decoration: none; white-space: nowrap; cursor: pointer; }
+.tool-btn svg { flex: none; color: var(--muted); }
+.tool-btn:hover { color: var(--ink); border-color: var(--muted); }
+.tool-btn:hover svg { color: var(--ink); }
 .view { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 12px; }
 .view[hidden] { display: none; }
 
@@ -311,7 +317,6 @@ body.rail-collapsed #rail-tools { display: none; }
 .service-keys-body label { display: block; margin-bottom: 8px; color: var(--ink-2); }
 .service-keys-body input { width: 100%; background: var(--paper); color: var(--ink); border: 1px solid var(--rule); border-radius: 4px; padding: 10px; }
 .service-key-actions { display: flex; gap: 8px; margin-top: 10px; }
-.links form { margin: 0; }
 @media (max-width: 760px) {
   .prompt-dialog { width: calc(100vw - 16px); }
   .prompt-body { padding: 12px 14px 16px; }
