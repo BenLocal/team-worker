@@ -62,7 +62,10 @@ func Protect(next http.Handler, key, basePath string) (http.Handler, error) {
 		return true
 	}
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Referrer-Policy", "no-referrer")
+		// same-origin keeps a ?k= URL out of other sites' Referer. no-referrer
+		// would also make browsers send "Origin: null" on same-origin POSTs,
+		// which the cross-origin check rejects over plain HTTP.
+		w.Header().Set("Referrer-Policy", "same-origin")
 		w.Header().Set("X-Frame-Options", "DENY")
 		if r.URL.Path == "/" || r.URL.Path == "/login" || r.URL.Path == "/logout" {
 			w.Header().Set("Cache-Control", "no-store")
