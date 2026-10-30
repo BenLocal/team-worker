@@ -52,6 +52,7 @@
 ## 📇 项目 Skill 索引（全仓 SKILL.md，脚本生成）
 <!-- SKILLS:START -->
 - **team-worker** — 用 team-worker CLI 组织多 Agent 团队：建团队、拆分并分派任务、启动 worker Agent、收发 inbox 消息、等待全部任务完成 （`skills/team-worker`）
+- **teamworker** — 从团队外部远程操作已部署的 team-worker 多 Agent 团队（默认 115 上的部署，替代原 ClawTeam OpenAPI）：查看团队和看板、给成员派任务、给 Leader 发消息、等… （`skills/teamworker`）
 <!-- SKILLS:END -->
 
 ## 📂 模块文档索引（docs/agents-dot-md/，脚本生成）
