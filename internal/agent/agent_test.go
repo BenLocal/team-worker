@@ -199,7 +199,10 @@ func TestClaudeInstallsHooks(t *testing.T) {
 }
 
 func TestInputPromptVisible(t *testing.T) {
-	for _, screen := range []string{"> ", "output\n╭──╮\n│ > type here │\n╰──╯", "codex\n› ", "❯ "} {
+	// A reply that ends in a numbered list sits above Claude's input box.
+	reply := "  待用户决定的事项\n  1. 114:8087 的凭据缺失\n  2. 是否授权安装 make\n  3. 分支落后 12 个提交\n" +
+		"✻ Churned for 3m 16s\n────────\n❯ \n────────\n  ⏵⏵ auto mode on (shift+tab to cycle)"
+	for _, screen := range []string{"> ", "output\n╭──╮\n│ > type here │\n╰──╯", "codex\n› ", "❯ ", reply} {
 		if !InputPromptVisible(screen) {
 			t.Errorf("prompt not found in %q", screen)
 		}
