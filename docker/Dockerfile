@@ -1,15 +1,15 @@
 # Build with docker/team-worker.sh build: it compiles team-worker on the host
 # and passes the binaries in as the "bins" build context, so the image only
 # packages them.
-ARG MAGPIE_VERSION=latest
+ARG MAGPIE_VERSION=0.1.2185
 ARG DOCKER_VERSION=29.9.2
 ARG OPENBAO_VERSION=2.7.2
 FROM ghcr.io/yetone/magpie:${MAGPIE_VERSION} AS magpie
 FROM quay.io/openbao/openbao:${OPENBAO_VERSION} AS openbao
 FROM docker:${DOCKER_VERSION}-dind AS docker
-FROM node:22-bookworm-slim
-ARG CLAUDE_VERSION=latest
-ARG CODEX_VERSION=latest
+FROM node:26-bookworm-slim
+ARG CLAUDE_VERSION=2.1.314
+ARG CODEX_VERSION=0.166.0
 ARG PI_VERSION=1.4.0
 # Package mirrors for slow networks; the defaults are the upstream sources.
 ARG DEBIAN_MIRROR=deb.debian.org
@@ -38,16 +38,16 @@ RUN /opt/venv/bin/pip install --no-cache-dir "playwright==${PLAYWRIGHT_VERSION}"
 # profile is built here and seeded into the home volume on first start.
 # dsh's own pnpm ignores npm_config_registry, so the mirror is also passed
 # through pnpm_config_registry and a temporary ~/.npmrc.
-ARG DSH_VERSION=0.2.1-rc.2
+ARG DSH_VERSION=0.2.1-rc.3
 ARG DSH_TUI_VERSION=0.17.0
-ARG PNPM_VERSION=12.15.0
+ARG PNPM_VERSION=12.16.1
 RUN npm_config_registry="$NPM_REGISTRY" npm install -g "@deepseek-ai/dsh@${DSH_VERSION}" "pnpm@${PNPM_VERSION}" \
     && echo "registry=$NPM_REGISTRY" > /root/.npmrc \
     && npm_config_registry="$NPM_REGISTRY" pnpm_config_registry="$NPM_REGISTRY" DSH_HOME=/opt/dsh \
         dsh plugin --profile tui add "@deepseek-harness-tui/dsh-tui@${DSH_TUI_VERSION}" \
     && rm -rf /opt/dsh/profiles/tui/.plugin-manager /root/.local/share/pnpm /root/.cache /root/.npmrc \
     && chmod -R a+rX /opt/dsh
-ARG BUN_VERSION=1.4.2
+ARG BUN_VERSION=1.4.4
 ARG TARGETARCH
 # Magpie runs plugins on Bun and otherwise downloads it from GitHub at runtime.
 RUN case "${TARGETARCH:-amd64}" in \
