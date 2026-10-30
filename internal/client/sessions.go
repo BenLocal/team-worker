@@ -29,6 +29,12 @@ func (c *Client) RequestAgentStop(ctx context.Context, team, name, runID string)
 	return out, c.do(ctx, http.MethodPost, teamPath(team, "agents", name, "stop"), url.Values{"run_id": {runID}}, struct{}{}, &out)
 }
 
+// SetAgentActivity reports what an agent is doing for its run runID.
+func (c *Client) SetAgentActivity(ctx context.Context, team, name, runID string, activity model.AgentActivity) error {
+	body := map[string]string{"runId": runID, "activity": string(activity)}
+	return c.do(ctx, http.MethodPost, teamPath(team, "agents", name, "activity"), nil, body, nil)
+}
+
 func (c *Client) StopTeamAgents(ctx context.Context, team string) ([]model.Agent, error) {
 	var out []model.Agent
 	return out, c.do(ctx, http.MethodPost, teamPath(team, "agents", "stop"), nil, struct{}{}, &out)

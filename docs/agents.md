@@ -131,6 +131,9 @@ LLM Agent 不会自己去查收件箱。一轮回复结束、停在输入框之�
 |---|---|---|
 | `Stop` | `team-worker hook stop` | 见下文 |
 | `PostToolUse` | `team-worker hook post-tool-use` | 每 15 秒最多检查一次收件箱。有新消息时，作为附加上下文交给 Agent，所以它在干活途中也能收到 leader 的回复 |
+| `UserPromptSubmit` | `team-worker hook prompt-submit` | 只上报状态：Agent 开始了新的一轮（工作中） |
+| `Notification`（idle_prompt） | `team-worker hook notification --activity waiting` | 只上报状态：Agent 停在输入框（等待中）。用户按 Esc 中断时 Stop hook 不运行，靠它补上 |
+| `Notification`（permission_prompt、elicitation_dialog） | `team-worker hook notification --activity blocked` | 只上报状态：Agent 在等用户确认权限或回答问题 |
 | `SessionStart`（startup、resume、clear、compact） | `team-worker hook session-start` | 启动时捕获原生会话 ID；会话恢复、清空或上下文被压缩后，重新提供身份、工作目录、团队说明、专属提示词、当前任务和协作规则 |
 
 `hook stop` 按顺序做以下判断：
@@ -142,6 +145,8 @@ LLM Agent 不会自己去查收件箱。一轮回复结束、停在输入框之�
 4. 等到时间也没有变化，就允许停下。worker 停下前会通知 leader 一次"空闲"，连续空闲期间不会重复通知。
 
 这样 leader 不需要再执行 `task wait` 这种一等就是很久、期间看不到任何消息的命令：每次它准备停下时，worker 的求助和任务进展都会直接交到它手上。
+
+每个 hook 还会把 Agent 当前的状态报给 daemon：Stop hook 放行时是"等待中"（`waiting`），拦下让它继续时是"工作中"（`working`）；`UserPromptSubmit`、`PostToolUse`、`SessionStart` 报"工作中"；`Notification` 按类型报"等待中"或"等用户"（`blocked`）。`agent list` 的 ACTIVITY 列和看板的成员状态显示的就是它，下一节的终端提醒也靠它决定要不要打字。状态只属于当前这次运行，Agent 重启后清空，旧进程的上报会被忽略。
 
 hook 命令不论成败都以退出码 0 结束。daemon 连不上或输入格式不对时，它什么也不输出，Agent 照常停下或继续工作，不会被 team-worker 的问题卡住。
 
@@ -194,11 +199,15 @@ pi 不支持 hook，但可以加载 TypeScript 扩展。team-worker 的二进制
 
 ## 终端提醒：唤醒停在输入框的 Agent
 
-hook 只在 Agent 这一轮还没结束时起作用。Agent 已经停在输入框等人输入时，什么都不会触发它，发给它的消息只会留在收件箱里。为此，daemon 每 2 秒检查一次所有 tmux 后端的 Agent。如果某个 Agent 同时满足下面三个条件，daemon 就往它的终端里输入一行提醒并回车：
+hook 只在 Agent 这一轮还没结束时起作用。Agent 已经停在输入框等人输入时，什么都不会触发它，发给它的消息只会留在收件箱里。为此，daemon 每 2 秒检查一次所有 tmux 后端的 Agent，判断是否该往它的终端里输入一行提醒并回车。
+
+有 hook 上报状态的 Agent（见上一节），daemon 只看状态，不看画面：状态是"等待中"、收件箱里有未读消息、并且这种情况已经持续 8 秒，才输入提醒。"工作中"的 Agent 这一轮结束时会由 Stop hook 收到消息，不需要打扰；"等用户"的 Agent 停在权限确认或选择菜单上，往里面打字会替你做选择，所以绝不输入。8 秒的等待留给能自己唤醒 Agent 的扩展（比如 pi），消息在这期间被取走就不再提醒。
+
+没有任何状态上报的 Agent（比如没开 hook 的 Codex），只能从画面判断。需要同时满足：
 
 1. 收件箱里有未读消息；
 2. 终端画面已经 8 秒没有变化。正在工作的 CLI 会刷新进度动画，所以它的画面一直在变；
-3. 画面最后几行是输入提示符（`>`、`❯` 或 `›`，允许外面套一层边框）。权限确认框、选择菜单这类画面没有输入提示符，daemon 不会往里面打字，所以不会误按回车替你做选择。
+3. 画面最后几行是输入提示符（`>`、`❯` 或 `›`，允许外面套一层边框），并且光标不在编号选项上。权限确认框、选择菜单的光标停在选项上，daemon 不会往里面打字。输入框上方的编号列表只是 Agent 上一轮的回复，不影响判断。
 
 提醒内容是：`You have N new team-worker message(s) in team <team>. Run team-worker inbox receive <team> and handle them.`。这行字相当于一次新的用户输入，Agent 会开始新的一轮，hook 也随之重新生效。同一批消息只提醒一次；有新消息到达时，距离上次提醒至少隔 20 秒才会再提醒；消息一直没读的话，每 5 分钟再提醒一次。
 

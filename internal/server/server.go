@@ -162,6 +162,7 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /v1/teams/{team}/agents/{name}", s.getAgent)
 	m.HandleFunc("POST /v1/teams/{team}/agents/{name}/exit", s.agentExited)
 	m.HandleFunc("POST /v1/teams/{team}/agents/{name}/stop", s.requestAgentStop)
+	m.HandleFunc("POST /v1/teams/{team}/agents/{name}/activity", s.agentActivity)
 	m.HandleFunc("GET /v1/teams/{team}/sessions/{name}", s.getSession)
 	m.HandleFunc("PUT /v1/teams/{team}/sessions/{name}", s.saveSession)
 
@@ -446,6 +447,19 @@ func (s *Server) agentExited(w http.ResponseWriter, r *http.Request) {
 		s.log.Info("agent exited", "team", r.PathValue("team"), "agent", res.Agent, "released", len(res.Released))
 	}
 	respond(w, res, err)
+}
+
+// agentActivity records what an agent's hooks report it is doing.
+func (s *Server) agentActivity(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		RunID    string              `json:"runId"`
+		Activity model.AgentActivity `json:"activity"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	a, err := s.store.SetAgentActivity(r.Context(), r.PathValue("team"), r.PathValue("name"), in.RunID, in.Activity)
+	respond(w, a, err)
 }
 
 func (s *Server) send(w http.ResponseWriter, r *http.Request) {

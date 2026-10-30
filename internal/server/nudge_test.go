@@ -116,3 +116,49 @@ func TestNoNudgeForAgentsOnAnotherMachine(t *testing.T) {
 		t.Fatalf("typed into a pane of another machine: %q", pane.typed)
 	}
 }
+
+func TestNudgeFollowsHookActivity(t *testing.T) {
+	n, st, pane, now := newNudgeFixture(t, true)
+	ctx := context.Background()
+	set := func(act model.AgentActivity) {
+		t.Helper()
+		if _, err := st.SetAgentActivity(ctx, "demo", "alice", "", act); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The screen looks idle throughout; only the reported activity decides.
+	set(model.ActivityWorking)
+	st.Send(ctx, "demo", store.SendInput{From: "leader", To: "alice", Content: "hi"})
+	advance(n, now, 30*time.Second)
+	set(model.ActivityBlocked)
+	advance(n, now, 30*time.Second)
+	if len(pane.typed) != 0 {
+		t.Fatalf("a working or blocked agent must not be typed into: %q", pane.typed)
+	}
+
+	// A reply ending in a numbered list fooled the screen check; hooks do not.
+	pane.screen = "Next steps\n1. deploy\n2. verify\n────\n❯ \n────\n"
+	set(model.ActivityWaiting)
+	advance(n, now, 4*time.Second)
+	if len(pane.typed) != 0 {
+		t.Fatalf("nudged before IdleFor: %q", pane.typed)
+	}
+	advance(n, now, 8*time.Second)
+	if len(pane.typed) != 1 {
+		t.Fatalf("a waiting agent with unread messages should be nudged once: %q", pane.typed)
+	}
+}
+
+func TestNoNudgeWhenMessagesAreTakenQuickly(t *testing.T) {
+	n, st, pane, now := newNudgeFixture(t, true)
+	ctx := context.Background()
+	st.SetAgentActivity(ctx, "demo", "alice", "", model.ActivityWaiting)
+	st.Send(ctx, "demo", store.SendInput{From: "leader", To: "alice", Content: "hi"})
+	advance(n, now, 4*time.Second)
+	// An extension such as pi's wakes the agent itself and takes the message.
+	st.Receive(ctx, "demo", "alice", "", 10)
+	advance(n, now, 30*time.Second)
+	if len(pane.typed) != 0 {
+		t.Fatalf("messages already taken must not cause a nudge: %q", pane.typed)
+	}
+}

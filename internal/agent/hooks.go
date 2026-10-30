@@ -20,7 +20,7 @@ func hookCommands(workerBin, team, agentName string, leader bool) (cmds map[stri
 		role, wait = "leader", LeaderStopWait
 	}
 	cmds = map[string]string{}
-	for _, event := range []string{"stop", "post-tool-use", "session-start"} {
+	for _, event := range []string{"stop", "post-tool-use", "session-start", "prompt-submit", "notification"} {
 		cmds[event] = strings.Join([]string{shellQuote(workerBin), "hook", event, "--team", shellQuote(team),
 			"--agent", shellQuote(agentName), "--role", role}, " ")
 	}
@@ -53,8 +53,10 @@ func tomlString(s string) string {
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
 // ClaudeHookSettings is the Claude Code settings JSON, passed with
-// --settings, that routes Stop, PostToolUse and SessionStart to
-// `team-worker hook`. It only adds hooks; the user's settings still apply.
+// --settings, that routes Stop, PostToolUse, SessionStart, UserPromptSubmit
+// and Notification to `team-worker hook`. The last two only report whether
+// the agent works, waits at its prompt or asks the user something. It only
+// adds hooks; the user's settings still apply.
 func ClaudeHookSettings(workerBin, team, agentName string, leader bool) string {
 	cmds, stopTimeout := hookCommands(workerBin, team, agentName, leader)
 	cmd := func(event string) string { return cmds[event] }
@@ -71,8 +73,13 @@ func ClaudeHookSettings(workerBin, team, agentName string, leader bool) string {
 	settings := map[string]map[string][]matcher{"hooks": {
 		"Stop": {{Hooks: []hook{{Type: "command", Command: cmd("stop"), Timeout: stopTimeout,
 			StatusMessage: "Waiting for team messages and tasks..."}}}},
-		"PostToolUse":  {{Matcher: "*", Hooks: []hook{{Type: "command", Command: cmd("post-tool-use"), Timeout: 15}}}},
-		"SessionStart": {{Matcher: "startup|resume|clear|compact", Hooks: []hook{{Type: "command", Command: cmd("session-start"), Timeout: 15}}}},
+		"PostToolUse":      {{Matcher: "*", Hooks: []hook{{Type: "command", Command: cmd("post-tool-use"), Timeout: 15}}}},
+		"SessionStart":     {{Matcher: "startup|resume|clear|compact", Hooks: []hook{{Type: "command", Command: cmd("session-start"), Timeout: 15}}}},
+		"UserPromptSubmit": {{Hooks: []hook{{Type: "command", Command: cmd("prompt-submit"), Timeout: 15}}}},
+		"Notification": {
+			{Matcher: "idle_prompt", Hooks: []hook{{Type: "command", Command: cmd("notification") + " --activity waiting", Timeout: 15}}},
+			{Matcher: "permission_prompt|elicitation_dialog", Hooks: []hook{{Type: "command", Command: cmd("notification") + " --activity blocked", Timeout: 15}}},
+		},
 	}}
 	data, _ := json.Marshal(settings)
 	return string(data)

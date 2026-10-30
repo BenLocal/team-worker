@@ -11,13 +11,13 @@ import (
 	"github.com/benlocal/team-worker/internal/model"
 )
 
-const agentColumns = `team, name, agent_id, backend, target, pid, command, cwd, status, started_at, exited_at, nudge, run_id, stop_requested, exit_code, host`
+const agentColumns = `team, name, agent_id, backend, target, pid, command, cwd, status, started_at, exited_at, nudge, run_id, stop_requested, exit_code, host, activity, activity_at`
 
 func scanAgent(row scanner) (model.Agent, error) {
 	var a model.Agent
 	var command string
 	err := row.Scan(&a.Team, &a.Name, &a.AgentID, &a.Backend, &a.Target, &a.PID, &command, &a.Cwd,
-		&a.Status, &a.StartedAt, &a.ExitedAt, &a.Nudge, &a.RunID, &a.StopRequested, &a.ExitCode, &a.Host)
+		&a.Status, &a.StartedAt, &a.ExitedAt, &a.Nudge, &a.RunID, &a.StopRequested, &a.ExitCode, &a.Host, &a.Activity, &a.ActivityAt)
 	if err != nil {
 		return a, err
 	}
@@ -43,6 +43,8 @@ func (s *Store) RegisterAgent(ctx context.Context, a model.Agent) (model.Agent, 
 	a.ExitCode = 0
 	a.StartedAt = s.timestamp()
 	a.ExitedAt = ""
+	// A new run has reported nothing yet; re-registering a run keeps its state.
+	a.Activity, a.ActivityAt = "", ""
 	command, err := json.Marshal(a.Command)
 	if err != nil {
 		return a, err
@@ -62,14 +64,15 @@ func (s *Store) RegisterAgent(ctx context.Context, a model.Agent) (model.Agent, 
 			if previous.RunID == a.RunID {
 				a.Status, a.ExitedAt, a.StopRequested, a.ExitCode = previous.Status, previous.ExitedAt, previous.StopRequested, previous.ExitCode
 				a.StartedAt = previous.StartedAt
+				a.Activity, a.ActivityAt = previous.Activity, previous.ActivityAt
 			} else if previous.RunID != "" && previous.Status == model.AgentRunning {
 				return conflictf("Agent already has a running instance")
 			}
 		}
 		_, err = tx.ExecContext(ctx,
-			`INSERT OR REPLACE INTO agents (`+agentColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			`INSERT OR REPLACE INTO agents (`+agentColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			a.Team, a.Name, a.AgentID, a.Backend, a.Target, a.PID, string(command), a.Cwd,
-			a.Status, a.StartedAt, a.ExitedAt, a.Nudge, a.RunID, a.StopRequested, a.ExitCode, a.Host)
+			a.Status, a.StartedAt, a.ExitedAt, a.Nudge, a.RunID, a.StopRequested, a.ExitCode, a.Host, a.Activity, a.ActivityAt)
 		return err
 	})
 	return a, err
@@ -153,6 +156,35 @@ func (s *Store) lockHolderDead(ctx context.Context, q queryer, team, name string
 // pending and tells the leader about them. Repeated calls for an agent that
 // is already marked exited do nothing, so the exit hook and the daemon's
 // reaper can both report the same exit.
+// SetAgentActivity records what a running agent's hooks report. A report
+// from another run than the current one, or for an agent that is not
+// running, is ignored: it comes from a process that has been replaced.
+func (s *Store) SetAgentActivity(ctx context.Context, team, name, runID string, activity model.AgentActivity) (model.Agent, error) {
+	if !activity.Valid() {
+		return model.Agent{}, invalidf("Unknown agent activity '%s'", activity)
+	}
+	// Most reports repeat the current state; skipping those keeps change
+	// notifications, which wake every waiting Stop hook, for real changes.
+	a, err := getAgent(ctx, s.db, team, name)
+	if err != nil || a.Activity == activity {
+		return a, err
+	}
+	err = s.write(ctx, func(tx *sql.Tx) error {
+		var err error
+		if a, err = getAgent(ctx, tx, team, name); err != nil {
+			return err
+		}
+		if a.Status != model.AgentRunning || (runID != "" && a.RunID != runID) || a.Activity == activity {
+			return nil
+		}
+		a.Activity, a.ActivityAt = activity, s.timestamp()
+		_, err = tx.ExecContext(ctx, "UPDATE agents SET activity = ?, activity_at = ? WHERE team = ? AND name = ?",
+			a.Activity, a.ActivityAt, team, name)
+		return err
+	})
+	return a, err
+}
+
 func (s *Store) AgentExited(ctx context.Context, team, name string) (model.AgentExit, error) {
 	return s.AgentExitedRun(ctx, team, name, "", 0)
 }

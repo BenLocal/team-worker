@@ -159,6 +159,25 @@ const (
 	AgentExited  AgentStatus = "exited"
 )
 
+// AgentActivity is what a running agent is doing, as its CLI hooks report.
+type AgentActivity string
+
+const (
+	// ActivityWorking: a turn is in progress; hooks hand it new messages.
+	ActivityWorking AgentActivity = "working"
+	// ActivityWaiting: the turn ended and the agent sits at its prompt, so
+	// only typing into its terminal can wake it.
+	ActivityWaiting AgentActivity = "waiting"
+	// ActivityBlocked: the agent asks the user something, e.g. a permission
+	// prompt; typing into its terminal would answer it.
+	ActivityBlocked AgentActivity = "blocked"
+)
+
+// Valid reports whether a is one of the known activities.
+func (a AgentActivity) Valid() bool {
+	return a == ActivityWorking || a == ActivityWaiting || a == ActivityBlocked
+}
+
 // Agent is a spawned agent process. Target is the tmux pane id for the tmux
 // backend; PID is the pane's shell or the subprocess.
 type Agent struct {
@@ -183,6 +202,10 @@ type Agent struct {
 	// Nudge lets the daemon type a reminder into the agent's tmux pane when
 	// messages wait while the agent sits idle at its prompt.
 	Nudge bool `json:"nudge"`
+	// Activity is the last state the agent's hooks reported for this run,
+	// and ActivityAt when; empty when no hook has reported.
+	Activity   AgentActivity `json:"activity,omitempty"`
+	ActivityAt string        `json:"activityAt,omitempty"`
 	// Alive is filled in by the daemon from a live process probe.
 	Alive *bool `json:"alive,omitempty"`
 }
