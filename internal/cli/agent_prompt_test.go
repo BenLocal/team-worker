@@ -2,10 +2,13 @@ package cli
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/benlocal/team-worker/internal/client"
 )
 
 func TestAgentPromptCLIAndSpawnReuse(t *testing.T) {
@@ -59,5 +62,31 @@ func TestAgentPromptCLIAndSpawnReuse(t *testing.T) {
 	}
 	if out, ok := h.run("--json", "agent", "prompt", "show", "demo", "missing"); ok || !strings.Contains(out, "not found") {
 		t.Fatalf("missing=%s", out)
+	}
+}
+
+func TestSpawnReadsTaskFromFile(t *testing.T) {
+	h := newHarness(t)
+	h.run("team", "spawn-team", "demo")
+	h.run("team", "add-member", "demo", "alice")
+	file := filepath.Join(t.TempDir(), "task.md")
+	if err := os.WriteFile(file, []byte("Line one\nLine two\n\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var res spawnResult
+	h.json(&res, "spawn", "subprocess", "--team", "demo", "-n", "alice", "--task-file", file, "--dry-run", "--", "sh")
+	if !strings.Contains(res.Prompt, "## Task\n\nLine one\nLine two\n\n## Coordination Protocol") {
+		t.Fatalf("task file not used as the task:\n%s", res.Prompt)
+	}
+	// Cobra rejects the flag pair while parsing, before the command runs.
+	root := NewRoot(func() *client.Client { return h.api })
+	root.SetOut(io.Discard)
+	root.SetErr(io.Discard)
+	root.SetArgs([]string{"spawn", "subprocess", "--team", "demo", "-n", "alice", "--task", "x", "--task-file", file, "--dry-run", "--", "sh"})
+	if err := root.Execute(); err == nil || !strings.Contains(err.Error(), "task-file") {
+		t.Fatalf("--task with --task-file should be rejected: %v", err)
+	}
+	if out, ok := h.run("--json", "spawn", "subprocess", "--team", "demo", "-n", "alice", "--task-file", file+".missing", "--dry-run", "--", "sh"); ok || !strings.Contains(out, "read --task-file") {
+		t.Fatalf("missing task file: ok=%v %s", ok, out)
 	}
 }

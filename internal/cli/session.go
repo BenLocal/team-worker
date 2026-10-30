@@ -84,7 +84,7 @@ func (a *app) agentResumeCmd() *cobra.Command {
 	var replace, dryRun, keepalive bool
 	var maxRestarts int
 	var delay time.Duration
-	var task string
+	var task, taskFile string
 	var envPairs []string
 	var profileName string
 	cmd := &cobra.Command{Use: "resume TEAM NAME", Short: "Resume an agent's exact saved CLI session", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
@@ -134,7 +134,11 @@ func (a *app) agentResumeCmd() *cobra.Command {
 		if cmd.Flags().Changed("restart-delay") {
 			session.RestartDelayMillis = delay.Milliseconds()
 		}
-		res, err := a.spawnAgent(cmd.Context(), spawnRequest{RequiredEnvKeys: session.EnvKeys, Team: args[0], Name: args[1], Task: task, TaskSet: cmd.Flags().Changed("task"), Command: session.Command, Backend: session.Backend, Cwd: session.Cwd, SkipPerms: session.SkipPermissions, KeepAlive: session.KeepAlive, MaxRestarts: session.MaxRestarts, RestartDelay: time.Duration(session.RestartDelayMillis) * time.Millisecond, ResumeID: session.SessionID, Replace: replace, DryRun: dryRun, EnvLayers: layers})
+		var taskSet bool
+		if task, taskSet, err = taskInput(cmd, task, taskFile); err != nil {
+			return a.fail(err)
+		}
+		res, err := a.spawnAgent(cmd.Context(), spawnRequest{RequiredEnvKeys: session.EnvKeys, Team: args[0], Name: args[1], Task: task, TaskSet: taskSet, Command: session.Command, Backend: session.Backend, Cwd: session.Cwd, SkipPerms: session.SkipPermissions, KeepAlive: session.KeepAlive, MaxRestarts: session.MaxRestarts, RestartDelay: time.Duration(session.RestartDelayMillis) * time.Millisecond, ResumeID: session.SessionID, Replace: replace, DryRun: dryRun, EnvLayers: layers})
 		if err != nil {
 			return a.fail(err)
 		}
@@ -151,6 +155,8 @@ func (a *app) agentResumeCmd() *cobra.Command {
 	cmd.Flags().IntVar(&maxRestarts, "max-restarts", 3, "Override the saved restart limit")
 	cmd.Flags().DurationVar(&delay, "restart-delay", time.Second, "Override the saved initial retry delay")
 	cmd.Flags().StringVar(&task, "task", "", "Replace the saved agent instructions")
+	cmd.Flags().StringVar(&taskFile, "task-file", "", "Replace the saved agent instructions with this file's content")
+	cmd.MarkFlagsMutuallyExclusive("task", "task-file")
 	cmd.Flags().BoolVar(&replace, "replace", false, "Stop the current run before resuming")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show the resume command without starting")
 	cmd.Flags().StringArrayVar(&envPairs, "env", nil, "Environment variable KEY=VALUE (repeatable)")

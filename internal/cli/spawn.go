@@ -357,6 +357,20 @@ func boolEnv(b bool) string {
 	return "0"
 }
 
+// taskInput resolves --task and --task-file: the instructions and whether
+// they were given at all, so an empty --task can still clear saved ones. A
+// file keeps long instructions off the command line.
+func taskInput(cmd *cobra.Command, task, file string) (string, bool, error) {
+	if !cmd.Flags().Changed("task-file") {
+		return task, cmd.Flags().Changed("task"), nil
+	}
+	data, err := os.ReadFile(file)
+	if err != nil {
+		return "", false, fmt.Errorf("read --task-file: %w", err)
+	}
+	return strings.TrimRight(string(data), "\n"), true, nil
+}
+
 // workerBinary is the absolute path of this CLI, used for the exit hook.
 func workerBinary() string {
 	exe, err := os.Executable()
@@ -389,7 +403,7 @@ func (a *app) spawnCmd() *cobra.Command {
 	var req spawnRequest
 	var envPairs []string
 	var noSkip bool
-	var profileName string
+	var profileName, taskFile string
 	cmd := &cobra.Command{
 		Use:   "spawn [tmux|subprocess] [-- COMMAND ARGS...]",
 		Short: "Start an agent with its identity, workspace and task",
@@ -433,7 +447,9 @@ func (a *app) spawnCmd() *cobra.Command {
 				return a.fail(err)
 			}
 			req.SkipPerms = !noSkip
-			req.TaskSet = cmd.Flags().Changed("task")
+			if req.Task, req.TaskSet, err = taskInput(cmd, req.Task, taskFile); err != nil {
+				return a.fail(err)
+			}
 			res, err := a.spawnAgent(cmd.Context(), req)
 			if err != nil {
 				return a.fail(err)
@@ -453,6 +469,8 @@ func (a *app) spawnCmd() *cobra.Command {
 	f.StringVarP(&req.Name, "agent-name", "n", "", "Agent name (default: random)")
 	f.StringVar(&req.AgentType, "agent-type", "general-purpose", "Agent type")
 	f.StringVar(&req.Task, "task", "", "Save agent instructions (default: reuse saved instructions; empty clears them)")
+	f.StringVar(&taskFile, "task-file", "", "Read the agent instructions from this file instead of --task")
+	cmd.MarkFlagsMutuallyExclusive("task", "task-file")
 	f.StringVar(&req.Cwd, "cwd", "", "Working directory (default: <data-dir>/workspaces/<team>/<agent>)")
 	f.StringArrayVar(&envPairs, "env", nil, "Extra environment variable KEY=VALUE (repeatable)")
 	f.StringVar(&profileName, "profile", "", "Runtime profile (default: default_profile, else the only profile; none with an explicit command)")
