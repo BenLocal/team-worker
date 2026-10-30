@@ -472,10 +472,17 @@ func relay(ctx context.Context, conn *websocket.Conn, v *viewer, p pane, control
 	input := make(chan []byte, 64)
 	errs := make(chan error, 4)
 	var wg sync.WaitGroup
+	// The board can run inside team-workerd; a panic here must end only this
+	// terminal, not the daemon that holds every team.
 	run := func(fn func() error) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					errs <- closeError{websocket.StatusInternalError, "Terminal relay failed"}
+				}
+			}()
 			errs <- fn()
 		}()
 	}

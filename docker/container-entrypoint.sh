@@ -59,8 +59,12 @@ trap 'exit 130' INT
 # CLI autostart stays as a fallback for docker exec sessions. It starts
 # before the slow Magpie setup below, so no CLI call in that window can
 # autostart a second daemon that takes over the data directory.
+# It also serves the web board, which Nginx publishes under /team-worker/;
+# the header links point at the other panels Nginx serves on the same address.
 export TEAM_WORKER_HTTP_ADDR="${TEAM_WORKER_HTTP_ADDR-127.0.0.1:8082}"
-team-workerd --data-dir "$TEAM_WORKER_DATA_DIR" &
+board_links=(--board-link "Magpie=/magpie/")
+if [[ ${TEAM_WORKER_OPENBAO:-0} == 1 ]]; then board_links+=(--board-link "OpenBao=/ui/"); fi
+TEAM_WORKER_WEB_BASE_PATH=/team-worker team-workerd --data-dir "$TEAM_WORKER_DATA_DIR" --board "${board_links[@]}" &
 pids+=($!)
 ready=false
 for ((i=0; i<50; i++)); do
@@ -106,11 +110,6 @@ team-worker-ops mcp \
     "${TEAM_WORKER_MCP_FILE:-/etc/team-worker/mcp.yaml}"
 team-worker-ops prompt \
     "${TEAM_WORKER_PROMPT_FILE:-/etc/team-worker/prompt.yaml}"
-# Header links to the other panels Nginx serves on the same address.
-board_links=(--link "Magpie=/magpie/")
-if [[ ${TEAM_WORKER_OPENBAO:-0} == 1 ]]; then board_links+=(--link "OpenBao=/ui/"); fi
-TEAM_WORKER_WEB_BASE_PATH=/team-worker team-worker board serve --host 127.0.0.1 --port 8081 "${board_links[@]}" &
-pids+=($!)
 nginx -c /etc/nginx/team-worker.conf -g 'daemon off;' &
 pids+=($!)
 ready=false

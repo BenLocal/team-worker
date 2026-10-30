@@ -265,10 +265,13 @@ team-worker launch my-template -g "给待办应用加上标签功能" --team-pro
 
 ```bash
 team-worker board show my-team     # 终端里查看成员状态、任务和最近消息
-team-worker board serve -p 8080    # 浏览器打开 http://127.0.0.1:8080，点成员可看实时终端
+team-workerd --listen 127.0.0.1:8080 --board   # daemon 同时提供 Web 看板，浏览器打开 http://127.0.0.1:8080
+team-worker board serve -p 8080    # 另起一个看板进程，用于在别的机器上查看远程 daemon
 ```
 
-Web 看板默认只监听 127.0.0.1，访问需使用与 CLI HTTP 调用相同的 Key。默认 Key 自动生成并保存在 SQLite 中，重启复用；可在本机通过 `team-worker key show` 查看。页面登录后，`Service keys` 可查看 Magpie Web Key 和 OpenBao 登录 Token，默认遮挡并支持显示、复制。 `board serve --link NAME=URL`（可重复）在页面标题栏右侧显示到其他服务的链接，例如 `--link Docs=https://example.com`。
+Web 看板由 team-workerd 直接提供：`--board`（环境变量 `TEAM_WORKER_BOARD=1`）让它在 `--listen` 的同一个端口上提供看板，`/v1/` 仍是 API，其他路径是看板，看板的数据在进程内读取。不开 `--board` 时 daemon 不提供网页。`team-worker board serve` 仍然保留，用于在另一台机器上连远程 daemon（设置 `TEAM_WORKER_SERVER_URL`）查看：这时看板里的实时终端显示的是那台机器上运行的 Agent。
+
+Web 看板访问需使用与 CLI HTTP 调用相同的 Key，`board serve` 默认只监听 127.0.0.1。默认 Key 自动生成并保存在 SQLite 中，重启复用；可在本机通过 `team-worker key show` 查看。页面登录后，`Service keys` 可查看 Magpie Web Key 和 OpenBao 登录 Token，默认遮挡并支持显示、复制。 `team-workerd --board-link NAME=URL` 或 `board serve --link NAME=URL`（可重复）在页面顶部显示到其他服务的链接按钮，例如 `--board-link Docs=https://example.com`；daemon 也可以用环境变量 `TEAM_WORKER_BOARD_LINKS`（逗号分隔）。反向代理把看板放在子路径下时，用 `TEAM_WORKER_WEB_BASE_PATH` 指定前缀，例如 `/team-worker`。
 
 团队标题旁的 `Team prompt` 按钮显示团队公共提示词。每个 Agent 终端卡片的 `Prompt` 按钮和侧栏成员菜单的 `Show prompt` 显示该成员的专属提示词，未启动或已退出的成员也能查看。内容从 store 按需读取，未设置时显示空状态；弹窗支持长文本滚动及 Escape 关闭。
 
@@ -416,7 +419,7 @@ team-workerd 记录这些事件：
 curl --unix-socket ~/.team-worker/team-workerd.sock http://x/v1/teams/my-team/tasks
 ```
 
-Web 看板的提示词读取接口由 `board serve` 提供：
+Web 看板（`team-workerd --board` 或 `board serve`）的提示词读取接口：
 
 | 接口 | 说明 |
 |---|---|

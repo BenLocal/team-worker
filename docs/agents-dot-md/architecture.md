@@ -15,11 +15,13 @@ team-worker (CLI, cobra)
 
 team-worker spawn / launch ──> internal/spawn ──> tmux 窗口 或 后台子进程（agent CLI）
                                                    └─ agent 退出时执行 `team-worker lifecycle on-exit` 回报服务
-team-worker board serve ──> internal/board (只读 Web 看板，经 client 读数据，经 proc/tmux 看终端)
+team-workerd --board ──> internal/board (只读 Web 看板，挂在 daemon 的 HTTP 端口，经进程内 client 读数据，经 proc/tmux 看终端)
+team-worker board serve ──> internal/board (同一看板的独立进程，用于在另一台机器上查看远程 daemon)
 ```
 
 - 部署形态：单机两进程，外加按需启动的 agent 进程（tmux 窗口或后台子进程）。`cmd/team-workerd` 是常驻服务，`cmd/team-worker` 是 CLI，二进制放在同一目录或都在 `PATH`。
 - 进程边界：只有 `team-workerd` 打开数据库；CLI 经 socket 或带 API Key 的 HTTP 调 API，不直接读写 SQLite。同一数据目录靠 `team-workerd.lock`（flock）保证只有一个服务。
+- Web 看板放在 daemon 里（`--board`，挂在 `--listen` 端口，`/v1/` 之外的路径）：少一个进程，看板和 API 版本始终一致。看板通过进程内 transport（`server.LocalClient`）调用 API，权限等同本机 socket；它缓冲完整响应，不能用于长轮询。实时终端的 goroutine 捕获 panic，只断开当前终端，不影响 daemon。`board serve` 保留给在另一台机器上查看远程 daemon 的场景。
 
 ## 二、模块与依赖方向
 

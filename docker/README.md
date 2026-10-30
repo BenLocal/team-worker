@@ -62,11 +62,11 @@ Nginx 在同一地址、同一端口下按路径分发：
 
 | 路径 | 界面 | 容器内部地址 |
 | --- | --- | --- |
-| `/team-worker/` | team-worker 看板（只读，可看 Agent 实时终端） | `127.0.0.1:8081` |
+| `/team-worker/` | team-worker 看板（只读，可看 Agent 实时终端），由 team-workerd 直接提供 | `127.0.0.1:8082` |
 | `/magpie/` | Magpie 管理界面 | `127.0.0.1:3430` |
 | `/ui/`、`/v1/` | OpenBao 界面与 API（启用时） | `127.0.0.1:8200` |
 
-根路径跳转到 `/team-worker/`。看板标题栏右侧有 Magpie 链接，启用 OpenBao 时还有 OpenBao 链接（入口脚本通过 `board serve --link` 传入）。Magpie 链接不带登录密钥：浏览器先用 `web` 打印的完整链接登录一次，之后从看板点 Magpie 就能直接进入。用 `./docker/team-worker.sh web` 获取完整地址和带登录密钥的 Magpie 链接；密钥保存在 home 卷，重启不变。Nginx 关闭了访问日志，避免记录链接密钥。看板和 Magpie 页面使用根路径 API，由 `subpath.js` 给页面请求加上各自前缀。
+根路径跳转到 `/team-worker/`。看板标题栏右侧有 Magpie 链接，启用 OpenBao 时还有 OpenBao 链接（入口脚本通过 `team-workerd --board-link` 传入）。Magpie 链接不带登录密钥：浏览器先用 `web` 打印的完整链接登录一次，之后从看板点 Magpie 就能直接进入。用 `./docker/team-worker.sh web` 获取完整地址和带登录密钥的 Magpie 链接；密钥保存在 home 卷，重启不变。Nginx 关闭了访问日志，避免记录链接密钥。看板和 Magpie 页面使用根路径 API，由 `subpath.js` 给页面请求加上各自前缀。
 
 默认绑定本机 `127.0.0.1:8080`。用服务器 IP 访问时指定监听地址和对外 URL：
 

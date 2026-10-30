@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/benlocal/team-worker/internal/board"
 	"github.com/benlocal/team-worker/internal/config"
 	"github.com/benlocal/team-worker/internal/model"
 	"github.com/benlocal/team-worker/internal/proc"
@@ -25,6 +26,13 @@ type Options struct {
 	HTTPAddr string
 	APIKey   string
 	Logger   *slog.Logger
+	// Board also serves the web board on HTTPAddr: /v1/ stays the API,
+	// every other path is the board behind the same access key.
+	Board      bool
+	BoardLinks []board.Link
+	// WebBasePath is the public path prefix a reverse proxy serves the
+	// board under, e.g. /team-worker; empty at the root.
+	WebBasePath string
 }
 
 // Run serves the API on a Unix socket and an optional authenticated HTTP listener.
@@ -33,6 +41,9 @@ func Run(ctx context.Context, opts Options) error {
 	log := opts.Logger
 	if log == nil {
 		log = slog.Default()
+	}
+	if opts.Board && opts.HTTPAddr == "" {
+		return fmt.Errorf("the web board needs an HTTP listen address (--listen)")
 	}
 	if err := os.MkdirAll(opts.DataDir, 0o700); err != nil {
 		return err
@@ -91,10 +102,21 @@ func Run(ctx context.Context, opts Options) error {
 	servers := []*http.Server{httpSrv}
 	listeners := []net.Listener{ln}
 	if tcp != nil {
-		servers = append(servers, &http.Server{Handler: Authenticate(handler, accessKey), ReadHeaderTimeout: 10 * time.Second,
+		var web http.Handler = Authenticate(handler, accessKey)
+		if opts.Board {
+			site, err := board.Site(LocalClient(handler), accessKey, opts.WebBasePath, opts.BoardLinks)
+			if err != nil {
+				return err
+			}
+			mux := http.NewServeMux()
+			mux.Handle("/v1/", web)
+			mux.Handle("/", site)
+			web = mux
+		}
+		servers = append(servers, &http.Server{Handler: web, ReadHeaderTimeout: 10 * time.Second,
 			BaseContext: func(net.Listener) context.Context { return baseCtx }})
 		listeners = append(listeners, tcp)
-		log.Info("HTTP API listening", "address", tcp.Addr().String())
+		log.Info("HTTP API listening", "address", tcp.Addr().String(), "board", opts.Board)
 	}
 	errCh := make(chan error, len(servers))
 	var workers sync.WaitGroup
