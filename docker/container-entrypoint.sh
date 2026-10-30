@@ -55,6 +55,19 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 143' TERM
 trap 'exit 130' INT
+# The daemon runs in the foreground here so a crash stops the container;
+# CLI autostart stays as a fallback for docker exec sessions. It starts
+# before the slow Magpie setup below, so no CLI call in that window can
+# autostart a second daemon that takes over the data directory.
+export TEAM_WORKER_HTTP_ADDR="${TEAM_WORKER_HTTP_ADDR-127.0.0.1:8082}"
+team-workerd --data-dir "$TEAM_WORKER_DATA_DIR" &
+pids+=($!)
+ready=false
+for ((i=0; i<50; i++)); do
+    if TEAM_WORKER_NO_AUTOSTART=1 team-worker team discover >/dev/null 2>&1; then ready=true; break; fi
+    sleep 0.2
+done
+if [[ $ready != true ]]; then echo 'team-workerd failed to start.' >&2; exit 1; fi
 magpie_pid=
 if [[ ${TEAM_WORKER_DIND:-0} != 1 ]]; then
     magpie web --addr 127.0.0.1:3430 --no-open &
@@ -93,17 +106,6 @@ team-worker-ops mcp \
     "${TEAM_WORKER_MCP_FILE:-/etc/team-worker/mcp.yaml}"
 team-worker-ops prompt \
     "${TEAM_WORKER_PROMPT_FILE:-/etc/team-worker/prompt.yaml}"
-# The daemon runs in the foreground here so a crash stops the container;
-# CLI autostart stays as a fallback for docker exec sessions.
-export TEAM_WORKER_HTTP_ADDR="${TEAM_WORKER_HTTP_ADDR-127.0.0.1:8082}"
-team-workerd --data-dir "$TEAM_WORKER_DATA_DIR" &
-pids+=($!)
-ready=false
-for ((i=0; i<50; i++)); do
-    if TEAM_WORKER_NO_AUTOSTART=1 team-worker team discover >/dev/null 2>&1; then ready=true; break; fi
-    sleep 0.2
-done
-if [[ $ready != true ]]; then echo 'team-workerd failed to start.' >&2; exit 1; fi
 # Header links to the other panels Nginx serves on the same address.
 board_links=(--link "Magpie=/magpie/")
 if [[ ${TEAM_WORKER_OPENBAO:-0} == 1 ]]; then board_links+=(--link "OpenBao=/ui/"); fi
