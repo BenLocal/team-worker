@@ -20,15 +20,15 @@ func TestBuiltinPrepare(t *testing.T) {
 		paste       bool
 		stdin       bool
 	}{
-		{"claude tmux", []string{"claude"}, true, []string{"claude", "--dangerously-skip-permissions", "P"}, false, false},
-		{"claude subprocess", []string{"claude"}, false, []string{"claude", "--dangerously-skip-permissions", "-p", "P"}, false, false},
+		{"claude tmux", []string{"claude"}, true, []string{"claude", "--disallowedTools=AskUserQuestion", "--dangerously-skip-permissions", "P"}, false, false},
+		{"claude subprocess", []string{"claude"}, false, []string{"claude", "--disallowedTools=AskUserQuestion", "--dangerously-skip-permissions", "-p", "P"}, false, false},
 		{"codex tmux", []string{"codex"}, true, []string{"codex", "--dangerously-bypass-approvals-and-sandbox", "P"}, false, false},
 		{"codex subprocess", []string{"codex"}, false, []string{"codex", "exec", "--dangerously-bypass-approvals-and-sandbox", "P"}, false, false},
 		{"codex subcommand kept", []string{"codex", "review"}, false, []string{"codex", "review", "--dangerously-bypass-approvals-and-sandbox", "P"}, false, false},
 		{"gemini tmux", []string{"gemini"}, true, []string{"gemini", "--yolo", "-i", "P"}, false, false},
 		{"kimi", []string{"kimi"}, true, []string{"kimi", "--yolo", "--print", "-p", "P"}, false, false},
 		{"path to binary", []string{"/opt/bin/claude", "--model", "haiku"}, true,
-			[]string{"/opt/bin/claude", "--model", "haiku", "--dangerously-skip-permissions", "P"}, false, false},
+			[]string{"/opt/bin/claude", "--model", "haiku", "--disallowedTools=AskUserQuestion", "--dangerously-skip-permissions", "P"}, false, false},
 		{"unknown tmux", []string{"my-agent", "--x"}, true, []string{"my-agent", "--x"}, true, false},
 		{"unknown subprocess", []string{"my-agent"}, false, []string{"my-agent"}, false, true},
 	}
@@ -263,5 +263,24 @@ func TestPiLoadsTeamWorkerExtension(t *testing.T) {
 	r, _ := Load(dir)
 	if off := r.For(s.Command).Prepare(s); slices.Contains(off.Args, "-e") || len(off.Files) != 0 {
 		t.Fatalf("hooks = false should skip the extension: %q %+v", off.Args, off.Files)
+	}
+}
+
+func TestClaudeQuestionMenuIsOffUnlessAskUser(t *testing.T) {
+	s := Session{Command: []string{"claude"}, Prompt: "P", Interactive: true}
+	if args := Builtin().For(s.Command).Prepare(s).Args; !slices.Contains(args, "--disallowedTools=AskUserQuestion") {
+		t.Fatalf("spawned claude can still open question menus: %q", args)
+	}
+	dir := t.TempDir()
+	writeAdapter(t, dir, "claude.toml", "extends = \"claude\"\nask_user = true\n")
+	r, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if args := r.For(s.Command).Prepare(s).Args; slices.Contains(args, "--disallowedTools=AskUserQuestion") {
+		t.Fatalf("ask_user = true should keep question menus: %q", args)
+	}
+	if args := Builtin().For([]string{"codex"}).Prepare(Session{Command: []string{"codex"}, Prompt: "P", Interactive: true}).Args; slices.Contains(args, "--disallowedTools=AskUserQuestion") {
+		t.Fatalf("the claude flag leaked into codex: %q", args)
 	}
 }

@@ -169,6 +169,11 @@ type cli struct {
 	// noNudge turns off terminal reminders for CLIs where typing into the
 	// pane is unsafe.
 	noNudge bool
+	// noAskArgs keep the CLI from opening a question menu at its terminal:
+	// spawned agents run unattended, so a menu stops them until someone
+	// answers in the pane. askUser (an adapter's ask_user = true) keeps it.
+	noAskArgs []string
+	askUser   bool
 }
 
 func (c *cli) Name() string   { return c.name }
@@ -184,6 +189,9 @@ func (c *cli) Prepare(s Session) Plan {
 		Set: map[string]string{}}
 	for k, v := range c.env.Set {
 		env.Set[k] = v
+	}
+	if !c.askUser {
+		args = append(args, c.noAskArgs...)
 	}
 	if s.SkipPermissions {
 		args = append(args, c.skipArgs...)
@@ -234,6 +242,7 @@ func (c *cli) clone() *cli {
 	cp := *c
 	cp.names = slices.Clone(c.names)
 	cp.skipArgs = slices.Clone(c.skipArgs)
+	cp.noAskArgs = slices.Clone(c.noAskArgs)
 	cp.startup = slices.Clone(c.startup)
 	cp.skipEnv = map[string]string{}
 	for k, v := range c.skipEnv {

@@ -73,6 +73,9 @@ type file struct {
 	Hooks *bool `toml:"hooks"`
 	// Nudge set to false stops the daemon from typing reminders into the pane.
 	Nudge *bool `toml:"nudge"`
+	// AskUser set to true lets the CLI open question menus at its terminal,
+	// for an agent someone watches; by default they are disabled.
+	AskUser *bool `toml:"ask_user"`
 }
 
 var envNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
@@ -158,6 +161,9 @@ func (f file) build(path string) (*cli, error) {
 	}
 	if f.Nudge != nil {
 		c.noNudge = !*f.Nudge
+	}
+	if f.AskUser != nil {
+		c.askUser = *f.AskUser
 	}
 	if f.Inherit != nil {
 		c.env.NoInherit = !*f.Inherit
