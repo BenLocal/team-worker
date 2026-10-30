@@ -65,6 +65,10 @@ function agentState(m) {
   if (a.status === "exited") return ["dead", "exited"];
   // The server cannot probe another machine's process; trust its record.
   if (!onBoardHost(a)) return ["remote", "running on " + hostLabel(a)];
+  // Hooks report what a running agent does; without them only liveness is known.
+  if (a.alive === true && a.activity === "blocked") return ["attention", "asking the user"];
+  if (a.alive === true && a.activity === "waiting") return ["alive", "waiting for messages"];
+  if (a.alive === true && a.activity === "working") return ["alive", "working"];
   if (a.alive === true) return ["alive", "running"];
   if (a.alive === false) return ["dead", "stopped"];
   return ["", "unknown"];
@@ -292,7 +296,7 @@ function teamRow({ t, b, at }) {
   const current = t.name === state.team;
   const open = !rail.folded.has(t.name);
   const members = b ? b.members : [];
-  const running = members.filter((m) => ["alive", "remote"].includes(agentState(m)[0])).length;
+  const running = members.filter((m) => ["alive", "attention", "remote"].includes(agentState(m)[0])).length;
   const pinned = rail.pins.has(t.name);
   const strip = el("div", { class: "strip", "aria-hidden": "true" });
   if (s && s.total) {
@@ -426,7 +430,7 @@ function renderHead(board) {
 function renderStats(board) {
   const s = board.taskSummary;
   const members = board.members;
-  const running = members.filter((m) => ["alive", "remote"].includes(agentState(m)[0])).length;
+  const running = members.filter((m) => ["alive", "attention", "remote"].includes(agentState(m)[0])).length;
   const unread = members.reduce((n, m) => n + (m.inboxCount || 0), 0);
   const ov = state.oversight[state.team];
   if (!changed("stats", [s, running, members.length, unread, ov && [ov.budget, ov.cost]])) return;

@@ -18,6 +18,11 @@ import (
 // wait in its inbox while the agent sits idle at its input prompt. Hooks
 // deliver messages while an agent works; this wakes an agent whose turn has
 // already ended, which no hook can reach.
+//
+// Whether the agent waits at its prompt comes from its hooks (see
+// model.AgentActivity): the Stop hook knows when it let the turn end. Only
+// agents whose CLI reports nothing, e.g. one without hooks, are judged by
+// reading their screen.
 type Nudger struct {
 	Store *store.Store
 	Log   *slog.Logger
@@ -25,7 +30,9 @@ type Nudger struct {
 	Capture func(pane string) (string, error)
 	Type    func(pane, text string) error
 	Now     func() time.Time
-	// IdleFor is how long the screen must stay unchanged before a nudge.
+	// IdleFor is how long an agent must wait with unread messages (or, read
+	// from the screen, keep it unchanged) before a nudge. It leaves time for
+	// a CLI extension that wakes the agent itself, as pi's does.
 	IdleFor time.Duration
 	// MinGap separates nudges for new messages; Repeat re-sends a reminder
 	// for messages that are still unread.
@@ -39,8 +46,11 @@ type Nudger struct {
 type nudgeState struct {
 	screen      string
 	stableSince time.Time
-	nudgedAt    time.Time
-	nudgedID    int64
+	// waitingSince is when a hook-reporting agent was first seen waiting
+	// with unread messages.
+	waitingSince time.Time
+	nudgedAt     time.Time
+	nudgedID     int64
 }
 
 func NewNudger(st *store.Store, log *slog.Logger) *Nudger {
@@ -105,22 +115,32 @@ func (n *Nudger) check(ctx context.Context, a model.Agent, key string) {
 		n.state[key] = st
 	}
 	now := n.Now()
-	screen, err := n.Capture(a.Target)
-	if err != nil {
-		return
-	}
-	if screen != st.screen {
-		st.screen, st.stableSince = screen, now
-		return
-	}
-	count, newest, err := n.Store.InboxStats(ctx, a.Team, a.Name)
-	if err != nil || count == 0 {
-		return
-	}
-	// A working CLI redraws its spinner; a menu or permission question has no
-	// input prompt. Typing into either would be wrong, so wait for a quiet prompt.
-	if now.Sub(st.stableSince) < n.IdleFor || !agent.InputPromptVisible(screen) {
-		return
+	var count int
+	var newest int64
+	var err error
+	if a.Activity != "" {
+		// A working agent gets its messages from hooks, and typing into a
+		// blocked one would answer its question; only a waiting one is woken.
+		if a.Activity == model.ActivityWaiting {
+			count, newest, err = n.Store.InboxStats(ctx, a.Team, a.Name)
+		}
+		if a.Activity != model.ActivityWaiting || err != nil || count == 0 {
+			st.waitingSince = time.Time{}
+			return
+		}
+		if st.waitingSince.IsZero() {
+			st.waitingSince = now
+		}
+		if now.Sub(st.waitingSince) < n.IdleFor {
+			return
+		}
+	} else {
+		if !n.screenIdle(a, st, now) {
+			return
+		}
+		if count, newest, err = n.Store.InboxStats(ctx, a.Team, a.Name); err != nil || count == 0 {
+			return
+		}
 	}
 	fresh := newest > st.nudgedID && now.Sub(st.nudgedAt) >= n.MinGap
 	if !fresh && now.Sub(st.nudgedAt) < n.Repeat {
@@ -136,4 +156,20 @@ func (n *Nudger) check(ctx context.Context, a model.Agent, key string) {
 	st.nudgedAt, st.nudgedID = now, newest
 	// The reminder changes the screen; start the idle clock over.
 	st.screen = ""
+}
+
+// screenIdle judges an agent whose CLI reports no activity by its screen:
+// unchanged for IdleFor and showing an input prompt rather than a menu.
+func (n *Nudger) screenIdle(a model.Agent, st *nudgeState, now time.Time) bool {
+	screen, err := n.Capture(a.Target)
+	if err != nil {
+		return false
+	}
+	if screen != st.screen {
+		st.screen, st.stableSince = screen, now
+		return false
+	}
+	// A working CLI redraws its spinner; a menu or permission question has no
+	// input prompt. Typing into either would be wrong, so wait for a quiet prompt.
+	return now.Sub(st.stableSince) >= n.IdleFor && agent.InputPromptVisible(screen)
 }

@@ -165,7 +165,7 @@ tmux attach -t team-worker-my-team        # 直接进入各 Agent 的窗口
 
 每种 CLI 怎样启动由**适配器**决定：加哪些权限参数（可以用 `--no-skip-permissions` 关闭）、提示词怎么传进去、需要哪些环境变量、启动时的确认画面怎么处理。项目内置了 claude、codex、gemini、kimi、qwen、opencode、dsh、pi 的适配器。其他 CLI，或者想调整内置适配器的行为，都可以在 `~/.team-worker/agents/<name>.toml` 里声明，不用改代码。环境变量按"调用者环境 → 适配器 → 模板 → `--env` → 身份变量"的顺序一层层合成，值里可以用 `${NAME}` 引用调用者的环境变量。完整规则见 [docs/agents.md](docs/agents.md)。
 
-Claude Code 的 Agent 还会自动装上 team-worker 的 hook：它准备停下时，会先收到新消息、自己的待办任务，以及（对 leader 而言）团队的进展；干活途中也能收到消息；上下文被压缩后，会重新拿到团队信息。Agent 已经停在输入框时，hook 不会被触发；这时如果有未读消息，daemon 会往它的 tmux 终端里输入一行提醒，把它唤醒。这一机制对所有 tmux 后端的 CLI 都有效，也包括没有 hook 的 CLI。你在自己终端里启动的 Claude 会话也能用这套 hook：`claude --settings "$(team-worker hook settings --role leader)"`。详见 [docs/agents.md](docs/agents.md#hook让消息和任务自动送到-agent-面前)。pi 通过内置扩展接入同一套逻辑。和 Claude 不同，pi 停在输入框时，扩展会自己开启新的一轮，不需要往终端里打字提醒。Codex 的 hook 目前是实验性功能，默认关闭。
+Claude Code 的 Agent 还会自动装上 team-worker 的 hook：它准备停下时，会先收到新消息、自己的待办任务，以及（对 leader 而言）团队的进展；干活途中也能收到消息；上下文被压缩后，会重新拿到团队信息。Agent 已经停在输入框时，hook 不会被触发；这时如果有未读消息，daemon 会往它的 tmux 终端里输入一行提醒，把它唤醒。是否停在输入框由 hook 上报的状态决定（工作中、等待中、等用户确认），没有 hook 的 CLI 才看终端画面；`agent list` 的 ACTIVITY 列和看板也显示这个状态。这一机制对所有 tmux 后端的 CLI 都有效，也包括没有 hook 的 CLI。你在自己终端里启动的 Claude 会话也能用这套 hook：`claude --settings "$(team-worker hook settings --role leader)"`。详见 [docs/agents.md](docs/agents.md#hook让消息和任务自动送到-agent-面前)。pi 通过内置扩展接入同一套逻辑。和 Claude 不同，pi 停在输入框时，扩展会自己开启新的一轮，不需要往终端里打字提醒。Codex 的 hook 目前是实验性功能，默认关闭。
 
 想在启动前确认会执行什么，用 `--dry-run`：它会打印选中的适配器、最终命令，以及每个环境变量的来源（不打印值），不会启动任何东西。
 

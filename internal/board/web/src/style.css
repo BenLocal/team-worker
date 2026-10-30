@@ -366,3 +366,4 @@ body.rail-collapsed #rail-tools { display: none; }
 .harness-gate { margin: 8px 0 0; font-size: 12px; color: var(--ink-2); overflow-wrap: anywhere; }
 .harness-gate.ready { color: var(--done); }
 .dot.remote { background: var(--progress); }
+.dot.attention { background: var(--blocked); box-shadow: 0 0 6px rgb(255 92 26 / .55); }

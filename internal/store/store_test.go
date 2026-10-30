@@ -321,3 +321,32 @@ func TestBoardCountsInboxes(t *testing.T) {
 		t.Fatalf("board messages: %+v", b.Messages)
 	}
 }
+
+func TestAgentActivityBelongsToTheCurrentRun(t *testing.T) {
+	s := newTestStore(t)
+	newTeam(t, s, "alice")
+	ctx := context.Background()
+	s.RegisterAgent(ctx, model.Agent{Team: "demo", Name: "alice", Backend: "tmux", Target: "%1", RunID: "r1"})
+	if a, err := s.SetAgentActivity(ctx, "demo", "alice", "r1", model.ActivityWaiting); err != nil || a.Activity != model.ActivityWaiting || a.ActivityAt == "" {
+		t.Fatalf("report: %+v %v", a, err)
+	}
+	if _, err := s.SetAgentActivity(ctx, "demo", "alice", "r1", "sleeping"); KindOf(err) != KindInvalid {
+		t.Fatalf("unknown activity: %v", err)
+	}
+	// Re-registering the same run (a restart of its supervisor) keeps the state.
+	s.RegisterAgent(ctx, model.Agent{Team: "demo", Name: "alice", Backend: "tmux", Target: "%1", RunID: "r1"})
+	if a, _ := s.GetAgent(ctx, "demo", "alice"); a.Activity != model.ActivityWaiting {
+		t.Fatalf("same run lost its activity: %+v", a)
+	}
+
+	// A new run starts with no report, and the old run's hooks are ignored.
+	s.AgentExitedRun(ctx, "demo", "alice", "r1", 0)
+	s.RegisterAgent(ctx, model.Agent{Team: "demo", Name: "alice", Backend: "tmux", Target: "%2", RunID: "r2"})
+	if a, _ := s.GetAgent(ctx, "demo", "alice"); a.Activity != "" {
+		t.Fatalf("new run inherited activity: %+v", a)
+	}
+	s.SetAgentActivity(ctx, "demo", "alice", "r1", model.ActivityBlocked)
+	if a, _ := s.GetAgent(ctx, "demo", "alice"); a.Activity != "" {
+		t.Fatalf("stale run report applied: %+v", a)
+	}
+}

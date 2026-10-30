@@ -29,7 +29,7 @@ TEAM_WORKER_ENV_FILE=/绝对路径/team-worker.env \
 
 - Leader 和 Claude Worker 装有 team-worker hook：每轮结束时收到新消息、自己的待办任务和团队进展；干活途中也会收到新消息。Leader 的 hook 由入口脚本通过 `claude --settings "$(team-worker hook settings --role leader)"` 装上。
 - pi Worker 由内置扩展在空闲时自己开始新一轮。
-- Agent 停在输入框、hook 不会触发时，team-workerd 往它的 tmux 窗口输入一行提醒；权限确认和选择菜单不会被输入。
+- Agent 停在输入框、hook 不会触发时，team-workerd 往它的 tmux 窗口输入一行提醒；是否停在输入框由 hook 上报的状态决定，等用户确认权限或回答问题时不会被输入。
 - `leader watch` 每 2 秒检查一次：出现新的、没有负责人的 pending 任务时，给 Leader 的收件箱发一条消息。它不读取也不移走任何收件箱。
 
 与 ClawTeam 面板不同，team-worker 的看板是只读的，没有 New Task 按钮，也没有 OpenAPI。新增任务在容器内用 CLI：

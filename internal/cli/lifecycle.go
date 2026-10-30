@@ -168,6 +168,14 @@ func aliveLabel(ag model.Agent) string {
 	return "dead"
 }
 
+// activityLabel is what a running agent's hooks last reported, or "-".
+func activityLabel(ag model.Agent) string {
+	if ag.Status == model.AgentExited || ag.Activity == "" {
+		return "-"
+	}
+	return string(ag.Activity)
+}
+
 func (a *app) agentListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "list TEAM",
@@ -183,9 +191,9 @@ func (a *app) agentListCmd() *cobra.Command {
 					fmt.Fprintln(w, "No agents spawned")
 					return
 				}
-				tw := newTable(w, "NAME", "STATE", "BACKEND", "TARGET", "PID", "STARTED", "WORKSPACE")
+				tw := newTable(w, "NAME", "STATE", "ACTIVITY", "BACKEND", "TARGET", "PID", "STARTED", "WORKSPACE")
 				for _, ag := range agents {
-					row(tw, ag.Name, aliveLabel(ag), ag.Backend, ag.Target, fmt.Sprint(ag.PID),
+					row(tw, ag.Name, aliveLabel(ag), activityLabel(ag), ag.Backend, ag.Target, fmt.Sprint(ag.PID),
 						formatTimestamp(ag.StartedAt), ag.Cwd)
 				}
 				tw.Flush()

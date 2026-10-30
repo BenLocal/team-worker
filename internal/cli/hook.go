@@ -82,8 +82,16 @@ func (a *app) hookCmd() *cobra.Command {
 			"that support hooks; `hook settings` prints them for a session you start yourself.\n" +
 			"Handlers read the hook JSON on stdin, always exit 0, and print nothing on errors.",
 	}
-	cmd.AddCommand(a.hookStopCmd(), a.hookPostToolCmd(), a.hookSessionStartCmd(), a.hookSettingsCmd())
+	cmd.AddCommand(a.hookStopCmd(), a.hookPostToolCmd(), a.hookSessionStartCmd(), a.hookPromptSubmitCmd(),
+		a.hookNotificationCmd(), a.hookSettingsCmd())
 	return cmd
+}
+
+// reportActivity tells the daemon what the agent is doing, so it types a
+// reminder only into an agent that waits at its prompt. Errors are dropped:
+// a missed report only delays a reminder.
+func (a *app) reportActivity(ctx context.Context, t hookTarget, activity model.AgentActivity) {
+	a.client().SetAgentActivity(ctx, t.team, t.agent, os.Getenv("TEAM_WORKER_RUN_ID"), activity)
 }
 
 func (a *app) hookStopCmd() *cobra.Command {
@@ -107,8 +115,13 @@ func (a *app) hookStopCmd() *cobra.Command {
 					wait = agent.LeaderStopWait
 				}
 			}
+			// Letting the agent stop leaves it at its prompt, where no hook
+			// runs until something is typed into its terminal.
 			if reason := a.stopReason(cmd.Context(), t, in, time.Duration(wait)*time.Second); reason != "" {
+				a.reportActivity(cmd.Context(), t, model.ActivityWorking)
 				a.hookBlock(reason)
+			} else {
+				a.reportActivity(cmd.Context(), t, model.ActivityWaiting)
 			}
 			return nil
 		},
@@ -292,7 +305,13 @@ func (a *app) hookPostToolCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			a.readHookInput()
-			if !t.resolve() || !throttle(t, postToolInterval) {
+			if !t.resolve() {
+				return nil
+			}
+			// Not throttled: a tool running after a permission prompt ends
+			// the blocked state.
+			a.reportActivity(cmd.Context(), t, model.ActivityWorking)
+			if !throttle(t, postToolInterval) {
 				return nil
 			}
 			msgs, err := a.client().Receive(cmd.Context(), t.team, t.agent, t.user, 20, 0)
@@ -335,6 +354,7 @@ func (a *app) hookSessionStartCmd() *cobra.Command {
 			if !t.resolve() {
 				return nil
 			}
+			a.reportActivity(cmd.Context(), t, model.ActivityWorking)
 			if runID := os.Getenv("TEAM_WORKER_RUN_ID"); runID != "" && in.SessionID != "" {
 				if session, err := a.client().GetSession(cmd.Context(), t.team, t.agent, t.user); err == nil && session.RunID == runID {
 					session.SessionID, session.Source = in.SessionID, "hook"
@@ -355,6 +375,47 @@ func (a *app) hookSessionStartCmd() *cobra.Command {
 		},
 	}
 	t.flags(cmd)
+	return cmd
+}
+
+func (a *app) hookPromptSubmitCmd() *cobra.Command {
+	var t hookTarget
+	cmd := &cobra.Command{
+		Use:   "prompt-submit",
+		Short: "UserPromptSubmit hook: record that the agent started a turn",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			a.readHookInput()
+			if t.resolve() {
+				a.reportActivity(cmd.Context(), t, model.ActivityWorking)
+			}
+			return nil
+		},
+	}
+	t.flags(cmd)
+	return cmd
+}
+
+func (a *app) hookNotificationCmd() *cobra.Command {
+	var t hookTarget
+	var activity string
+	cmd := &cobra.Command{
+		Use:   "notification",
+		Short: "Notification hook: record that the agent waits at its prompt or asks the user",
+		Long: "The hook settings pick --activity by notification type: waiting for idle_prompt\n" +
+			"(also covers a turn the user interrupted, which runs no Stop hook), blocked for\n" +
+			"permission_prompt and elicitation_dialog.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			a.readHookInput()
+			if act := model.AgentActivity(activity); t.resolve() && act.Valid() {
+				a.reportActivity(cmd.Context(), t, act)
+			}
+			return nil
+		},
+	}
+	t.flags(cmd)
+	cmd.Flags().StringVar(&activity, "activity", "", "Activity to report: waiting or blocked")
 	return cmd
 }
 

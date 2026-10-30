@@ -189,6 +189,49 @@ func TestHookSettings(t *testing.T) {
 	if settings.Hooks["SessionStart"][0].Matcher != "startup|resume|clear|compact" || len(settings.Hooks["PostToolUse"]) != 1 {
 		t.Fatalf("settings: %+v", settings.Hooks)
 	}
+	notify := settings.Hooks["Notification"]
+	if len(settings.Hooks["UserPromptSubmit"]) != 1 || len(notify) != 2 ||
+		notify[0].Matcher != "idle_prompt" || !strings.HasSuffix(notify[0].Hooks[0].Command, "--activity waiting") ||
+		notify[1].Matcher != "permission_prompt|elicitation_dialog" || !strings.HasSuffix(notify[1].Hooks[0].Command, "--activity blocked") {
+		t.Fatalf("activity hooks: %+v", settings.Hooks)
+	}
+}
+
+func TestHooksReportActivity(t *testing.T) {
+	h, ctx := newHookTeam(t)
+	h.api.RegisterAgent(ctx, model.Agent{Team: "demo", Name: "alice", Backend: "tmux", Target: "%1"})
+	activity := func() model.AgentActivity {
+		a, err := h.api.GetAgent(ctx, "demo", "alice")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return a.Activity
+	}
+	target := []string{"--team", "demo", "--agent", "alice"}
+	steps := []struct {
+		args []string
+		want model.AgentActivity
+	}{
+		{append([]string{"prompt-submit"}, target...), model.ActivityWorking},
+		{append([]string{"notification", "--activity", "blocked"}, target...), model.ActivityBlocked},
+		// A tool running after the permission prompt ends the blocked state.
+		{append([]string{"post-tool-use"}, target...), model.ActivityWorking},
+		// Nothing left to do: the Stop hook lets the turn end at the prompt.
+		{append([]string{"stop", "--wait", "0"}, target...), model.ActivityWaiting},
+		{append([]string{"session-start"}, target...), model.ActivityWorking},
+		{append([]string{"notification", "--activity", "waiting"}, target...), model.ActivityWaiting},
+	}
+	for _, step := range steps {
+		h.hook(`{}`, step.args...)
+		if got := activity(); got != step.want {
+			t.Fatalf("after hook %v: activity %q, want %q", step.args, got, step.want)
+		}
+	}
+	// A Stop hook that hands over work keeps the agent working.
+	h.api.Send(ctx, "demo", store.SendInput{From: "leader", To: "alice", Content: "one more thing"})
+	if res, _ := h.hook(`{}`, append([]string{"stop", "--wait", "0"}, target...)...); res.Decision != "block" || activity() != model.ActivityWorking {
+		t.Fatalf("stop with a message: %+v, activity %q", res, activity())
+	}
 }
 
 func TestHooksStaySilentWhenDaemonIsDown(t *testing.T) {
@@ -197,7 +240,7 @@ func TestHooksStaySilentWhenDaemonIsDown(t *testing.T) {
 	dead.Close()
 	h := newHarness(t)
 	h.api = client.NewHTTP(url, dead.Client())
-	for _, event := range []string{"stop", "post-tool-use", "session-start"} {
+	for _, event := range []string{"stop", "post-tool-use", "session-start", "prompt-submit", "notification"} {
 		args := []string{"hook", event, "--team", "demo", "--agent", "alice"}
 		if event == "stop" {
 			args = append(args, "--wait", "1")
