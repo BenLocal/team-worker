@@ -1,4 +1,4 @@
-package agent
+package builtin
 
 import (
 	"os"
@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/benlocal/team-worker/internal/agent"
 )
 
 func TestBuiltinPrepare(t *testing.T) {
@@ -32,19 +34,19 @@ func TestBuiltinPrepare(t *testing.T) {
 		{"unknown tmux", []string{"my-agent", "--x"}, true, []string{"my-agent", "--x"}, true, false},
 		{"unknown subprocess", []string{"my-agent"}, false, []string{"my-agent"}, false, true},
 	}
-	r := Builtin()
+	r := Registry()
 	for _, c := range cases {
-		p := r.For(c.command).Prepare(Session{Command: c.command, Prompt: "P", Interactive: c.interactive, SkipPermissions: true})
+		p := r.For(c.command).Prepare(agent.Session{Command: c.command, Prompt: "P", Interactive: c.interactive, SkipPermissions: true})
 		if !slices.Equal(p.Args, c.want) || (p.Paste != "") != c.paste || (p.Stdin != "") != c.stdin {
 			t.Errorf("%s: args=%q paste=%q stdin=%q", c.name, p.Args, p.Paste, p.Stdin)
 		}
 	}
 
-	dsh := r.For([]string{"dsh"}).Prepare(Session{Command: []string{"dsh"}, Prompt: "P", SkipPermissions: true})
+	dsh := r.For([]string{"dsh"}).Prepare(agent.Session{Command: []string{"dsh"}, Prompt: "P", SkipPermissions: true})
 	if dsh.Env.Set["DSH_PERMISSION_MODE"] != "danger-full-access" {
 		t.Errorf("dsh permission env missing: %v", dsh.Env)
 	}
-	claude := r.For([]string{"claude"}).Prepare(Session{Command: []string{"claude"}, Prompt: "P", Interactive: true})
+	claude := r.For([]string{"claude"}).Prepare(agent.Session{Command: []string{"claude"}, Prompt: "P", Interactive: true})
 	if slices.Contains(claude.Args, "--dangerously-skip-permissions") {
 		t.Errorf("skip-permissions off still added the flag: %q", claude.Args)
 	}
@@ -57,7 +59,7 @@ func TestBuiltinPrepare(t *testing.T) {
 }
 
 func TestBuiltinStartupScreens(t *testing.T) {
-	r := Builtin()
+	r := Registry()
 	keys := func(cmd, screen string) string { return strings.Join(r.For([]string{cmd}).StartupKeys(screen), "+") }
 	if k := keys("claude", "do you trust this folder?\npress enter to continue"); k != "Enter" {
 		t.Errorf("claude trust: %q", k)
@@ -109,7 +111,7 @@ keys = ["n", "Enter"]
 	if a.Name() != "aider" || !strings.HasSuffix(a.Source(), "aider.toml") {
 		t.Fatalf("adapter: %s from %s", a.Name(), a.Source())
 	}
-	p := a.Prepare(Session{Command: []string{"aider", "--no-git"}, Prompt: "P", Interactive: true, SkipPermissions: true})
+	p := a.Prepare(agent.Session{Command: []string{"aider", "--no-git"}, Prompt: "P", Interactive: true, SkipPermissions: true})
 	if !slices.Equal(p.Args, []string{"aider", "--no-git", "--yes-always", "--message", "P"}) {
 		t.Errorf("args: %q", p.Args)
 	}
@@ -137,7 +139,7 @@ OPENAI_BASE_URL = "https://gateway.internal/v1"
 	if a.Name() != "codex-gateway" {
 		t.Fatalf("user adapter should win over the built-in: %s", a.Name())
 	}
-	p := a.Prepare(Session{Command: []string{"codex"}, Prompt: "P", SkipPermissions: true})
+	p := a.Prepare(agent.Session{Command: []string{"codex"}, Prompt: "P", SkipPermissions: true})
 	if !slices.Equal(p.Args, []string{"codex", "exec", "--dangerously-bypass-approvals-and-sandbox", "P"}) {
 		t.Errorf("built-in argument handling lost: %q", p.Args)
 	}
@@ -148,7 +150,7 @@ OPENAI_BASE_URL = "https://gateway.internal/v1"
 		t.Error("inherited startup rules lost")
 	}
 	// The built-in itself is unchanged.
-	if Builtin().For([]string{"codex"}).Prepare(Session{Command: []string{"codex"}}).Env.Set["OPENAI_BASE_URL"] != "" {
+	if Registry().For([]string{"codex"}).Prepare(agent.Session{Command: []string{"codex"}}).Env.Set["OPENAI_BASE_URL"] != "" {
 		t.Error("extending modified the built-in adapter")
 	}
 }
@@ -172,9 +174,9 @@ func TestInvalidAdapters(t *testing.T) {
 }
 
 func TestClaudeInstallsHooks(t *testing.T) {
-	s := Session{Command: []string{"claude"}, Prompt: "P", Interactive: true, Team: "demo", AgentName: "alice",
+	s := agent.Session{Command: []string{"claude"}, Prompt: "P", Interactive: true, Team: "demo", AgentName: "alice",
 		WorkerBin: "/opt/tw/team-worker"}
-	p := Builtin().For(s.Command).Prepare(s)
+	p := Registry().For(s.Command).Prepare(s)
 	i := slices.Index(p.Args, "--settings")
 	if i < 0 || !strings.Contains(p.Args[i+1], "'/opt/tw/team-worker' hook stop --team 'demo' --agent 'alice' --role worker") {
 		t.Fatalf("claude hooks missing: %q", p.Args)
@@ -192,34 +194,16 @@ func TestClaudeInstallsHooks(t *testing.T) {
 	if slices.Contains(r.For(s.Command).Prepare(s).Args, "--settings") {
 		t.Fatal("hooks = false should keep the settings out")
 	}
-	if slices.Contains(Builtin().For([]string{"codex"}).Prepare(Session{Command: []string{"codex"}, Team: "demo",
+	if slices.Contains(Registry().For([]string{"codex"}).Prepare(agent.Session{Command: []string{"codex"}, Team: "demo",
 		AgentName: "a", WorkerBin: "/x"}).Args, "--settings") {
 		t.Fatal("codex has no hooks yet")
 	}
 }
 
-func TestInputPromptVisible(t *testing.T) {
-	// A reply that ends in a numbered list sits above Claude's input box.
-	reply := "  待用户决定的事项\n  1. 114:8087 的凭据缺失\n  2. 是否授权安装 make\n  3. 分支落后 12 个提交\n" +
-		"✻ Churned for 3m 16s\n────────\n❯ \n────────\n  ⏵⏵ auto mode on (shift+tab to cycle)"
-	for _, screen := range []string{"> ", "output\n╭──╮\n│ > type here │\n╰──╯", "codex\n› ", "❯ ", reply} {
-		if !InputPromptVisible(screen) {
-			t.Errorf("prompt not found in %q", screen)
-		}
-	}
-	for _, screen := range []string{"", "Allow this command?\n  1. Yes\n  2. No", "✻ Working…",
-		"Do you want to proceed?\n❯ 1. Yes\n  2. No, and tell Claude what to do differently",
-		"Allow command?\n› 1) Yes\n  2) No\n> "} {
-		if InputPromptVisible(screen) {
-			t.Errorf("false prompt in %q", screen)
-		}
-	}
-}
-
 func TestCodexHooksAreOptIn(t *testing.T) {
-	s := Session{Command: []string{"codex"}, Prompt: "P", Interactive: true, Team: "demo", AgentName: "bob",
+	s := agent.Session{Command: []string{"codex"}, Prompt: "P", Interactive: true, Team: "demo", AgentName: "bob",
 		WorkerBin: "/opt/tw/team-worker"}
-	if args := Builtin().For(s.Command).Prepare(s).Args; slices.Contains(args, "--dangerously-bypass-hook-trust") {
+	if args := Registry().For(s.Command).Prepare(s).Args; slices.Contains(args, "--dangerously-bypass-hook-trust") {
 		t.Fatalf("codex hooks must be off by default: %q", args)
 	}
 	dir := t.TempDir()
@@ -241,9 +225,9 @@ func TestCodexHooksAreOptIn(t *testing.T) {
 
 func TestPiLoadsTeamWorkerExtension(t *testing.T) {
 	state := t.TempDir()
-	s := Session{Command: []string{"pi", "--model", "x"}, Prompt: "P", Interactive: true, SkipPermissions: true,
+	s := agent.Session{Command: []string{"pi", "--model", "x"}, Prompt: "P", Interactive: true, SkipPermissions: true,
 		Team: "demo", AgentName: "carol", WorkerBin: "/opt/tw/team-worker", StateDir: state}
-	p := Builtin().For(s.Command).Prepare(s)
+	p := Registry().For(s.Command).Prepare(s)
 	ext := filepath.Join(state, "pi", "team-worker.ts")
 	want := []string{"pi", "--model", "x", "--approve", "-e", ext, "P"}
 	if !slices.Equal(p.Args, want) {
@@ -252,7 +236,7 @@ func TestPiLoadsTeamWorkerExtension(t *testing.T) {
 	if len(p.Files) != 1 || p.Files[0].Path != ext || !strings.Contains(string(p.Files[0].Content), `runHook("stop"`) {
 		t.Fatalf("pi extension file: %+v", p.Files)
 	}
-	batch := Builtin().For(s.Command).Prepare(Session{Command: []string{"pi"}, Prompt: "P", Team: "demo",
+	batch := Registry().For(s.Command).Prepare(agent.Session{Command: []string{"pi"}, Prompt: "P", Team: "demo",
 		AgentName: "carol", WorkerBin: "/x", StateDir: state})
 	if !slices.Equal(batch.Args, []string{"pi", "-e", ext, "-p", "P"}) {
 		t.Fatalf("pi subprocess args: %q", batch.Args)
@@ -267,8 +251,8 @@ func TestPiLoadsTeamWorkerExtension(t *testing.T) {
 }
 
 func TestClaudeQuestionMenuIsOffUnlessAskUser(t *testing.T) {
-	s := Session{Command: []string{"claude"}, Prompt: "P", Interactive: true}
-	if args := Builtin().For(s.Command).Prepare(s).Args; !slices.Contains(args, "--disallowedTools=AskUserQuestion") {
+	s := agent.Session{Command: []string{"claude"}, Prompt: "P", Interactive: true}
+	if args := Registry().For(s.Command).Prepare(s).Args; !slices.Contains(args, "--disallowedTools=AskUserQuestion") {
 		t.Fatalf("spawned claude can still open question menus: %q", args)
 	}
 	dir := t.TempDir()
@@ -280,7 +264,7 @@ func TestClaudeQuestionMenuIsOffUnlessAskUser(t *testing.T) {
 	if args := r.For(s.Command).Prepare(s).Args; slices.Contains(args, "--disallowedTools=AskUserQuestion") {
 		t.Fatalf("ask_user = true should keep question menus: %q", args)
 	}
-	if args := Builtin().For([]string{"codex"}).Prepare(Session{Command: []string{"codex"}, Prompt: "P", Interactive: true}).Args; slices.Contains(args, "--disallowedTools=AskUserQuestion") {
+	if args := Registry().For([]string{"codex"}).Prepare(agent.Session{Command: []string{"codex"}, Prompt: "P", Interactive: true}).Args; slices.Contains(args, "--disallowedTools=AskUserQuestion") {
 		t.Fatalf("the claude flag leaked into codex: %q", args)
 	}
 }

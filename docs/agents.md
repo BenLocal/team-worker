@@ -208,8 +208,10 @@ hook 只在 Agent 这一轮还没结束时起作用。Agent 已经停在输入�
 
 1. 收件箱里有未读消息；
 2. 终端画面已经 8 秒没有变化。正在工作的 CLI 会刷新进度动画，所以它的画面一直在变；
-3. 画面最后几行是输入提示符（`>`、`❯` 或 `›`，允许外面套一层边框），并且光标不在编号选项上。权限确认框、选择菜单的光标停在选项上，daemon 不会往里面打字。输入框上方的编号列表只是 Agent 上一轮的回复，不影响判断。
+3. 适配器的画面规则认定 Agent 停在输入框：命中的规则状态是 `idle`，并且标明画面上直接看得到输入框（`visible_idle`）。权限确认、选择菜单、信任提示会命中 `blocked` 规则，进度动画和 `esc to interrupt` 命中 `working` 规则，daemon 都不会打字。没有任何规则命中时也不打字，因为没见过的菜单看起来就是这样。
+
+画面规则按 CLI 区分，因为每个 CLI 的输入框、菜单和进度提示长得都不一样。内置的 claude、codex、gemini、kimi、qwen、opencode、pi 带有规则，原样取自 [herdr](https://github.com/herdrdev/herdr) 的 agent 检测清单（Apache-2.0，见 `internal/agent/builtin/detect/`）。规则同时读终端画面和 CLI 设置的终端标题（Claude Code 空闲时标题以 `✳` 开头，工作时是转动的符号），标题的判断优先于画面。`extends` 内置适配器的自定义适配器继承它的规则；dsh 和不继承内置适配器的自定义适配器没有规则，没有 hook 时 daemon 不会提醒它们。`paste` 方式送第一条提示词时，也用同一套规则判断输入框是否已经出现。
 
 提醒内容是：`You have N new team-worker message(s) in team <team>. Run team-worker inbox receive <team> and handle them.`。这行字相当于一次新的用户输入，Agent 会开始新的一轮，hook 也随之重新生效。同一批消息只提醒一次；有新消息到达时，距离上次提醒至少隔 20 秒才会再提醒；消息一直没读的话，每 5 分钟再提醒一次。
 
-这个机制对所有 tmux 后端的 CLI 默认开启，包括没有 hook 的 CLI。subprocess 后端没有终端，所以不提醒。如果某个 CLI 的输入方式和上面的假设不一样（比如它的提示符不是这几个字符，或者往里面打字会产生副作用），在适配器里写 `nudge = false` 关掉即可。
+这个机制对所有 tmux 后端的 CLI 默认开启，包括没有 hook 的 CLI。subprocess 后端没有终端，所以不提醒。如果往某个 CLI 里打字会产生副作用，在适配器里写 `nudge = false` 关掉即可。

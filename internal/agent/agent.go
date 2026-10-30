@@ -7,7 +7,6 @@ package agent
 import (
 	"fmt"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 )
@@ -71,38 +70,10 @@ type Agent interface {
 	// Nudge reports whether the daemon may type message reminders into the
 	// agent's terminal while it waits at its input prompt.
 	Nudge() bool
+	// DetectScreen reads the agent's state from its terminal; ok is false
+	// when the adapter has no screen rules for its CLI.
+	DetectScreen(in ScreenInput) (d Detection, ok bool)
 }
-
-// InputPromptVisible reports whether a terminal screen ends with an
-// interactive CLI's input prompt (">", "❯" or "›", possibly inside a box),
-// i.e. the CLI is waiting for the user rather than working or asking a
-// question. Claude Code and Codex draw menu cursors with the same glyphs
-// ("❯ 1. Yes"), so a numbered option anywhere near the bottom means a menu.
-func InputPromptVisible(screen string) bool {
-	lines := strings.Split(strings.TrimRight(screen, "\n "), "\n")
-	prompt := false
-	for i := len(lines) - 1; i >= max(0, len(lines)-15); i-- {
-		l := strings.TrimLeft(lines[i], " \t│┃|╭╰")
-		cursor := strings.HasPrefix(l, "❯") || strings.HasPrefix(l, ">") || strings.HasPrefix(l, "›")
-		rest := strings.TrimLeft(strings.TrimLeft(l, "❯>›"), " ")
-		if menuOptionRE.MatchString(rest) {
-			// A cursor on a numbered entry, or entries below the input line,
-			// is a menu; a numbered list above the input line is only the
-			// agent's last reply.
-			if cursor || !prompt {
-				return false
-			}
-			continue
-		}
-		if cursor {
-			prompt = true
-		}
-	}
-	return prompt
-}
-
-// menuOptionRE matches a numbered menu entry such as "1. Yes" or "2) No".
-var menuOptionRE = regexp.MustCompile(`^\d+[.)]\s`)
 
 // PromptMode is how a CLI takes its first prompt.
 type PromptMode struct {
@@ -174,6 +145,9 @@ type cli struct {
 	// answers in the pane. askUser (an adapter's ask_user = true) keeps it.
 	noAskArgs []string
 	askUser   bool
+	// screen tells the agent's state from its terminal; nil when unknown.
+	// It is read-only and shared between copies of the adapter.
+	screen *ScreenRules
 }
 
 func (c *cli) Name() string   { return c.name }
@@ -227,6 +201,13 @@ func (c *cli) Prepare(s Session) Plan {
 }
 
 func (c *cli) Nudge() bool { return !c.noNudge }
+
+func (c *cli) DetectScreen(in ScreenInput) (Detection, bool) {
+	if c.screen == nil {
+		return Detection{}, false
+	}
+	return c.screen.Detect(in), true
+}
 
 func (c *cli) StartupKeys(screen string) []string {
 	for _, r := range c.startup {

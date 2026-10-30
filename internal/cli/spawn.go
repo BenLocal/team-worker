@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/benlocal/team-worker/internal/agent"
+	"github.com/benlocal/team-worker/internal/agent/builtin"
 	"github.com/benlocal/team-worker/internal/client"
 	"github.com/benlocal/team-worker/internal/config"
 	"github.com/benlocal/team-worker/internal/model"
@@ -78,7 +79,7 @@ func (a *app) spawnAgent(ctx context.Context, req spawnRequest) (spawnResult, er
 	if req.AgentType == "" {
 		req.AgentType = "general-purpose"
 	}
-	registry, err := agent.Load(config.AgentsDir())
+	registry, err := builtin.Load(config.AgentsDir())
 	if err != nil {
 		return spawnResult{}, err
 	}
