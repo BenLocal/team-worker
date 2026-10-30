@@ -2,7 +2,7 @@
 
 team-worker、tmux、Git、Node.js、Claude Code、Codex、pi、DeepSeek Harness（dsh 与 dsh-tui）、Magpie、OpenBao、Nginx 和 Docker 工具打包在同一个容器里，宿主机只需要 Docker 和 Bash。Leader 在容器内 tmux 会话 `team-worker-<团队>` 的 `leader` 窗口运行；Leader 用 `team-worker spawn tmux` 创建的 Worker 作为同一会话的其他窗口，也在本容器内运行。
 
-本目录参照 ClawTeam-Docker 改写：ClawTeam 换成本仓库的 team-worker（镜像构建时从源码编译），Magpie、OpenBao、Nginx、DinD/systemd 等组件和配置方式保持不变。容器内的启动配置由一个 Go 程序 `team-worker-ops` 完成（源码在 [`ops/`](ops/)），取代原来的 Python 脚本。
+本目录参照 ClawTeam-Docker 改写：ClawTeam 换成本仓库的 team-worker（在宿主机编译后打进镜像），Magpie、OpenBao、Nginx、DinD/systemd 等组件和配置方式保持不变。容器内的启动配置由一个 Go 程序 `team-worker-ops` 完成（源码在 [`ops/`](ops/)），取代原来的 Python 脚本。
 
 ```bash
 ./docker/team-worker.sh build
@@ -225,7 +225,7 @@ HTTP_PROXY=http://127.0.0.1:7897 HTTPS_PROXY=http://127.0.0.1:7897 \
   ./docker/team-worker.sh build
 ```
 
-构建上下文是仓库根目录（`docker build -f docker/Dockerfile .`），镜像里的 team-worker 和 team-worker-ops 都从当前工作区源码编译。默认镜像名 `team-worker-local:latest`，容器名 `team-worker`，用 `TEAM_WORKER_IMAGE`、`TEAM_WORKER_CONTAINER` 覆盖。镜像设置 `DISABLE_AUTOUPDATER=1`，工具版本随镜像固定；同时预装 Bun（Magpie 插件运行时）、Python Playwright 与 Chromium（浏览器测试）、dsh 与 dsh-tui。
+`build` 先在宿主机执行 `bins`（`make web` 加静态 `go build`，产物在 `TEAM_WORKER_BIN_DIR`，默认 `bin/docker`），再把这个目录作为名为 `bins` 的构建上下文交给 `docker build`，Dockerfile 只 `COPY` 现成的二进制，不在镜像里编译。因此宿主机需要 Go 和 Node；`GOPROXY`、`NPM_REGISTRY` 也作用于这一步。直接用 `docker build` 时要自己传 `--build-context bins=<二进制目录>`。默认镜像名 `team-worker-local:latest`，容器名 `team-worker`，用 `TEAM_WORKER_IMAGE`、`TEAM_WORKER_CONTAINER` 覆盖。镜像设置 `DISABLE_AUTOUPDATER=1`，工具版本随镜像固定；同时预装 Bun（Magpie 插件运行时）、Python Playwright 与 Chromium（浏览器测试）、dsh 与 dsh-tui。
 
 项目挂载到 `/workspace`，修改直接写回宿主机；Linux 上项目需允许容器用户 UID 1000 读写。`<容器名>-home` 卷保存 Claude 登录状态、原生会话历史、team-worker 数据库和 Magpie 配置。重启容器时，Leader 有准确会话标识就续接原会话，否则创建新会话；Worker 需用 `team-worker agent resume` 手动续接。tmux 会话会重新创建。
 

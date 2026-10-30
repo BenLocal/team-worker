@@ -28,13 +28,24 @@ MCP 配置：TEAM_WORKER_MCP_FILE；插件列表：TEAM_WORKER_PLUGIN_FILE（宿
 容器内 Docker：TEAM_WORKER_DIND=1（需要 privileged，使用独立数据卷）
 代理：通过 TEAM_WORKER_ENV_FILE 传入 MIRROR_HTTP_PROXY 或 HTTP_PROXY、HTTPS_PROXY、NO_PROXY
 构建代理：build 时设置 HTTP_PROXY、HTTPS_PROXY（指向 127.0.0.1 时自动用 --network host）
-镜像源：GOPROXY、DEBIAN_MIRROR、NPM_REGISTRY、PIP_INDEX_URL、BUN_DOWNLOAD_BASE、PLAYWRIGHT_DOWNLOAD_HOST
+镜像源：GOPROXY（宿主机编译）、DEBIAN_MIRROR、NPM_REGISTRY、PIP_INDEX_URL、BUN_DOWNLOAD_BASE、PLAYWRIGHT_DOWNLOAD_HOST
 构建版本：CLAUDE_VERSION、CODEX_VERSION、PI_VERSION、MAGPIE_VERSION、DSH_VERSION、DSH_TUI_VERSION、PLAYWRIGHT_VERSION、OPENBAO_VERSION
 HELP
 }
 command -v docker >/dev/null || { echo '请先安装 Docker。' >&2; exit 1; }
 BIN_DIR=${TEAM_WORKER_BIN_DIR:-$ROOT/../bin/docker}
 CONFIG_DIR=${TEAM_WORKER_CONFIG_DIR:-$ROOT/magpie-config}
+build_bins() {
+    # Static Linux binaries, so the host build runs in the Debian image.
+    mkdir -p "$BIN_DIR"
+    bin_dir=$(cd -- "$BIN_DIR" && pwd)
+    # The board page is not committed; team-worker embeds the fresh build.
+    if [[ -n ${NPM_REGISTRY:-} ]]; then export npm_config_registry=$NPM_REGISTRY; fi
+    make -C "$ROOT/.." web
+    (cd "$ROOT/.." && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags='-s -w' -o "$bin_dir/" ./cmd/...)
+    (cd "$ROOT/ops" && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags='-s -w' -o "$bin_dir/team-worker-ops" .)
+    ls -l "$bin_dir"
+}
 action=${1:-help}
 shift || true
 case "$action" in
@@ -49,9 +60,10 @@ case "$action" in
         if [[ ${HTTP_PROXY:-}${HTTPS_PROXY:-}${http_proxy:-}${https_proxy:-} =~ (127\.0\.0\.1|localhost) ]]; then
             build_options+=(--network host)
         fi
-        # The build context is the repository root so team-worker compiles from source.
+        # team-worker is compiled on the host and only packaged by the image.
+        build_bins
         docker build -f "$ROOT/Dockerfile" ${build_options[@]+"${build_options[@]}"} \
-            --build-arg "GOPROXY=${GOPROXY:-https://proxy.golang.org,direct}" \
+            --build-context "bins=$(cd -- "$BIN_DIR" && pwd)" \
             --build-arg "DEBIAN_MIRROR=${DEBIAN_MIRROR:-deb.debian.org}" \
             --build-arg "NPM_REGISTRY=${NPM_REGISTRY:-https://registry.npmjs.org/}" \
             --build-arg "PIP_INDEX_URL=${PIP_INDEX_URL:-https://pypi.org/simple}" \
@@ -68,14 +80,7 @@ case "$action" in
             --build-arg "MAGPIE_VERSION=${MAGPIE_VERSION:-latest}" -t "$IMAGE" "$ROOT/.."
         ;;
     bins)
-        # Static Linux binaries, so the host build runs in the Debian image.
-        mkdir -p "$BIN_DIR"
-        bin_dir=$(cd -- "$BIN_DIR" && pwd)
-        # The board page is not committed; team-worker embeds the fresh build.
-        make -C "$ROOT/.." web
-        (cd "$ROOT/.." && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags='-s -w' -o "$bin_dir/" ./cmd/...)
-        (cd "$ROOT/ops" && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags='-s -w' -o "$bin_dir/team-worker-ops" .)
-        ls -l "$bin_dir"
+        build_bins
         ;;
     start)
         project=$(cd -- "${1:-.}" && pwd)
