@@ -114,9 +114,19 @@ func (s *Store) UpdateTask(ctx context.Context, team, id string, in UpdateTaskIn
 		}
 		now := s.timestamp()
 
+		if in.Status != nil && (*in.Status == model.StatusInProgress || *in.Status == model.StatusCompleted) {
+			if err := requireApprovedPlan(ctx, tx, team, in.Caller); err != nil {
+				return err
+			}
+		}
 		if in.Status != nil {
 			switch *in.Status {
 			case model.StatusInProgress:
+				if t.Status != model.StatusInProgress {
+					if err := budgetExhausted(ctx, tx, team); err != nil {
+						return err
+					}
+				}
 				if t.LockedBy != "" && t.LockedBy != in.Caller && !in.Force {
 					dead, err := s.lockHolderDead(ctx, tx, team, t.LockedBy)
 					if err != nil {

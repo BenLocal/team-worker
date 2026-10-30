@@ -1,0 +1,5 @@
+{"type":"session_meta","payload":{"id":"0199-abc","cwd":"/work"}}
+{"type":"turn_context","payload":{"model":"gpt-5.4","cwd":"/work"}}
+{"type":"event_msg","payload":{"type":"token_count","info":null}}
+{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1200,"cached_input_tokens":800,"output_tokens":90,"reasoning_output_tokens":30,"total_tokens":1290},"last_token_usage":{"input_tokens":1200,"output_tokens":90}}}}
+{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":2500,"cached_input_tokens":1600,"output_tokens":210,"reasoning_output_tokens":60,"total_tokens":2710},"last_token_usage":{"input_tokens":1300,"output_tokens":120}}}}

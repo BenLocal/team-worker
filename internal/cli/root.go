@@ -58,7 +58,9 @@ func NewRoot(newClient func() *client.Client) *cobra.Command {
 	}
 	root.PersistentFlags().BoolVar(&a.jsonOut, "json", false, "Output as JSON")
 	root.AddCommand(a.teamCmd(), a.taskCmd(), a.inboxCmd(), a.identityCmd(), a.spawnCmd(), a.lifecycleCmd(), a.sessionCmd(), a.keyCmd(),
-		a.agentCmd(), a.boardCmd(), a.templateCmd(), a.launchCmd(), a.hookCmd())
+		a.agentCmd(), a.boardCmd(), a.templateCmd(), a.launchCmd(), a.hookCmd(), a.planCmd(), a.costCmd())
+	root.AddCommand(a.profileCmd(), a.presetCmd())
+	root.AddCommand(a.harnessCmd())
 	return root
 }
 

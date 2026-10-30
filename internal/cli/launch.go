@@ -79,7 +79,7 @@ type launchedAgent struct {
 }
 
 func (a *app) launchCmd() *cobra.Command {
-	var goal, teamName, backend, cwd, promptFile string
+	var goal, teamName, backend, cwd, promptFile, profileName string
 	var envPairs []string
 	var noSkip bool
 	cmd := &cobra.Command{
@@ -140,12 +140,17 @@ func (a *app) launchCmd() *cobra.Command {
 				if len(ag.Env) > 0 {
 					layers = append(layers, spawn.EnvLayer{Name: "template agent " + ag.Name, Set: ag.Env})
 				}
-				reqs = append(reqs, spawnRequest{
+				req := spawnRequest{
 					Team: teamName, Name: ag.Name, AgentType: agentType(ag), Backend: backend, Command: command,
 					Task:    templates.Render(ag.Task, goal, teamName, ag.Name, leader.Name),
 					TaskSet: true,
 					Cwd:     cwd, EnvLayers: append(layers, flagLayers...), SkipPerms: !noSkip,
-				})
+				}
+				// The profile layer goes under the template's own environment.
+				if err := applyProfile(&req, profileName); err != nil {
+					return a.fail(fmt.Errorf("agent '%s': %w", ag.Name, err))
+				}
+				reqs = append(reqs, req)
 			}
 			// Check every agent's command and environment before the team exists,
 			// so a typo does not leave a half-launched team behind.
@@ -237,6 +242,7 @@ func (a *app) launchCmd() *cobra.Command {
 	f.StringVar(&promptFile, "team-prompt-file", "", "Team instructions every agent receives in its first prompt")
 	f.StringVar(&cwd, "cwd", "", "Working directory for every agent (default: one workspace per agent)")
 	f.StringArrayVar(&envPairs, "env", nil, "Extra environment variable KEY=VALUE for every agent")
+	f.StringVar(&profileName, "profile", "", "Runtime profile for every agent; template environment still overrides it")
 	f.BoolVar(&noSkip, "no-skip-permissions", false, "Keep the agent CLIs' tool approval prompts")
 	return cmd
 }

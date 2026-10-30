@@ -54,6 +54,7 @@ func BuildPrompt(p PromptParams) string {
 	line("- Finishing a task: `team-worker task update %s <task-id> --status completed`", t)
 	line("- When you finish a task, report the result to the leader:")
 	line("  `team-worker inbox send %s %s \"<task-id> done: <brief summary>\"`", t, lead)
+	line("- If you know what your work cost, report it: `team-worker cost report %s --input-tokens <N> --output-tokens <N> --cost-cents <N>`.", t)
 	line("- If you are blocked or need help, message the leader:")
 	line("  `team-worker inbox send %s %s \"Need help: <description>\"`", t, lead)
 	line("- Do not exit after the first task unless the leader explicitly tells you to stop.")

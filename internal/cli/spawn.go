@@ -42,6 +42,8 @@ type spawnRequest struct {
 	SkipPerms bool
 	Replace   bool
 	DryRun    bool
+	// PlanRequired makes the member wait for an approved plan before working.
+	PlanRequired bool
 }
 
 type spawnResult struct {
@@ -105,6 +107,11 @@ func (a *app) spawnAgent(ctx context.Context, req spawnRequest) (spawnResult, er
 	if err != nil && !client.IsNotFound(err) {
 		return spawnResult{}, err
 	}
+	if teamExists && !req.DryRun {
+		if err := a.requireBudget(ctx, req.Team); err != nil {
+			return spawnResult{}, err
+		}
+	}
 	member := findMember(team, req.Name, id.User)
 	if member != nil && !req.TaskSet && req.Task == "" {
 		if req.Task, err = c.AgentPrompt(ctx, req.Team, req.Name, id.User); err != nil {
@@ -142,6 +149,9 @@ func (a *app) spawnAgent(ctx context.Context, req spawnRequest) (spawnResult, er
 		AgentName: req.Name, AgentID: req.AgentID, AgentType: req.AgentType, Team: req.Team,
 		Leader: leader, User: id.User, Workspace: cwd, TeamPrompt: teamPrompt, Task: req.Task,
 	})
+	if req.PlanRequired {
+		prompt += planApprovalPrompt(req.Team, req.Name)
+	}
 	identity := map[string]string{
 		"TEAM_WORKER_AGENT_ID":      req.AgentID,
 		"TEAM_WORKER_RUN_ID":        req.RunID,
@@ -153,6 +163,9 @@ func (a *app) spawnAgent(ctx context.Context, req spawnRequest) (spawnResult, er
 		"TEAM_WORKER_SOCKET":        config.SocketPath(dataDir),
 		"TEAM_WORKER_WORKSPACE_DIR": cwd,
 		"TEAM_WORKER_BIN":           workerBinary(),
+	}
+	if req.PlanRequired {
+		identity["TEAM_WORKER_PLAN_MODE_REQUIRED"] = "1"
 	}
 	if id.User != "" {
 		identity["TEAM_WORKER_USER"] = id.User
@@ -189,6 +202,13 @@ func (a *app) spawnAgent(ctx context.Context, req spawnRequest) (spawnResult, er
 	} else if member == nil {
 		if _, err := c.AddMember(ctx, req.Team, store.AddMemberInput{
 			Name: req.Name, AgentID: req.AgentID, AgentType: req.AgentType, User: id.User}); err != nil {
+			return spawnResult{}, err
+		}
+	}
+	// The flag is only ever turned on here, so a member added with
+	// --plan-required keeps it when spawned again without the flag.
+	if req.PlanRequired {
+		if err := c.SetPlanRequired(ctx, req.Team, req.Name, id.User, true); err != nil {
 			return spawnResult{}, err
 		}
 	}
@@ -363,6 +383,7 @@ func (a *app) spawnCmd() *cobra.Command {
 	var req spawnRequest
 	var envPairs []string
 	var noSkip bool
+	var profileName string
 	cmd := &cobra.Command{
 		Use:   "spawn [tmux|subprocess] [-- COMMAND ARGS...]",
 		Short: "Start an agent with its identity, workspace and task",
@@ -388,9 +409,6 @@ func (a *app) spawnCmd() *cobra.Command {
 				return a.fail(fmt.Errorf("unknown backend '%s': use tmux or subprocess "+
 					"(put the agent command after --)", req.Backend))
 			}
-			if len(req.Command) == 0 {
-				req.Command = []string{"claude"}
-			}
 			if req.Team == "" {
 				req.Team = config.IdentityFromEnv().TeamName
 			}
@@ -402,6 +420,10 @@ func (a *app) spawnCmd() *cobra.Command {
 			}
 			var err error
 			if req.EnvLayers, err = envFlagLayer(envPairs); err != nil {
+				return a.fail(err)
+			}
+			// The profile also supplies the command when none was given.
+			if err := applyProfile(&req, profileName); err != nil {
 				return a.fail(err)
 			}
 			req.SkipPerms = !noSkip
@@ -427,10 +449,12 @@ func (a *app) spawnCmd() *cobra.Command {
 	f.StringVar(&req.Task, "task", "", "Save agent instructions (default: reuse saved instructions; empty clears them)")
 	f.StringVar(&req.Cwd, "cwd", "", "Working directory (default: <data-dir>/workspaces/<team>/<agent>)")
 	f.StringArrayVar(&envPairs, "env", nil, "Extra environment variable KEY=VALUE (repeatable)")
+	f.StringVar(&profileName, "profile", "", "Runtime profile (default: default_profile, else the only profile; none with an explicit command)")
 	f.BoolVar(&noSkip, "no-skip-permissions", false, "Keep the agent CLI's tool approval prompts")
 	f.BoolVar(&req.Replace, "replace", false, "Stop a running agent with the same name first")
 	f.BoolVar(&req.DryRun, "dry-run", false, "Show the command, prompt and environment sources without starting")
 	f.BoolVar(&req.KeepAlive, "keepalive", false, "Resume the exact session after unapproved exits")
+	f.BoolVar(&req.PlanRequired, "plan-required", false, "Require an approved plan before the agent starts or completes tasks")
 	f.IntVar(&req.MaxRestarts, "max-restarts", 3, "Maximum consecutive keepalive restarts")
 	f.DurationVar(&req.RestartDelay, "restart-delay", time.Second, "Initial keepalive retry delay (doubles up to one minute)")
 	return cmd

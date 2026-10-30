@@ -170,6 +170,10 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /v1/teams/{team}/messages/log", s.messageLog)
 	m.HandleFunc("GET /v1/teams/{team}/inboxes/{agent}", s.peek)
 	m.HandleFunc("POST /v1/teams/{team}/inboxes/{agent}/receive", s.receive)
+	s.joinRoutes(m)
+	s.planRoutes()
+	s.costRoutes(m)
+	s.harnessRoutes(m)
 }
 
 // changes returns the current write version, waiting up to wait for it to
