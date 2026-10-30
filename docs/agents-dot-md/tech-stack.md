@@ -41,8 +41,8 @@
 
 ## 四、配置管理
 
-- 只有环境变量 `TEAM_WORKER_*`（见 README《配置》）和可选的 `~/.team-worker/config.json`（`data_dir`、`user`、`server_url`），读取逻辑集中在 `internal/config`。Web 与 CLI HTTP 共用的 Key 默认由 daemon 生成并保存到 SQLite；`TEAM_WORKER_API_KEY` 可在启动时覆盖并持久化。
-- 新配置项加到 `internal/config`，并同步 README 的配置表。
+- 只有环境变量 `TEAM_WORKER_*`（见 `docs/reference.md`《配置》）和可选的 `~/.team-worker/config.json`（`data_dir`、`user`、`server_url`），读取逻辑集中在 `internal/config`。Web 与 CLI HTTP 共用的 Key 默认由 daemon 生成并保存到 SQLite；`TEAM_WORKER_API_KEY` 可在启动时覆盖并持久化。
+- 新配置项加到 `internal/config`，并同步 `docs/reference.md` 的配置表。
 
 ## 五、构建与验证命令
 
@@ -69,7 +69,7 @@ go test -race ./...   # 改了 Hub、长轮询、daemon 生命周期等并发路
 
 - 代码注释、doc comment、日志与错误信息一律用英文（见 `translation.md`）。
 - CLI 输出与 `--json` 字段名对齐 ClawTeam；行为差异写进 README《与 ClawTeam 的差异》。
-- 新增或改动 API 时同步 README 的 API 表。
+- 新增或改动 API 时同步 `docs/reference.md` 的 API 表。
 
 ## 八、快速参考：新增一个 API + CLI 命令要动哪些文件
 
@@ -79,6 +79,6 @@ go test -race ./...   # 改了 Hub、长轮询、daemon 生命周期等并发路
 2. `internal/server/server.go` — `routes` 注册 `GET /v1/teams/{team}/tasks/stats`，handler 调 store 后 `respond`。
 3. `internal/client/client.go` — 加 `TaskStats` 方法。
 4. `internal/cli/task.go` — 加 `taskStatsCmd` 并挂到 `taskCmd`，用 `a.emit` 同时支持表格和 `--json`。
-5. 验证：在 `store_test.go` / `cli_test.go` 补用例，跑 `make test`；README 的命令和 API 表同步更新。
+5. 验证：在 `store_test.go` / `cli_test.go` 补用例，跑 `make test`；README 或 `docs/` 中的命令说明和 `docs/reference.md` 的 API 表同步更新。
 
 > 挂载点与禁止的改法见 `architecture.md` 的《扩展点》。

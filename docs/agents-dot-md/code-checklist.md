@@ -41,7 +41,7 @@
 `--json` 的字段名与 ClawTeam 一致（`internal/model` 的 JSON tag），agent prompt 和脚本依赖它；API 出错统一返回 `{"error": "..."}`，状态码由 `server.respond` 按 `store.Error` 的 Kind 映射（400 / 404 / 409，服务关闭时 503）。socket 访问靠文件权限 0600；可选 HTTP 监听必须校验 API Key，缺失或错误返回 401。
 
 - 改字段名、命令结构或错误码语义前，先对照 ClawTeam 的行为；确需不同的，写进 README《与 ClawTeam 的差异》。
-- 新增或改动 API、命令、配置项时，同步更新 README 对应的表。
+- 新增或改动 API、配置项时，同步更新 `docs/reference.md` 对应的表；新增或改动命令时，同步更新 README 或对应的 `docs/` 文档。
 - 强制：`internal/cli/cli_test.go` 的端到端用例（`make test`）
 
 ## 4. 敏感信息不入库
