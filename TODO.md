@@ -25,38 +25,38 @@
 
 ### 2. `plan` 审批
 
-已有计划相关消息类型，尚无审批流程。
+已实现，命令与 ClawTeam 兼容（`plan submit/approve/reject`），另有 `plan list/show`。
 
-- [ ] 明确计划批准前允许执行的操作。
-- [ ] 实现计划提交、批准、拒绝和审批状态管理。
-- [ ] 持久化计划正文与审批结果。
+- [x] 明确计划批准前允许执行的操作：按成员开启（`spawn`/`team add-member --plan-required`）。开启后，成员在有已批准的计划前不能把任务改为 `in_progress` 或 `completed`，由服务端拒绝；查看任务、收发消息、提交计划不受限。未开启的成员不受影响。
+- [x] 实现计划提交、批准、拒绝和审批状态管理：状态 pending → approved / rejected，只有 leader 可审批，已审批的计划不能再改；重新提交生成新的计划 ID。
+- [x] 持久化计划正文与审批结果：`plans` 表（迁移 00007），看板 Approvals 页可查看。
 
 ### 3. `profile` / `preset`
 
-已有 CLI 适配器、模板级和成员级命令与环境变量配置，尚无独立的运行配置与端点预设管理。
+已实现，命令、字段和 13 个内置预设与 ClawTeam 兼容，保存在 `~/.team-worker/config.json`。
 
-- [ ] 明确运行配置、端点预设与现有配置的关系及覆盖顺序。
-- [ ] 确定凭据引用方式。
-- [ ] 实现独立的运行配置与端点预设管理。
+- [x] 明确运行配置、端点预设与现有配置的关系及覆盖顺序：调用方环境 < 适配器 < profile < 模板与成员配置 < `spawn --env`；`spawn --dry-run` 列出每个变量来自哪一层。`spawn`、`launch` 和 `agent resume` 支持 `--profile`。
+- [x] 确定凭据引用方式：只记录环境变量名（`api_key_env`、`env_map`），启动时从调用方环境读取，配置文件和输出中不出现密钥值。
+- [x] 实现独立的运行配置与端点预设管理：`preset list/show/set/set-client/copy/remove/remove-client/generate-profile/bootstrap` 与 `profile list/show/set/remove/test`。交互式的 `profile wizard`、`profile doctor` 未实现。
 
 ### 4. `cost`
 
-尚无用量、费用与预算管理。
+已实现，命令与 ClawTeam 兼容（`cost report/show/budget`），另有 `cost sync`。
 
-- [ ] 确定各 CLI 的用量来源与计价方式。
-- [ ] 明确预算达到限制时仅告警还是阻止继续执行。
-- [ ] 实现用量统计、费用计算与预算管理。
+- [x] 确定各 CLI 的用量来源与计价方式：`cost report` 手动上报 token 与费用；Agent 退出时和 `cost sync` 从 Claude Code、Codex 原生会话读取 token，只记 token、不计价（不维护价格表）。其他 CLI 只能手动上报。
+- [x] 明确预算达到限制时仅告警还是阻止继续执行：默认告警，首次超出给 leader 发一条消息，看板 Spend 卡片标红；`cost budget --enforce` 开启后，超出预算拒绝新的任务领取和 spawn，进行中的任务仍可完成。
+- [x] 实现用量统计、费用计算与预算管理：`cost_events` 表与团队预算字段（迁移 00009）。
 
 ### 5. `join` 审批
 
-已有直接添加成员，尚无加入审批流程。
+已实现，命令与 ClawTeam 兼容（`team request-join/join-status/approve-join/reject-join`），另有 `team join-requests`。
 
-- [ ] 实现加入申请与申请状态查询。
-- [ ] 实现申请批准与拒绝流程。
+- [x] 实现加入申请与申请状态查询：申请存入 `join_requests` 表（迁移 00008），等待结果读取申请状态，不消费收件箱；同名的待审批申请不能重复提交。
+- [x] 实现申请批准与拒绝流程：只有 leader 可审批；批准时在同一事务内加入成员并给新成员发 `join_approved`；未知申请 ID 报错。
 
 ### 6. `harness`
 
-尚无先规划后执行的阶段编排，依赖提示词持久化、计划审批与会话恢复。
+已实现，阶段状态保存在数据库（迁移 00010），看板 Board 页显示阶段进度。
 
-- [ ] 定义阶段、交付物、验收条件和失败处理。
-- [ ] 在所依赖能力就绪后，实现先规划后执行的阶段编排。
+- [x] 定义阶段、交付物、验收条件和失败处理：discuss（需 `discussion.md`）→ plan（需 `spec.md` 和已批准的规划者计划）→ execute（本轮任务全部完成）→ verify（`eval-report.json` 结论为 pass）→ ship（完成）。验证不通过时退回 execute 并生成返工任务，超过 `--max-attempts` 后整轮标记为失败。
+- [x] 在所依赖能力就绪后，实现先规划后执行的阶段编排：`harness start/status/advance/approve/abort/artifact/artifacts/task/conduct`。`conduct` 每次检查都从数据库重新读取状态，按阶段拉起规划者、执行者、评审者，关卡满足后自动推进，中断后可接着运行。
