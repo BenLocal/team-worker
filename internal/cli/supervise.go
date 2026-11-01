@@ -14,6 +14,7 @@ import (
 
 	"github.com/benlocal/team-worker/internal/agent"
 	"github.com/benlocal/team-worker/internal/agent/builtin"
+	"github.com/benlocal/team-worker/internal/client"
 	"github.com/benlocal/team-worker/internal/config"
 	"github.com/benlocal/team-worker/internal/model"
 	"github.com/benlocal/team-worker/internal/spawn"
@@ -177,8 +178,10 @@ func (a *app) supervise(ctx context.Context, team, name, runID, paste string, co
 			cancel()
 			return nil
 		}
-		if err := a.captureNativeSession(reportCtx, team, name, runID); err != nil {
-			fmt.Fprintf(a.errOut, "capture session: %v\n", err)
+		// Reading the session first lets the daemon save a Codex session id
+		// that the restart below resumes.
+		if _, err := c.GetSession(reportCtx, team, name, user); err != nil && !client.IsNotFound(err) {
+			fmt.Fprintf(a.errOut, "read session: %v\n", err)
 		}
 		_, err = c.AgentExitedRun(reportCtx, team, name, runID, code)
 		cancel()

@@ -61,3 +61,21 @@ func (c *Client) ResumeAgent(ctx context.Context, team, name, user string, in mo
 	var out json.RawMessage
 	return out, c.do(ctx, http.MethodPost, teamPath(team, "agents", name, "resume"), url.Values{"user": {user}}, in, &out)
 }
+
+// TerminateAgent has the daemon stop an agent's process on its machine:
+// it saves the session, records the stop as intended, ends the process and
+// returns the agent's tasks to pending.
+func (c *Client) TerminateAgent(ctx context.Context, team, name string) (model.AgentExit, error) {
+	var out model.AgentExit
+	return out, c.do(ctx, http.MethodPost, teamPath(team, "agents", name, "terminate"), nil, struct{}{}, &out)
+}
+
+// AgentScreen returns what an agent's terminal, or its subprocess log, shows
+// now, with lines more of scrollback.
+func (c *Client) AgentScreen(ctx context.Context, team, name string, lines int) (string, error) {
+	var out struct {
+		Screen string `json:"screen"`
+	}
+	q := url.Values{"lines": {strconv.Itoa(lines)}}
+	return out.Screen, c.do(ctx, http.MethodGet, teamPath(team, "agents", name, "screen"), q, nil, &out)
+}

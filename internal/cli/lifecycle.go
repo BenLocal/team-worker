@@ -31,10 +31,9 @@ func (a *app) onExitCmd() *cobra.Command {
 		Short: "Record an agent's exit (run automatically by spawn)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := a.captureNativeSession(cmd.Context(), team, agent, runID); err != nil {
-				fmt.Fprintf(a.errOut, "capture session: %v\n", err)
-			}
-			if _, _, err := a.syncSessionUsage(cmd.Context(), team, agent); err != nil {
+			// The daemon reads the session files: it saves a Codex session id
+			// and records the session's token usage before the exit.
+			if _, err := a.client().SyncCosts(cmd.Context(), team, agent); err != nil {
 				fmt.Fprintf(a.errOut, "record session usage: %v\n", err)
 			}
 			res, err := a.client().AgentExitedRun(cmd.Context(), team, agent, runID, code)
@@ -209,33 +208,7 @@ func (a *app) agentStopCmd() *cobra.Command {
 		Short: "Stop an agent's process and return its tasks to pending",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c := a.client()
-			ag, err := c.GetAgent(cmd.Context(), args[0], args[1])
-			if err != nil {
-				return a.fail(err)
-			}
-			if !proc.OnClient(ag, c.Remote()) {
-				// Only the agent's machine can end its process: record the
-				// request, which its --keepalive supervisor acts on.
-				if _, err := c.RequestAgentStop(cmd.Context(), ag.Team, ag.Name, ag.RunID); err != nil {
-					return a.fail(err)
-				}
-				a.emit(map[string]string{"status": "stop_requested", "agent": ag.Name, "host": ag.Host}, func(w io.Writer) {
-					fmt.Fprintf(w, "OK Stop requested for '%s', which runs on %s. A --keepalive agent stops within a few seconds; "+
-						"otherwise run team-worker agent stop on that machine.\n", ag.Name, proc.Where(ag))
-				})
-				return nil
-			}
-			if err := a.captureNativeSession(cmd.Context(), ag.Team, ag.Name, ag.RunID); err != nil {
-				fmt.Fprintf(a.errOut, "capture session: %v\n", err)
-			}
-			if _, err := c.RequestAgentStop(cmd.Context(), ag.Team, ag.Name, ag.RunID); err != nil {
-				return a.fail(err)
-			}
-			if err := proc.Stop(ag); err != nil {
-				return a.fail(err)
-			}
-			res, err := c.AgentExitedRun(cmd.Context(), args[0], args[1], ag.RunID, 0)
+			res, err := a.client().TerminateAgent(cmd.Context(), args[0], args[1])
 			if err != nil {
 				return a.fail(err)
 			}
@@ -254,18 +227,11 @@ func (a *app) agentScreenCmd() *cobra.Command {
 		Short: "Print what an agent's terminal (or subprocess log) currently shows",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ag, err := a.client().GetAgent(cmd.Context(), args[0], args[1])
+			text, err := a.client().AgentScreen(cmd.Context(), args[0], args[1], lines)
 			if err != nil {
 				return a.fail(err)
 			}
-			if err := reachable(a.client(), ag); err != nil {
-				return a.fail(err)
-			}
-			text, err := proc.Screen(ag, lines)
-			if err != nil {
-				return a.fail(err)
-			}
-			a.emit(map[string]string{"agent": ag.Name, "screen": text}, func(w io.Writer) { fmt.Fprint(w, text) })
+			a.emit(map[string]string{"agent": args[1], "screen": text}, func(w io.Writer) { fmt.Fprint(w, text) })
 			return nil
 		},
 	}

@@ -7,7 +7,14 @@ import (
 )
 
 func (s *Server) getSession(w http.ResponseWriter, r *http.Request) {
-	out, err := s.store.GetSession(r.Context(), r.PathValue("team"), r.PathValue("name"), r.URL.Query().Get("user"))
+	team, name, user := r.PathValue("team"), r.PathValue("name"), r.URL.Query().Get("user")
+	out, err := s.store.GetSession(r.Context(), team, name, user)
+	if err == nil && out.SessionID == "" && out.Client == "codex" {
+		// Codex may not report its id; the daemon finds it in Codex's files.
+		if captured, cerr := s.captureSession(r.Context(), team, name); cerr == nil && captured.User == user {
+			out = captured
+		}
+	}
 	respond(w, out, err)
 }
 

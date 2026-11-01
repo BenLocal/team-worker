@@ -10,10 +10,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/benlocal/team-worker/internal/client"
 	"github.com/benlocal/team-worker/internal/config"
 	"github.com/benlocal/team-worker/internal/model"
-	"github.com/benlocal/team-worker/internal/usage"
 )
 
 func (a *app) costCmd() *cobra.Command {
@@ -140,25 +138,12 @@ func (a *app) costSyncCmd() *cobra.Command {
 	var agent string
 	cmd := &cobra.Command{
 		Use:   "sync TEAM",
-		Short: "Record token usage from the agents' native sessions now",
+		Short: "Record token usage from the agents' native sessions now (read by the daemon)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			agents, err := a.client().ListAgents(cmd.Context(), args[0])
+			recorded, err := a.client().SyncCosts(cmd.Context(), args[0], agent)
 			if err != nil {
 				return a.fail(err)
-			}
-			recorded := []model.CostEvent{}
-			for _, ag := range agents {
-				if agent != "" && ag.Name != agent {
-					continue
-				}
-				e, ok, err := a.syncSessionUsage(cmd.Context(), args[0], ag.Name)
-				if err != nil {
-					return a.fail(fmt.Errorf("%s: %w", ag.Name, err))
-				}
-				if ok {
-					recorded = append(recorded, e)
-				}
 			}
 			a.emit(map[string]any{"team": args[0], "recorded": recorded}, func(w io.Writer) {
 				fmt.Fprintf(w, "OK Recorded session usage for %d agent(s)\n", len(recorded))
@@ -168,27 +153,6 @@ func (a *app) costSyncCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVarP(&agent, "agent", "a", "", "Only this agent")
 	return cmd
-}
-
-// syncSessionUsage records the token totals of an agent's native session, if
-// its CLI keeps a session file team-worker can read.
-func (a *app) syncSessionUsage(ctx context.Context, team, name string) (model.CostEvent, bool, error) {
-	session, err := a.client().GetSession(ctx, team, name, config.IdentityFromEnv().User)
-	if client.IsNotFound(err) {
-		return model.CostEvent{}, false, nil
-	}
-	if err != nil {
-		return model.CostEvent{}, false, err
-	}
-	t, ok, err := usage.Session(session.Client, session.SessionID)
-	if err != nil || !ok {
-		return model.CostEvent{}, false, err
-	}
-	e, err := a.client().RecordSessionUsage(ctx, team, model.CostEvent{
-		AgentName: name, Provider: t.Provider, Model: t.Model, SessionID: session.SessionID,
-		InputTokens: t.Input, OutputTokens: t.Output,
-	})
-	return e, err == nil, err
 }
 
 // requireBudget refuses new work when the team's enforced budget is spent.

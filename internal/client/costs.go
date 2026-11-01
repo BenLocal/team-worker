@@ -37,3 +37,16 @@ func (c *Client) SetBudget(ctx context.Context, team string, cents float64, enfo
 	body := map[string]any{"budgetCents": cents, "enforce": enforce}
 	return out, c.do(ctx, http.MethodPut, teamPath(team, "budget"), nil, body, &out)
 }
+
+// SyncCosts has the daemon record the token totals of the team's agents'
+// native sessions, or only agent's, from its machine's session files.
+func (c *Client) SyncCosts(ctx context.Context, team, agent string) ([]model.CostEvent, error) {
+	var out struct {
+		Recorded []model.CostEvent `json:"recorded"`
+	}
+	var q url.Values
+	if agent != "" {
+		q = url.Values{"agent": {agent}}
+	}
+	return out.Recorded, c.do(ctx, http.MethodPost, teamPath(team, "costs", "sync"), q, struct{}{}, &out)
+}

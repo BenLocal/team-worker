@@ -9,10 +9,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/benlocal/team-worker/internal/client"
 	"github.com/benlocal/team-worker/internal/config"
 	"github.com/benlocal/team-worker/internal/model"
-	"github.com/benlocal/team-worker/internal/proc"
 	"github.com/benlocal/team-worker/internal/store"
 )
 
@@ -256,23 +254,7 @@ func (a *app) teamCleanupCmd() *cobra.Command {
 			if !force && !a.jsonOut && !a.confirm(fmt.Sprintf("Delete team '%s' and all its data?", name)) {
 				return a.fail(errors.New("aborted"))
 			}
-			agents, err := a.client().StopTeamAgents(cmd.Context(), name)
-			if err != nil && !client.IsNotFound(err) {
-				return a.fail(err)
-			}
-			for _, ag := range agents {
-				if ag.Status != model.AgentRunning && ag.Backend != "tmux" {
-					continue
-				}
-				if !proc.OnClient(ag, a.client().Remote()) {
-					// The stop request above reaches its --keepalive supervisor there.
-					fmt.Fprintf(a.errOut, "Agent '%s' runs on %s; asked it to stop\n", ag.Name, proc.Where(ag))
-					continue
-				}
-				if err := proc.Stop(ag); err != nil {
-					return a.fail(err)
-				}
-			}
+			// The daemon stops the team's agents before it deletes the team.
 			deleted, err := a.client().DeleteTeam(cmd.Context(), name)
 			if err != nil {
 				return a.fail(err)

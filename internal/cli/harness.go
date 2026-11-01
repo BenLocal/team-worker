@@ -19,7 +19,6 @@ import (
 	"github.com/benlocal/team-worker/internal/config"
 	harnessprompt "github.com/benlocal/team-worker/internal/harness"
 	"github.com/benlocal/team-worker/internal/model"
-	"github.com/benlocal/team-worker/internal/proc"
 	"github.com/benlocal/team-worker/internal/store"
 )
 
@@ -238,32 +237,11 @@ func (a *app) harnessAgentAlive(ctx context.Context, team, name string) bool {
 	return err == nil && ag.Status == model.AgentRunning && (ag.Alive == nil || *ag.Alive)
 }
 
-// stopAgent stops an agent the way `agent stop` does: save its session,
-// mark the stop as intended, end the process and release its tasks.
+// stopAgent stops an agent the way `agent stop` does: the daemon saves its
+// session, marks the stop as intended, ends the process and releases its
+// tasks.
 func (a *app) stopAgent(ctx context.Context, team, name string) error {
-	c := a.client()
-	ag, err := c.GetAgent(ctx, team, name)
-	if err != nil {
-		return err
-	}
-	if !proc.OnClient(ag, c.Remote()) {
-		// Its --keepalive supervisor on that machine acts on the request.
-		if _, err := c.RequestAgentStop(ctx, ag.Team, ag.Name, ag.RunID); err != nil {
-			return err
-		}
-		fmt.Fprintf(a.errOut, "Agent '%s' runs on %s; asked it to stop\n", ag.Name, proc.Where(ag))
-		return nil
-	}
-	if err := a.captureNativeSession(ctx, ag.Team, ag.Name, ag.RunID); err != nil {
-		fmt.Fprintf(a.errOut, "capture session: %v\n", err)
-	}
-	if _, err := c.RequestAgentStop(ctx, ag.Team, ag.Name, ag.RunID); err != nil {
-		return err
-	}
-	if err := proc.Stop(ag); err != nil {
-		return err
-	}
-	_, err = c.AgentExitedRun(ctx, team, name, ag.RunID, 0)
+	_, err := a.client().TerminateAgent(ctx, team, name)
 	return err
 }
 

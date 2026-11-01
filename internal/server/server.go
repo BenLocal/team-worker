@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/benlocal/team-worker/internal/model"
+	"github.com/benlocal/team-worker/internal/proc"
 	"github.com/benlocal/team-worker/internal/store"
 )
 
@@ -172,6 +173,9 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /v1/teams/{team}/agents/{name}", s.getAgent)
 	m.HandleFunc("POST /v1/teams/{team}/agents/{name}/exit", s.agentExited)
 	m.HandleFunc("POST /v1/teams/{team}/agents/{name}/stop", s.requestAgentStop)
+	m.HandleFunc("POST /v1/teams/{team}/agents/{name}/terminate", s.terminateAgent)
+	m.HandleFunc("GET /v1/teams/{team}/agents/{name}/screen", s.agentScreen)
+	m.HandleFunc("POST /v1/teams/{team}/costs/sync", s.syncCosts)
 	m.HandleFunc("POST /v1/teams/{team}/agents/{name}/resume", s.resumeAgent)
 	m.HandleFunc("POST /v1/teams/{team}/agents/{name}/activity", s.agentActivity)
 	m.HandleFunc("GET /v1/teams/{team}/sessions/{name}", s.getSession)
@@ -247,6 +251,22 @@ func (s *Server) getTeam(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteTeam(w http.ResponseWriter, r *http.Request) {
+	// Stop the team's agents first; the stop requests keep keepalive from
+	// bringing any of them back while the team goes.
+	agents, err := s.store.StopTeamAgents(r.Context(), r.PathValue("team"))
+	if err != nil && store.KindOf(err) != store.KindNotFound {
+		respond(w, nil, err)
+		return
+	}
+	for _, a := range agents {
+		if a.Status != model.AgentRunning && a.Backend != "tmux" {
+			continue
+		}
+		if err := proc.Stop(a); err != nil {
+			respond(w, nil, err)
+			return
+		}
+	}
 	deleted, err := s.store.DeleteTeam(r.Context(), r.PathValue("team"))
 	if deleted {
 		s.log.Info("team deleted", "team", r.PathValue("team"))

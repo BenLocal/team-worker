@@ -26,15 +26,6 @@ func (a *app) sessionCmd() *cobra.Command {
 		if err != nil {
 			return a.fail(err)
 		}
-		if session.SessionID == "" {
-			if err := a.captureNativeSession(cmd.Context(), args[0], name, session.RunID); err != nil {
-				return a.fail(err)
-			}
-			session, err = a.client().GetSession(cmd.Context(), args[0], name, config.IdentityFromEnv().User)
-			if err != nil {
-				return a.fail(err)
-			}
-		}
 		a.emit(session, func(w io.Writer) {
 			fmt.Fprintf(w, "Agent: %s\nClient: %s\nSession: %s\nWorkspace: %s\n", session.Agent, session.Client, session.SessionID, session.Cwd)
 		})
@@ -155,16 +146,7 @@ func (a *app) agentResumeCmd() *cobra.Command {
 			return a.fail(err)
 		}
 		if session.SessionID == "" {
-			if err := a.captureNativeSession(cmd.Context(), args[0], args[1], session.RunID); err != nil {
-				return a.fail(err)
-			}
-			session, err = a.client().GetSession(cmd.Context(), args[0], args[1], config.IdentityFromEnv().User)
-			if err != nil {
-				return a.fail(err)
-			}
-			if session.SessionID == "" {
-				return a.fail(fmt.Errorf("no native session id was captured; use session save first"))
-			}
+			return a.fail(fmt.Errorf("no native session id was captured; use session save first"))
 		}
 		layers, err := envFlagLayer(envPairs)
 		if err != nil {
