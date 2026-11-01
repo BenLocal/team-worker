@@ -73,6 +73,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     jq fd-find make tree file less zip unzip wget rsync sqlite3 lsof openssh-client \
     && ln -sf /usr/bin/fdfind /usr/local/bin/fd \
     && rm -rf /var/lib/apt/lists/*
+# Document and media conversion for agents: LibreOffice (docx/xlsx/pptx to
+# pdf), ffmpeg with x264, x265 and VP9, and CJK fonts so Chinese renders. Apt
+# installs made at runtime vanish whenever the container is recreated, so
+# they belong in the image.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libreoffice-writer libreoffice-calc libreoffice-impress ffmpeg fonts-noto-cjk fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/* \
+    && soffice --version && ffmpeg -hide_banner -encoders | grep -E 'libx264|libx265|libvpx-vp9'
 # NARB_DISABLE_NATIVE_CACHE: dsh loads native addons from node_modules instead of
 # copying them into /tmp, which the systemd mode mounts as a noexec tmpfs.
 # /opt/team-worker/bin comes first: team-worker.sh mounts freshly built

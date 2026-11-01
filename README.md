@@ -94,6 +94,6 @@ Web 看板使用与 CLI HTTP 调用相同的 Key，本机用 `team-worker key sh
 ## 参考
 
 - [docs/reference.md](docs/reference.md)：环境变量、数据目录、HTTP 远程调用、日志参数和全部 API。
-- [docker/README.md](docker/README.md)：打包 Magpie、OpenBao 和 Nginx 的 Docker 部署。
+- [docker/README.md](docker/README.md)：打包 Magpie、OpenBao 和 Nginx 的 Docker 部署，以及镜像里的第三方组件清单。
 
 后续需求见 [TODO.md](TODO.md)。

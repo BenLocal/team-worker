@@ -198,6 +198,32 @@ volumes:
 cd docker/ops && go test ./...
 ```
 
+## 镜像里的第三方组件
+
+版本以 `docker/Dockerfile` 为准，带「构建参数」的可以在构建时换掉（见下一节）。
+
+| 组件 | 版本 | 来源 | 用途 |
+|---|---|---|---|
+| Node.js（Debian 12 bookworm） | 26 | 基础镜像 `node:26-bookworm-slim` | 运行 Claude Code、Codex、pi、dsh |
+| Claude Code | 2.1.314（`CLAUDE_VERSION`） | npm `@anthropic-ai/claude-code` | Leader 和默认的 Worker |
+| Codex | 0.166.0（`CODEX_VERSION`） | npm `@openai/codex` | Worker |
+| pi | 1.4.0（`PI_VERSION`） | npm `@earendil-works/pi-coding-agent` | Worker |
+| DeepSeek Harness（dsh）、dsh-tui | 0.2.1-rc.3、0.17.0（`DSH_VERSION`、`DSH_TUI_VERSION`） | npm `@deepseek-ai/dsh`、`@deepseek-harness-tui/dsh-tui` | Worker（`dsh tui`） |
+| pnpm | 12.16.1（`PNPM_VERSION`） | npm | 安装 dsh 插件 |
+| Magpie | 0.1.2185（`MAGPIE_VERSION`） | 镜像 `ghcr.io/yetone/magpie` | 模型网关和管理界面，统一给各个 Agent 配模型 |
+| Bun | 1.4.4（`BUN_VERSION`） | GitHub release，校验 SHA256 | Magpie 插件运行时 |
+| OpenBao | 2.7.2（`OPENBAO_VERSION`） | 镜像 `quay.io/openbao/openbao` | 密钥服务，渲染成员使用的凭据文件 |
+| Docker（dockerd、CLI、插件） | 29.9.2（`DOCKER_VERSION`） | 镜像 `docker:<版本>-dind` | 容器内的 Docker（DinD），供成员构建和运行服务 |
+| Playwright + Chromium | 1.64.1（`PLAYWRIGHT_VERSION`） | pip `playwright`，浏览器装在 `/opt/ms-playwright` | 浏览器测试 |
+| LibreOffice（Writer、Calc、Impress） | 7.4（Debian 12） | apt | 文档转换，如 docx/xlsx/pptx 转 pdf |
+| ffmpeg（含 x264、x265、VP9） | 5.1（Debian 12） | apt | 音视频转码 |
+| Noto CJK、DejaVu 字体 | Debian 12 | apt `fonts-noto-cjk`、`fonts-dejavu-core` | 文档和截图里的中文显示 |
+| Nginx | Debian 12 | apt | 一个端口转发看板、Magpie、OpenBao |
+| systemd、dbus | Debian 12 | apt | 容器内的进程管理（DinD 模式） |
+| 命令行工具 | Debian 12 | apt | bash、git、tmux、curl、python3（含 venv）、ripgrep、jq、fd、make、tree、file、less、zip/unzip、wget、rsync、sqlite3、lsof、ssh 客户端、iptables、iproute2 |
+
+team-worker 自己的 `team-worker`、`team-workerd`、`team-worker-ops` 在宿主机编译后拷进镜像，不属于第三方组件。
+
 ## 构建参数
 
 ```bash
@@ -225,7 +251,7 @@ HTTP_PROXY=http://127.0.0.1:7897 HTTPS_PROXY=http://127.0.0.1:7897 \
   ./docker/team-worker.sh build
 ```
 
-`build` 先在宿主机执行 `bins`（`make web` 加静态 `go build`，产物在 `TEAM_WORKER_BIN_DIR`，默认 `bin/docker`），再把这个目录作为名为 `bins` 的构建上下文交给 `docker build`，Dockerfile 只 `COPY` 现成的二进制，不在镜像里编译。因此宿主机需要 Go 和 Node；`GOPROXY`、`NPM_REGISTRY` 也作用于这一步。直接用 `docker build` 时要自己传 `--build-context bins=<二进制目录>`。默认镜像名 `team-worker-local:latest`，容器名 `team-worker`，用 `TEAM_WORKER_IMAGE`、`TEAM_WORKER_CONTAINER` 覆盖。镜像设置 `DISABLE_AUTOUPDATER=1`，工具版本随镜像固定；同时预装 Bun（Magpie 插件运行时）、Python Playwright 与 Chromium（浏览器测试）、dsh 与 dsh-tui，以及 Agent 常用的命令行工具：rg、fd、jq、make、tree、file、less、zip/unzip、wget、rsync、sqlite3、lsof、ssh。
+`build` 先在宿主机执行 `bins`（`make web` 加静态 `go build`，产物在 `TEAM_WORKER_BIN_DIR`，默认 `bin/docker`），再把这个目录作为名为 `bins` 的构建上下文交给 `docker build`，Dockerfile 只 `COPY` 现成的二进制，不在镜像里编译。因此宿主机需要 Go 和 Node；`GOPROXY`、`NPM_REGISTRY` 也作用于这一步。直接用 `docker build` 时要自己传 `--build-context bins=<二进制目录>`。默认镜像名 `team-worker-local:latest`，容器名 `team-worker`，用 `TEAM_WORKER_IMAGE`、`TEAM_WORKER_CONTAINER` 覆盖。镜像设置 `DISABLE_AUTOUPDATER=1`，工具版本随镜像固定；同时预装 Bun（Magpie 插件运行时）、Python Playwright 与 Chromium（浏览器测试）、dsh 与 dsh-tui、LibreOffice 与 ffmpeg（文档和音视频转换，含中文字体），以及 Agent 常用的命令行工具：rg、fd、jq、make、tree、file、less、zip/unzip、wget、rsync、sqlite3、lsof、ssh。
 
 项目挂载到 `/workspace`，修改直接写回宿主机；Linux 上项目需允许容器用户 UID 1000 读写。`<容器名>-home` 卷保存 Claude 登录状态、原生会话历史、team-worker 数据库和 Magpie 配置。重启容器时，Leader 有准确会话标识就续接原会话，否则创建新会话；Worker 需用 `team-worker agent resume` 手动续接。tmux 会话会重新创建。
 
