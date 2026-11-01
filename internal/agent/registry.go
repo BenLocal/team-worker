@@ -40,16 +40,12 @@ type Def struct {
 	HooksOn bool
 	// NoNudge turns off terminal reminders where typing into the pane is unsafe.
 	NoNudge bool
-	// Screen tells the agent's state from its terminal (herdr's detection
-	// manifest format); nil when the CLI has no such rules.
-	Screen *ScreenRules
 }
 
 func (d Def) cli() *cli {
 	c := &cli{name: d.Name, source: "builtin", tmuxPrompt: d.TmuxPrompt, batchPrompt: d.BatchPrompt, env: d.Env,
 		adjust: d.Adjust, hooks: d.Hooks, hooksOn: d.HooksOn, noNudge: d.NoNudge,
-		names: d.Names, skipArgs: d.SkipArgs, skipEnv: d.SkipEnv, noAskArgs: d.NoAskArgs, startup: d.Startup,
-		screen: d.Screen}
+		names: d.Names, skipArgs: d.SkipArgs, skipEnv: d.SkipEnv, noAskArgs: d.NoAskArgs, startup: d.Startup}
 	// clone gives the adapter its own slices and maps, so changing one
 	// adapter never reaches the definition or another adapter.
 	return c.clone()

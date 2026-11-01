@@ -70,9 +70,6 @@ type Agent interface {
 	// Nudge reports whether the daemon may type message reminders into the
 	// agent's terminal while it waits at its input prompt.
 	Nudge() bool
-	// DetectScreen reads the agent's state from its terminal; ok is false
-	// when the adapter has no screen rules for its CLI.
-	DetectScreen(in ScreenInput) (d Detection, ok bool)
 }
 
 // PromptMode is how a CLI takes its first prompt.
@@ -145,9 +142,6 @@ type cli struct {
 	// answers in the pane. askUser (an adapter's ask_user = true) keeps it.
 	noAskArgs []string
 	askUser   bool
-	// screen tells the agent's state from its terminal; nil when unknown.
-	// It is read-only and shared between copies of the adapter.
-	screen *ScreenRules
 }
 
 func (c *cli) Name() string   { return c.name }
@@ -201,13 +195,6 @@ func (c *cli) Prepare(s Session) Plan {
 }
 
 func (c *cli) Nudge() bool { return !c.noNudge }
-
-func (c *cli) DetectScreen(in ScreenInput) (Detection, bool) {
-	if c.screen == nil {
-		return Detection{}, false
-	}
-	return c.screen.Detect(in), true
-}
 
 func (c *cli) StartupKeys(screen string) []string {
 	for _, r := range c.startup {

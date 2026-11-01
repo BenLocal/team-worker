@@ -8,30 +8,22 @@ import (
 	"sync"
 	"time"
 
-	"github.com/benlocal/team-worker/internal/agent"
-	"github.com/benlocal/team-worker/internal/agent/builtin"
-	"github.com/benlocal/team-worker/internal/config"
 	"github.com/benlocal/team-worker/internal/model"
 	"github.com/benlocal/team-worker/internal/proc"
 	"github.com/benlocal/team-worker/internal/store"
 	"github.com/benlocal/team-worker/internal/tmux"
 )
 
-// Nudger types a one-line reminder into an agent's tmux pane when messages
-// wait in its inbox while the agent sits idle at its input prompt. Hooks
-// deliver messages while an agent works; this wakes an agent whose turn has
-// already ended, which no hook can reach.
+// Nudger reminds a worker that has stalled: it sits at its prompt with no
+// unread messages but an in-progress task, because its turn ended without
+// the Stop hook, which would have kept it working, e.g. on a model API error.
+// It gets stallReminders reminders typed into its tmux pane, then the leader
+// is told once. Messages themselves reach agents through the Deliverer.
 //
 // Whether the agent waits at its prompt comes from its hooks (see
-// model.AgentActivity): the Stop hook knows when it let the turn end. Agents
-// whose CLI reports nothing, e.g. Codex without hooks, are judged by their
-// adapter's screen rules; an adapter without screen rules is never typed
-// into, since a guess could answer a menu.
-//
-// A worker that sits at its prompt with no unread messages but an
-// in-progress task has stalled: its turn ended without the Stop hook, which
-// would have kept it working, e.g. on a model API error. It gets
-// stallReminders reminders, then the leader is told once.
+// model.AgentActivity). Agents whose CLI reports nothing, e.g. Codex or dsh,
+// are taken to wait once their screen stops changing; the screen is not
+// parsed.
 type Nudger struct {
 	Store *store.Store
 	Log   *slog.Logger
@@ -39,17 +31,10 @@ type Nudger struct {
 	Screen func(pane string) (string, error)
 	Title  func(pane string) (string, error)
 	Type   func(pane, text string) error
-	// Adapter returns the adapter that runs an agent's command.
-	Adapter func(command []string) agent.Agent
-	Now     func() time.Time
-	// IdleFor is how long an agent must wait with unread messages (or, read
-	// from the screen, keep it unchanged) before a nudge. It leaves time for
-	// a CLI extension that wakes the agent itself, as pi's does.
+	Now    func() time.Time
+	// IdleFor is how long a screen must stay unchanged for an agent without
+	// hook reports to count as waiting.
 	IdleFor time.Duration
-	// MinGap separates nudges for new messages; Repeat re-sends a reminder
-	// for messages that are still unread.
-	MinGap time.Duration
-	Repeat time.Duration
 	// StallAfter is how long a worker with an in-progress task must sit at
 	// its prompt before a reminder; StallRepeat separates the reminders and
 	// the final report to the leader.
@@ -63,13 +48,7 @@ type Nudger struct {
 type nudgeState struct {
 	screen      string
 	stableSince time.Time
-	// waitingSince is when a hook-reporting agent was first seen waiting
-	// with unread messages.
-	waitingSince time.Time
-	nudgedAt     time.Time
-	nudgedID     int64
-	// idleSince is when a hook-reporting agent was first seen waiting,
-	// with or without messages.
+	// idleSince is when a hook-reporting agent was first seen waiting.
 	idleSince time.Time
 	// stallTasks names the in-progress tasks the stall reminders are about;
 	// a different set starts the reminders over.
@@ -89,12 +68,9 @@ func NewNudger(st *store.Store, log *slog.Logger) *Nudger {
 		Log:         log,
 		Screen:      tmux.Screen,
 		Title:       tmux.Title,
-		Adapter:     adapters(log).For,
 		Type:        tmux.Paste,
 		Now:         time.Now,
 		IdleFor:     8 * time.Second,
-		MinGap:      20 * time.Second,
-		Repeat:      5 * time.Minute,
 		StallAfter:  10 * time.Minute,
 		StallRepeat: 30 * time.Minute,
 		state:       map[string]*nudgeState{},
@@ -149,59 +125,29 @@ func (n *Nudger) check(ctx context.Context, a model.Agent, key string) {
 		n.state[key] = st
 	}
 	now := n.Now()
-	var count int
-	var newest int64
-	var err error
+	var idle time.Duration
 	if a.Activity != "" {
-		// A working agent gets its messages from hooks, and typing into a
-		// blocked one would answer its question; only a waiting one is woken.
+		// A working agent is busy, and typing into a blocked one would answer
+		// its question; only a waiting one can have stalled.
 		if a.Activity != model.ActivityWaiting {
-			st.waitingSince, st.idleSince = time.Time{}, time.Time{}
+			st.idleSince = time.Time{}
 			return
 		}
 		if st.idleSince.IsZero() {
 			st.idleSince = now
 		}
-		count, newest, err = n.Store.InboxStats(ctx, a.Team, a.Name)
-		if err != nil || count == 0 {
-			st.waitingSince = time.Time{}
-			if err == nil {
-				n.checkStall(ctx, a, st, now.Sub(st.idleSince), now)
-			}
-			return
-		}
-		if st.waitingSince.IsZero() {
-			st.waitingSince = now
-		}
-		if now.Sub(st.waitingSince) < n.IdleFor {
-			return
-		}
+		idle = now.Sub(st.idleSince)
 	} else {
 		if !n.screenIdle(a, st, now) {
 			return
 		}
-		if count, newest, err = n.Store.InboxStats(ctx, a.Team, a.Name); err != nil {
-			return
-		}
-		if count == 0 {
-			n.checkStall(ctx, a, st, now.Sub(st.stableSince), now)
-			return
-		}
+		idle = now.Sub(st.stableSince)
 	}
-	fresh := newest > st.nudgedID && now.Sub(st.nudgedAt) >= n.MinGap
-	if !fresh && now.Sub(st.nudgedAt) < n.Repeat {
+	// Unread messages are the Deliverer's to paste; they wake the agent.
+	if count, _, err := n.Store.InboxStats(ctx, a.Team, a.Name); err != nil || count > 0 {
 		return
 	}
-	text := fmt.Sprintf("You have %d new team-worker message(s) in team %s. Run `team-worker inbox receive %s` "+
-		"and handle them.", count, a.Team, a.Team)
-	if err := n.Type(a.Target, text); err != nil {
-		n.Log.Warn("nudge failed", "team", a.Team, "agent", a.Name, "err", err)
-		return
-	}
-	n.Log.Info("nudged agent", "team", a.Team, "agent", a.Name, "messages", count)
-	st.nudgedAt, st.nudgedID = now, newest
-	// The reminder changes the screen; start the idle clock over.
-	st.screen = ""
+	n.checkStall(ctx, a, st, idle, now)
 }
 
 // checkStall reminds a worker that has sat at its prompt for idle, with no
@@ -258,9 +204,8 @@ func (n *Nudger) checkStall(ctx context.Context, a model.Agent, st *nudgeState, 
 }
 
 // screenIdle judges an agent whose CLI reports no activity by its screen:
-// unchanged for IdleFor, and its adapter's rules see the input prompt itself.
-// The rules' idle fallback (no rule matched) is not enough: an unknown menu
-// would look the same.
+// a working CLI redraws its progress, so a screen unchanged for IdleFor means
+// the agent is waiting.
 func (n *Nudger) screenIdle(a model.Agent, st *nudgeState, now time.Time) bool {
 	screen, err := n.Screen(a.Target)
 	if err != nil {
@@ -271,20 +216,5 @@ func (n *Nudger) screenIdle(a model.Agent, st *nudgeState, now time.Time) bool {
 		st.screen, st.stableSince = seen, now
 		return false
 	}
-	if now.Sub(st.stableSince) < n.IdleFor {
-		return false
-	}
-	d, ok := n.Adapter(a.Command).DetectScreen(agent.ScreenInput{Screen: screen, Title: title})
-	return ok && d.State == agent.ScreenIdle && d.VisibleIdle && !d.SkipStateUpdate
-}
-
-// adapters loads the agent adapters once for the daemon; a broken user
-// adapter file falls back to the built-in adapters.
-func adapters(log *slog.Logger) *agent.Registry {
-	r, err := builtin.Load(config.AgentsDir())
-	if err != nil {
-		log.Warn("agent adapters: using the built-in ones", "err", err)
-		return builtin.Registry()
-	}
-	return r
+	return now.Sub(st.stableSince) >= n.IdleFor
 }

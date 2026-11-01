@@ -302,25 +302,13 @@ func handleStartup(ctx context.Context, pane string, ad agent.Agent, paste strin
 			stable, last = 0, ""
 			continue
 		}
-		if stable >= 3 || (paste != "" && promptVisible(pane, ad)) {
+		if stable >= 3 {
 			break
 		}
 	}
 	if paste != "" && ctx.Err() == nil {
 		tmux.Paste(pane, paste)
 	}
-}
-
-// promptVisible reports whether the adapter's screen rules see its input
-// prompt, so the first prompt can be pasted before the screen settles.
-func promptVisible(pane string, ad agent.Agent) bool {
-	screen, err := tmux.Screen(pane)
-	if err != nil {
-		return false
-	}
-	title, _ := tmux.Title(pane)
-	d, ok := ad.DetectScreen(agent.ScreenInput{Screen: screen, Title: title})
-	return ok && d.State == agent.ScreenIdle && d.VisibleIdle
 }
 
 // WaitReady applies the adapter's startup interaction to a supervised tmux child.

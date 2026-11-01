@@ -14,8 +14,7 @@ var codexSubcommands = []string{"exec", "e", "review", "resume", "fork", "cloud"
 // off by default (see the hooks comment below).
 func codex() agent.Def {
 	return agent.Def{
-		Screen: screenRules["codex"],
-		Name:   "codex", Names: []string{"codex", "codex-cli"},
+		Name: "codex", Names: []string{"codex", "codex-cli"},
 		SkipArgs:   []string{"--dangerously-bypass-approvals-and-sandbox"},
 		TmuxPrompt: arg, BatchPrompt: arg,
 		Startup: []agent.StartupRule{

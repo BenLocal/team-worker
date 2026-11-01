@@ -11,8 +11,7 @@ import (
 // messages, and question menus are off because spawned agents run unattended.
 func claude() agent.Def {
 	return agent.Def{
-		Screen: screenRules["claude"],
-		Name:   "claude", Names: []string{"claude", "claude-code"},
+		Name: "claude", Names: []string{"claude", "claude-code"},
 		SkipArgs: []string{"--dangerously-skip-permissions"},
 		// The = form matters: --disallowedTools takes several values and
 		// would swallow the prompt that follows as another tool name.

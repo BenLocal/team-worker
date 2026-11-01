@@ -63,7 +63,7 @@
 
 ## 与 ClawTeam 的差距
 
-2026-10-30 对照 ClawTeam `120813f` 的 CLI 整理。以下是 ClawTeam 有、team-worker 尚未实现的能力，按建议顺序排列。消息唤醒（`runtime inject/watch`、`team watch`）、崩溃处理（`lifecycle should-keepalive/on-crash`）和浏览器终端（`board terminals`）已由 CLI hook、终端提醒、keepalive 和 Web 看板覆盖，不再单列。
+2026-10-30 对照 ClawTeam `120813f` 的 CLI 整理。以下是 ClawTeam 有、team-worker 尚未实现的能力，按建议顺序排列。消息唤醒（`runtime inject/watch`、`team watch`）、崩溃处理（`lifecycle should-keepalive/on-crash`）和浏览器终端（`board terminals`）已由 CLI hook、daemon 的消息粘贴（与 `runtime watch` 一样消息一到就粘贴，跑在 daemon 的 goroutine 里，不是单独的命令）、keepalive 和 Web 看板覆盖，不再单列。
 
 ### 7. `workspace`：Agent 的 git 工作区隔离
 

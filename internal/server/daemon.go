@@ -132,6 +132,7 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	workers.Go(func() { reapLoop(baseCtx, st, log) })
 	workers.Go(func() { NewNudger(st, log).Run(baseCtx) })
+	workers.Go(func() { NewDeliverer(st, handler.hub, log).Run(baseCtx) })
 	log.Info("team-workerd started", "socket", opts.Socket, "db", config.DBPath(opts.DataDir), "pid", os.Getpid())
 
 	select {

@@ -34,8 +34,8 @@ team-worker board serve ──> internal/board (同一看板的独立进程，�
 | `internal/client` | socket / 远程 HTTP 客户端；仅 socket 模式自动拉起服务 | `model`、`config`、`store`（仅复用 `*Input` / `TaskFilter` 类型） | `server`、`cli` |
 | `internal/tmux` | 封装 tmux 命令：建窗口、发按键、粘贴、截屏 | 标准库 | 其他 internal 包 |
 | `internal/proc` | 探测与停止 agent 进程（tmux / subprocess 两种后端） | `model`、`tmux` | `store`、`server` |
-| `internal/agent` | Agent CLI 适配器的通用行为：启动参数、提示词投递、hook 配置、herdr 格式的画面规则引擎、用户 TOML 适配器；不写死任何具体 CLI | 标准库 + `BurntSushi/toml` | 其他 internal 包 |
-| `internal/agent/builtin` | 内置适配器，每个 CLI 一个文件（claude、codex、pi 等），pi 扩展脚本和各 CLI 的画面规则（`detect/*.toml`，取自 herdr）也在这里；`Registry()` / `Load()` 是取适配器的入口 | `agent` | 其他 internal 包 |
+| `internal/agent` | Agent CLI 适配器的通用行为：启动参数、提示词投递、hook 配置、用户 TOML 适配器；不写死任何具体 CLI | 标准库 + `BurntSushi/toml` | 其他 internal 包 |
+| `internal/agent/builtin` | 内置适配器，每个 CLI 一个文件（claude、codex、pi 等），pi 扩展脚本也在这里；`Registry()` / `Load()` 是取适配器的入口 | `agent` | 其他 internal 包 |
 | `internal/spawn` | 准备环境、按 CLI 适配器启动 agent，处理启动界面与 prompt 粘贴 | `tmux`、`agent`、`agent/builtin` | `store`、`server`、`client` |
 | `internal/templates` | 读取 `~/.team-worker/templates` 下的 TOML 团队模板 | 标准库 + `BurntSushi/toml` | 其他 internal 包 |
 | `internal/board` | 只读 Web 看板（页面 `embed` 进二进制） | `client`、`proc` | `store`、`server` |

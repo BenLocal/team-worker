@@ -147,7 +147,7 @@ LLM Agent 不会自己去查收件箱。一轮回复结束、停在输入框之�
 
 这样 leader 不需要再执行 `task wait` 这种一等就是很久、期间看不到任何消息的命令：每次它准备停下时，worker 的求助和任务进展都会直接交到它手上。
 
-每个 hook 还会把 Agent 当前的状态报给 daemon：Stop hook 放行时是"等待中"（`waiting`），拦下让它继续时是"工作中"（`working`）；`UserPromptSubmit`、`PostToolUse`、`SessionStart` 报"工作中"；`Notification` 按类型报"等待中"或"等用户"（`blocked`）。`agent list` 的 ACTIVITY 列和看板的成员状态显示的就是它，下一节的终端提醒也靠它决定要不要打字。状态只属于当前这次运行，Agent 重启后清空，旧进程的上报会被忽略。
+每个 hook 还会把 Agent 当前的状态报给 daemon：Stop hook 放行时是"等待中"（`waiting`），拦下让它继续时是"工作中"（`working`）；`UserPromptSubmit`、`PostToolUse`、`SessionStart` 报"工作中"；`Notification` 按类型报"等待中"或"等用户"（`blocked`）。`agent list` 的 ACTIVITY 列和看板的成员状态显示的就是它，下一节的消息粘贴和卡住提醒也靠它判断 Agent 是在工作还是停在输入框。状态只属于当前这次运行，Agent 重启后清空，旧进程的上报会被忽略。
 
 hook 命令不论成败都以退出码 0 结束。daemon 连不上或输入格式不对时，它什么也不输出，Agent 照常停下或继续工作，不会被 team-worker 的问题卡住。
 
@@ -155,7 +155,7 @@ hook 命令不论成败都以退出码 0 结束。daemon 连不上或输入格�
 
 - Claude Code 对 Stop hook 的连续拦截有上限：Agent 没有调用工具、连续被拦 8 次后，它会强制停下。正常情况下，Agent 收到消息后会去调用 `team-worker` 等工具，计数随之清零。可以用 `CLAUDE_CODE_STOP_HOOK_BLOCK_CAP` 调大这个上限，例如在适配器里写 `[env]`。
 - Stop hook 等待期间，Claude Code 的界面会显示 "Waiting for team messages and tasks..."。这段时间里还能不能在终端输入，文档没有说明，以实际使用为准。
-- Agent 等待超时、已经完全停在输入框之后，hook 不会再被触发。这种情况由下一节的终端提醒接手；带着 `in_progress` 任务停下的成员，也由下一节的「卡住的成员」处理。
+- Agent 等待超时、已经完全停在输入框之后，hook 不会再被触发。这种情况由下一节的消息粘贴接手；带着 `in_progress` 任务停下的成员，也由下一节的「卡住的成员」处理。
 - 不想安装 hook 时，写一个适配器：`extends = "claude"` 加上 `hooks = false`。
 
 ### 给自己启动的会话装上 hook
@@ -194,29 +194,25 @@ pi 不支持 hook，但可以加载 TypeScript 扩展。team-worker 的二进制
 | `tool_execution_end` | `team-worker hook post-tool-use` | 干活途中收到的消息，以 `steer` 方式插进当前这一轮 |
 | `session_start`（resume、fork、new）、`session_compact` | `team-worker hook session-start` | 以 `nextTurn` 方式附上身份、团队说明、专属提示词和当前任务，在下一轮生效 |
 
-和 Claude Code 相比，pi 能**主动**开启新的一轮。所以 pi Agent 停在输入框时也会被扩展唤醒，用不上终端提醒。终端提醒仍然开着，只是作为备用：扩展没有加载成功时，还有它兜底。
+和 Claude Code 相比，pi 能**主动**开启新的一轮。所以 pi Agent 停在输入框时也会被扩展唤醒，停在输入框的 pi 一般会被扩展抢先取走消息；daemon 的消息粘贴仍然开着，扩展没有加载成功时由它兜底。
 
 扩展只在交互模式（tmux 后端）和 RPC 模式下运行空闲循环。print 模式（subprocess 后端会用 `-p`）在这一轮结束后就会退出，所以只会恢复上下文，不会等待新工作。扩展需要找到 team-worker 的可执行文件：spawn 会通过 `TEAM_WORKER_BIN` 传入绝对路径；如果没有这个变量，就在 `PATH` 里查找 `team-worker`。不想加载这个扩展时，写一个适配器：`extends = "pi"` 加上 `hooks = false`。
 
-## 终端提醒：唤醒停在输入框的 Agent
+## 消息粘贴：消息一到就送进 Agent 的终端
 
-hook 只在 Agent 这一轮还没结束时起作用。Agent 已经停在输入框等人输入时，什么都不会触发它，发给它的消息只会留在收件箱里。为此，daemon 每 2 秒检查一次所有 tmux 后端的 Agent，判断是否该往它的终端里输入一行提醒并回车。
+hook 只在 Agent 这一轮还没结束时起作用。Agent 已经停在输入框时，什么都不会触发它。为此，team-workerd 给本机每个 tmux 后端的 Agent 起一个 goroutine，做的事和 ClawTeam 的 `runtime watch` 一样：消息一写进它的收件箱，goroutine 就被唤醒，把消息从收件箱取走，连同发送人、时间和正文一起粘贴进它的 tmux 窗口并回车。这相当于一次新的用户输入，Agent 会开始新的一轮。
 
-有 hook 上报状态的 Agent（见上一节），daemon 只看状态，不看画面：状态是"等待中"、收件箱里有未读消息、并且这种情况已经持续 8 秒，才输入提醒。"工作中"的 Agent 这一轮结束时会由 Stop hook 收到消息，不需要打扰；"等用户"的 Agent 停在权限确认或选择菜单上，往里面打字会替你做选择，所以绝不输入。8 秒的等待留给能自己唤醒 Agent 的扩展（比如 pi），消息在这期间被取走就不再提醒。
+- **不看画面**：不解析终端内容，也不等画面停下来，所以任何 CLI 都能收到，不需要为每个 CLI 写画面规则（以前按 CLI 加载的画面规则已经删除）。Agent 正停在权限确认或选择菜单上时也照样粘贴，粘贴的内容会被当成输入。团队成员默认以跳过权限确认的方式启动（见上文「内置适配器」），一般不会停在权限菜单上；会弹菜单的 CLI 可以在适配器里写 `nudge = false` 关掉粘贴。
+- **唯一的例外**：hook 上报为「工作中」的 Agent（Claude、pi 正在一轮里，或者 Stop hook 正在等新消息）由 hook 投递，下一次工具调用后或在 Stop hook 里马上就会交给它。粘贴在这时会被排进输入框，要等 Stop hook 等待超时（worker 5 分钟、leader 10 分钟）才会被读到。状态一离开「工作中」，goroutine 就会补上粘贴。
+- **节流**：和 ClawTeam 一样，同一个发送人的消息 30 秒内只粘贴一次；之后到的消息留在收件箱里，30 秒到了或者有别的发送人的消息要粘贴时一起送出，期间 hook 也能取走它们。
+- **刚启动的 Agent**：启动后的前 15 秒不粘贴，免得和第一条提示词撞在一起。
+- **窗口已经不在了**：不取消息，消息留在收件箱里，避免取走后粘贴失败而丢失。
 
-没有任何状态上报的 Agent（比如没开 hook 的 Codex），只能从画面判断。需要同时满足：
-
-1. 收件箱里有未读消息；
-2. 终端画面已经 8 秒没有变化。正在工作的 CLI 会刷新进度动画，所以它的画面一直在变；
-3. 适配器的画面规则认定 Agent 停在输入框：命中的规则状态是 `idle`，并且标明画面上直接看得到输入框（`visible_idle`）。权限确认、选择菜单、信任提示会命中 `blocked` 规则，进度动画和 `esc to interrupt` 命中 `working` 规则，daemon 都不会打字。没有任何规则命中时也不打字，因为没见过的菜单看起来就是这样。
-
-画面规则按 CLI 区分，因为每个 CLI 的输入框、菜单和进度提示长得都不一样。内置的 claude、codex、gemini、kimi、qwen、opencode、pi 带有规则，原样取自 [herdr](https://github.com/herdrdev/herdr) 的 agent 检测清单（Apache-2.0，见 `internal/agent/builtin/detect/`）。规则同时读终端画面和 CLI 设置的终端标题（Claude Code 空闲时标题以 `✳` 开头，工作时是转动的符号），标题的判断优先于画面。`extends` 内置适配器的自定义适配器继承它的规则；dsh 和不继承内置适配器的自定义适配器没有规则，没有 hook 时 daemon 不会提醒它们。`paste` 方式送第一条提示词时，也用同一套规则判断输入框是否已经出现。
-
-提醒内容是：`You have N new team-worker message(s) in team <team>. Run team-worker inbox receive <team> and handle them.`。这行字相当于一次新的用户输入，Agent 会开始新的一轮，hook 也随之重新生效。同一批消息只提醒一次；有新消息到达时，距离上次提醒至少隔 20 秒才会再提醒；消息一直没读的话，每 5 分钟再提醒一次。
+daemon 只能往自己机器上的 tmux 窗口粘贴；用远程 CLI 在别的机器上启动的 Agent 收不到粘贴，仍由 hook 和 Stop hook 投递。subprocess 后端没有终端，也不粘贴。
 
 ### 卡住的成员
 
-成员名下有 `in_progress` 任务时，正常情况下 Stop hook 会拦下它，让它继续干。但如果这一轮是因为别的原因结束的，比如模型接口报错（Claude Code 这时不会触发 Stop hook），成员就会带着任务停在输入框；收件箱又是空的，上面的提醒也不会触发。daemon 用同样的方式判断它是否停在输入框（有状态上报的看"等待中"，没有的看画面），并按下面的节奏处理：
+成员名下有 `in_progress` 任务时，正常情况下 Stop hook 会拦下它，让它继续干。但如果这一轮是因为别的原因结束的，比如模型接口报错（Claude Code 这时不会触发 Stop hook），成员就会带着任务停在输入框；收件箱又是空的，没有消息可粘贴。daemon 判断它是否停在输入框：有状态上报的看"等待中"，没有的看终端画面（连同标题）是否 8 秒没有变化，不解析画面内容。然后按下面的节奏处理：
 
 1. 没有未读消息、名下有 `in_progress` 任务、已经连续停了 10 分钟：往终端输入一行提醒，列出任务 ID 和标题，让它继续；如果在等别人或无法继续，就把任务标成 `blocked`，或者告诉 leader。
 2. 距上次提醒 30 分钟后，如果它还停着，再提醒一次。
@@ -224,4 +220,4 @@ hook 只在 Agent 这一轮还没结束时起作用。Agent 已经停在输入�
 
 leader 不在检查范围内：成员干活时，leader 停在输入框等待是正常的。
 
-这个机制对所有 tmux 后端的 CLI 默认开启，包括没有 hook 的 CLI。subprocess 后端没有终端，所以不提醒。如果往某个 CLI 里打字会产生副作用，在适配器里写 `nudge = false` 关掉即可。
+消息粘贴和卡住提醒对所有 tmux 后端的 CLI 默认开启，包括没有 hook 的 CLI。如果往某个 CLI 里打字会产生副作用，在适配器里写 `nudge = false` 两者一起关掉。

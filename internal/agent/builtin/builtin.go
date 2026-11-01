@@ -3,35 +3,7 @@
 // CLIs exist and how each one is started.
 package builtin
 
-import (
-	"embed"
-	"path"
-
-	"github.com/benlocal/team-worker/internal/agent"
-)
-
-// detectFiles are herdr's agent detection manifests (see detect/NOTICE.md).
-//
-//go:embed detect/*.toml
-var detectFiles embed.FS
-
-// screenRules parses a built-in manifest once; an invalid one fails the
-// tests and panics at startup rather than misjudging agents later.
-var screenRules = func() map[string]*agent.ScreenRules {
-	entries, err := detectFiles.ReadDir("detect")
-	if err != nil {
-		panic(err)
-	}
-	rules := map[string]*agent.ScreenRules{}
-	for _, e := range entries {
-		data, err := detectFiles.ReadFile(path.Join("detect", e.Name()))
-		if err != nil {
-			panic(err)
-		}
-		rules[e.Name()[:len(e.Name())-len(".toml")]] = agent.MustParseScreenRules(e.Name(), data)
-	}
-	return rules
-}()
+import "github.com/benlocal/team-worker/internal/agent"
 
 var (
 	arg   = agent.PromptMode{Kind: "arg"}

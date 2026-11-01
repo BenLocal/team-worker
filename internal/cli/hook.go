@@ -136,7 +136,7 @@ func (a *app) hookStopCmd() *cobra.Command {
 func (a *app) stopReason(ctx context.Context, t hookTarget, in hookInput, wait time.Duration) string {
 	c := a.client()
 	if msgs, err := c.Receive(ctx, t.team, t.agent, t.user, 20, 0); err == nil && len(msgs) > 0 {
-		return formatMessages(t, msgs)
+		return model.FormatMessages(t.team, msgs)
 	}
 	before, err := a.hookTasks(ctx, t)
 	if err != nil {
@@ -166,7 +166,7 @@ func (a *app) stopReason(ctx context.Context, t hookTarget, in hookInput, wait t
 			return ""
 		}
 		if msgs, err := c.Receive(ctx, t.team, t.agent, t.user, 20, 0); err == nil && len(msgs) > 0 {
-			return formatMessages(t, msgs)
+			return model.FormatMessages(t.team, msgs)
 		}
 		after, err := a.hookTasks(ctx, t)
 		if err != nil {
@@ -259,26 +259,6 @@ func taskLines(tasks []model.Task) string {
 	return strings.Join(lines, "\n")
 }
 
-func formatMessages(t hookTarget, msgs []model.Message) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "You have %d new team message(s) in team %s:\n", len(msgs), t.team)
-	shutdown := false
-	for _, m := range msgs {
-		kind := string(m.Type)
-		if m.Type == "shutdown_request" {
-			kind += ", request " + m.RequestID
-			shutdown = true
-		}
-		fmt.Fprintf(&b, "\n[%s] from %s (%s):\n%s\n", formatTimestamp(m.Timestamp), m.From, kind, m.Content)
-	}
-	b.WriteString("\nHandle these messages now, then continue with your work.")
-	if shutdown {
-		fmt.Fprintf(&b, " For a shutdown request: finish or hand back your current task, run "+
-			"`team-worker lifecycle approve-shutdown %s <request-id>`, then exit.", t.team)
-	}
-	return b.String()
-}
-
 // reportIdle tells the leader once per idle stretch that this worker has
 // nothing to do.
 func (a *app) reportIdle(ctx context.Context, t hookTarget) {
@@ -316,7 +296,7 @@ func (a *app) hookPostToolCmd() *cobra.Command {
 			}
 			msgs, err := a.client().Receive(cmd.Context(), t.team, t.agent, t.user, 20, 0)
 			if err == nil && len(msgs) > 0 {
-				a.hookContext("PostToolUse", formatMessages(t, msgs))
+				a.hookContext("PostToolUse", model.FormatMessages(t.team, msgs))
 			}
 			return nil
 		},

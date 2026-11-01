@@ -23,8 +23,7 @@ func piExtension(args []string, s agent.Session, p *agent.Plan) []string {
 // pi is the built-in adapter for pi: an extension, not hooks, ties it into the team.
 func pi() agent.Def {
 	return agent.Def{
-		Screen: screenRules["pi"],
-		Name:   "pi", Names: []string{"pi"},
+		Name: "pi", Names: []string{"pi"},
 		// pi has no tool approvals; --approve trusts project-local pi files
 		// (extensions, skills) in the working directory for this run.
 		SkipArgs:   []string{"--approve"},
