@@ -36,6 +36,7 @@ func (a *app) configCmd() *cobra.Command {
 // `config health` where both have the same check.
 type health struct {
 	Mode             string  `json:"mode"`
+	Remote           string  `json:"remote,omitempty"`
 	DataDir          string  `json:"data_dir,omitempty"`
 	DataDirSource    string  `json:"data_dir_source,omitempty"`
 	Exists           bool    `json:"exists"`
@@ -62,9 +63,13 @@ const healthTimeout = 10 * time.Second
 func (a *app) checkHealth(ctx context.Context) health {
 	h := health{Problems: []string{}}
 	h.User, h.UserSource = config.IdentityFromEnv().User, source("TEAM_WORKER_USER", config.Load().User != "")
+	checkConfigFile(&h)
 	if url := config.ServerURL(); url != "" {
 		h.Mode, h.ServerURL = "remote", url
 		h.ServerURLSource = source("TEAM_WORKER_SERVER_URL", config.Load().ServerURL != "")
+		if a.remote != "" {
+			h.Remote, h.ServerURLSource = a.remote, "remotes."+a.remote
+		}
 		h.APIKeySet = config.APIKey() != ""
 		if !h.APIKeySet {
 			h.problem("TEAM_WORKER_API_KEY is not set; the server rejects requests without it")
@@ -104,6 +109,23 @@ func (a *app) checkHealth(ctx context.Context) health {
 	}
 	a.probeDaemon(ctx, &h)
 	return h
+}
+
+// checkConfigFile flags a config.json that holds API keys but that other
+// users can read.
+func checkConfigFile(h *health) {
+	path := config.FilePath()
+	info, err := os.Stat(path)
+	if err != nil || info.Mode().Perm()&0o077 == 0 {
+		return
+	}
+	for name, r := range config.Load().Remotes {
+		if r.APIKey != "" {
+			h.problem("%s holds the API key of remote %s but is readable by other users (mode %04o); run chmod 600 %s",
+				path, name, info.Mode().Perm(), path)
+			return
+		}
+	}
 }
 
 // checkDataDir checks that the data directory takes writes and that the
@@ -180,6 +202,9 @@ func printHealth(w io.Writer, h health) {
 	yes := map[bool]string{true: "yes", false: "no"}
 	fmt.Fprintf(w, "Mode: %s\n", h.Mode)
 	if h.Mode == "remote" {
+		if h.Remote != "" {
+			fmt.Fprintf(w, "Remote: %s\n", h.Remote)
+		}
 		fmt.Fprintf(w, "Server: %s (%s)\n  API key set: %s\n", h.ServerURL, h.ServerURLSource, yes[h.APIKeySet])
 	} else {
 		fmt.Fprintf(w, "Data directory: %s (%s)\n  Exists: %s\n", h.DataDir, h.DataDirSource, yes[h.Exists])

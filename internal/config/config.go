@@ -18,6 +18,20 @@ type File struct {
 	DataDir   string `json:"data_dir"`
 	User      string `json:"user"`
 	ServerURL string `json:"server_url,omitempty"`
+	// Remotes are deployments the CLI reaches as an operator with --remote.
+	Remotes map[string]Remote `json:"remotes,omitempty"`
+}
+
+// Remote is a named deployment: its API URL, including any reverse-proxy
+// path, the API key, and the sender name used there.
+type Remote struct {
+	ServerURL string `json:"server_url"`
+	APIKey    string `json:"api_key"`
+	// As names the operator in messages and tasks (default "operator").
+	As string `json:"as,omitempty"`
+	// UseProxy sends requests through the environment's proxy, which is
+	// bypassed by default since deployments are usually on the LAN.
+	UseProxy bool `json:"use_proxy,omitempty"`
 }
 
 func homeDir() string {

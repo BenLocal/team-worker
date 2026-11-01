@@ -19,7 +19,7 @@
 | `TEAM_WORKER_NO_AUTOSTART` | 设为任意值时不自动拉起服务 | 未设置 |
 | `TEAM_WORKER_START_BLOCKED_FILE` | keepalive 在该文件移除后才启动子进程；Docker 用于等待 provider Key 配置 | 未设置 |
 
-配置文件固定为 `~/.team-worker/config.json`，可设置 `data_dir`、`user` 和 `server_url`。远程 CLI 通过环境变量提供 API Key；服务端默认值保存在 SQLite。Unix socket 路径不能超过约 100 个字符；数据目录路径较长时，用 `TEAM_WORKER_SOCKET` 把 socket 放到短路径下。
+配置文件固定为 `~/.team-worker/config.json`，可设置 `data_dir`、`user`、`server_url` 和 `remotes`（见下文「HTTP 远程调用」里的操作员模式）。`server_url` 会让本机所有命令都走远程，此时 API Key 由环境变量提供；服务端默认值保存在 SQLite。Unix socket 路径不能超过约 100 个字符；数据目录路径较长时，用 `TEAM_WORKER_SOCKET` 把 socket 放到短路径下。
 
 ## 数据目录
 
@@ -57,6 +57,34 @@ TEAM_WORKER_SERVER_URL='' TEAM_WORKER_API_KEY='' team-worker team discover
 `team-worker config health` 检查 CLI 依赖的东西，配置不对时先跑它。本地模式检查数据目录能否写入、数据库能否被当前用户以读写方式打开、socket 的权限是否为 0600，以及 daemon 是否应答；远程模式检查服务地址、是否设置了 Key，以及服务端是否应答。它不会启动 daemon：socket 文件还在但 daemon 已经退出时，报告 socket 不应答。发现问题时退出码为 1，`--json` 输出的字段名与 ClawTeam 的 `config health` 一致（`data_dir`、`writable`、`latency_ms`、`teams_count` 等），另有 `problems` 列出发现的问题。服务部署在反向代理的子路径下时，`TEAM_WORKER_SERVER_URL` 要带上这个路径（比如 `http://server-host:28088/team-worker-api`），否则请求会落到代理的其他位置。
 
 远程 CLI 可以执行所有命令。`spawn`、`launch`、`agent resume` 和 `harness conduct` 在客户端这台机器上启动 Agent，Agent 继承同样的服务地址和 Key；服务端记录每个 Agent 所在的主机（`host`），只探测、回收和提醒本机的 Agent，避免把另一台机器的 pane 编号当成本机进程。`agent screen` 和 `agent stop` 等进程操作只对本机的 Agent 生效；对其他机器上的 Agent 执行 `agent stop`、`team cleanup` 或 `harness abort` 时只登记停止请求，由那台机器上的 `--keepalive` 守护进程在几秒内结束它。看板的实时终端同样只覆盖看板所在机器上的 Agent。
+
+### 操作员模式：`--remote`
+
+从团队外部操作某个部署时，把它登记在 `config.json` 的 `remotes` 里，命令前加全局参数 `--remote <名字>`，本机的其他命令不受影响：
+
+```json
+{
+  "remotes": {
+    "prod": {
+      "server_url": "http://team-worker.example.internal:28088/team-worker-api",
+      "api_key": "<Key>",
+      "as": "operator"
+    }
+  }
+}
+```
+
+```bash
+team-worker --remote prod config health
+team-worker --remote prod task list demo
+```
+
+- `server_url` 是完整的 API 地址，反向代理加了路径前缀时要带上（Docker 部署是 `/team-worker-api`）。
+- 以 `as`（默认 `operator`）的身份发消息和建任务；本机的 Agent 身份变量（`TEAM_WORKER_AGENT_ID`、`TEAM_WORKER_TEAM_NAME` 等）会被忽略，在某个团队的 Agent 会话里执行也不会冒用那个成员的身份。
+- 不自动启动本机 daemon；默认不走环境里的代理（服务器地址加入 `NO_PROXY`），需要代理时设 `"use_proxy": true`。
+- 拒绝 `spawn`、`launch`、`agent resume`、`harness conduct`，因为它们会在本机启动 Agent。
+- `task wait` 不带 `--agent` 时读操作员自己的收件箱，不碰 Leader 的；`--task <ID>`（可重复）只等指定任务；查询临时失败会重试，连续 5 次失败才放弃。
+- `config.json` 存了 Key 却对其他用户可读时，`config health` 会报为问题；文件权限应为 600。
 
 HTTP 请求使用 `Authorization: Bearer <API Key>`，包括健康检查在内的所有 API 均校验 Key；缺失或错误时返回 `401 {"error":"Unauthorized"}`。socket 请求按文件权限控制，不校验 Key。共享 Key 的读取接口仅在本地 socket 可用，已认证的远程 HTTP 请求也不能读取它。
 

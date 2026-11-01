@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -291,6 +292,7 @@ func countTasks(tasks []model.Task) taskCounts {
 
 func (a *app) taskWaitCmd() *cobra.Command {
 	var agent string
+	var only []string
 	var pollInterval, timeout float64
 	cmd := &cobra.Command{
 		Use:   "wait TEAM",
@@ -303,6 +305,11 @@ func (a *app) taskWaitCmd() *cobra.Command {
 			defer stop()
 
 			inbox, user := agent, config.IdentityFromEnv().User
+			if inbox == "" && a.remote != "" {
+				// An operator reads its own inbox; taking the leader's would
+				// keep its members' reports from the leader.
+				inbox = config.IdentityFromEnv().AgentName
+			}
 			if inbox == "" {
 				leader, err := c.Leader(ctx, team)
 				if err != nil {
@@ -340,6 +347,7 @@ func (a *app) taskWaitCmd() *cobra.Command {
 
 			status, lastSummary := "interrupted", ""
 			var tasks []model.Task
+			failures := 0
 			for {
 				var err error
 				tasks, err = c.ListTasks(ctx, team, store.TaskFilter{})
@@ -347,7 +355,23 @@ func (a *app) taskWaitCmd() *cobra.Command {
 					break
 				}
 				if err != nil {
-					return a.fail(err)
+					// A timed-out request should not end a long wait; a wrong key
+					// or a missing team will not get better.
+					var apiErr *client.APIError
+					if failures++; failures >= waitMaxFailures || (errors.As(err, &apiErr) && apiErr.Status < 500) {
+						return a.fail(err)
+					}
+					fmt.Fprintf(a.errOut, "task wait: %v (attempt %d of %d)\n", err, failures, waitMaxFailures)
+					if !waitRetry(ctx, poll) {
+						break
+					}
+					continue
+				}
+				failures = 0
+				if len(only) > 0 {
+					if tasks, err = pickTasks(tasks, only); err != nil {
+						return a.fail(err)
+					}
 				}
 				n := countTasks(tasks)
 				if summary := fmt.Sprintf("%d/%d", n.completed, n.total); summary != lastSummary {
@@ -391,10 +415,32 @@ func (a *app) taskWaitCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVarP(&agent, "agent", "a", "", "Agent inbox to monitor (default: team leader)")
+	cmd.Flags().StringVarP(&agent, "agent", "a", "", "Agent inbox to monitor (default: team leader; with --remote, the operator's own)")
+	cmd.Flags().StringSliceVar(&only, "task", nil, "Wait only for these task IDs (repeatable or comma-separated)")
 	cmd.Flags().Float64VarP(&pollInterval, "poll-interval", "p", 5, "Seconds between task checks")
 	cmd.Flags().Float64VarP(&timeout, "timeout", "t", 0, "Max seconds to wait (default: no limit)")
 	return cmd
+}
+
+// waitMaxFailures is how many task list requests in a row task wait lets
+// fail before it gives up.
+const waitMaxFailures = 5
+
+// pickTasks keeps the tasks with the given IDs, in that order.
+func pickTasks(tasks []model.Task, ids []string) ([]model.Task, error) {
+	byID := map[string]model.Task{}
+	for _, t := range tasks {
+		byID[t.ID] = t
+	}
+	picked := make([]model.Task, 0, len(ids))
+	for _, id := range ids {
+		t, ok := byID[id]
+		if !ok {
+			return nil, fmt.Errorf("task '%s' not found", id)
+		}
+		picked = append(picked, t)
+	}
+	return picked, nil
 }
 
 func (a *app) printWaitMessage(m model.Message) {

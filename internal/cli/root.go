@@ -20,9 +20,12 @@ import (
 
 type app struct {
 	jsonOut bool
-	out     io.Writer
-	errOut  io.Writer
-	in      io.Reader
+	// remote names the config.json remote chosen with --remote; empty when
+	// the CLI reaches its own daemon or TEAM_WORKER_SERVER_URL.
+	remote string
+	out    io.Writer
+	errOut io.Writer
+	in     io.Reader
 	// newClient is replaced in tests.
 	newClient func() *client.Client
 	c         *client.Client
@@ -52,11 +55,19 @@ func NewRoot(newClient func() *client.Client) *cobra.Command {
 		Short:         "Coordinate a team of CLI agents through team-workerd",
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		PersistentPreRun: func(cmd *cobra.Command, _ []string) {
+		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 			a.out, a.errOut, a.in = cmd.OutOrStdout(), cmd.ErrOrStderr(), cmd.InOrStdin()
+			if a.remote == "" {
+				return nil
+			}
+			if err := useRemote(a.remote, cmd); err != nil {
+				return a.fail(err)
+			}
+			return nil
 		},
 	}
 	root.PersistentFlags().BoolVar(&a.jsonOut, "json", false, "Output as JSON")
+	root.PersistentFlags().StringVar(&a.remote, "remote", "", "Act as an operator on this remote from config.json's remotes")
 	root.AddCommand(a.teamCmd(), a.taskCmd(), a.inboxCmd(), a.identityCmd(), a.spawnCmd(), a.lifecycleCmd(), a.sessionCmd(), a.keyCmd(),
 		a.agentCmd(), a.boardCmd(), a.templateCmd(), a.launchCmd(), a.hookCmd(), a.planCmd(), a.costCmd())
 	root.AddCommand(a.profileCmd(), a.presetCmd())

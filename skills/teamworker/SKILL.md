@@ -5,22 +5,29 @@ description: 从团队外部远程操作已部署的 team-worker 多 Agent 团�
 
 # 远程操作 team-worker 团队
 
-[scripts/teamworker.py](scripts/teamworker.py) 包装 `team-worker` CLI：注入远程地址和 Key，以操作者身份（默认 `operator`）发起请求，拦截不适合远程做的命令，并提供只读的 `wait`。建团队和启动 Agent 见仓库 [README](../../README.md)；Leader 和 Worker 的协作规则在 spawn 时随第一条提示词给出。下文 `tw` 指 `python3 {baseDir}/scripts/teamworker.py`；除 `doctor`、`wait` 外，参数原样交给 `team-worker`，用法以 `team-worker <命令> --help` 为准，需要解析时加 `--json`。
+直接用 `team-worker` CLI 加全局参数 `--remote <名字>`。它从 `~/.team-worker/config.json` 读出这个部署的地址和 Key，以操作员身份（默认 `operator`）发起请求：忽略本机的 Agent 身份变量，不自动启动本机 daemon，默认不走环境里的代理，并拒绝 `spawn`、`launch`、`agent resume`、`harness conduct` 这类会在本机启动 Agent 的命令。下文 `tw` 指 `team-worker --remote prod`；用法以 `team-worker <命令> --help` 为准，需要解析时加 `--json`。建团队和启动 Agent 见仓库 [README](../../README.md)。
 
 ## 准备
 
-1. **CLI**：按 `TEAMWORKER_BIN` → PATH 里的 `team-worker` → 本仓库 `bin/dist/` 里当前平台的版本 → `bin/team-worker` 的顺序查找。`bin/dist/` 由仓库根目录的 `make dist` 生成，含 Linux / macOS / Windows 的 amd64 和 arm64 版本；拷到别的机器用时，改名为 `team-worker`（Windows 为 `team-worker.exe`）放进 PATH。Windows 版只支持远程操作，本地 daemon 和 spawn 不可用。版本和服务端差太多时，命令或字段可能对不上。
-2. **地址和 Key**：写入 `~/.config/teamworker/remote.env`（权限 600，不进仓库），同名环境变量优先：
-   ```bash
-   TEAM_WORKER_SERVER_URL=http://team-worker.example.internal:28088   # 部署的基础地址，/team-worker-api 自动补上
-   TEAM_WORKER_API_KEY=<Key>
-   TEAMWORKER_FROM=operator        # 可选：消息和任务的发起人名字
+1. **CLI**：PATH 里的 `team-worker`（仓库根目录 `make install-cli` 安装到 `~/.local/bin`）。拷到别的机器时用 `make dist` 生成的 `bin/dist/` 里对应平台的版本，改名为 `team-worker`（Windows 为 `team-worker.exe`）。Windows 版只能远程操作。
+2. **远程配置**：写进 `~/.team-worker/config.json`（权限 600，不进仓库），已有的其他字段保留：
+   ```json
+   {
+     "remotes": {
+       "prod": {
+         "server_url": "http://team-worker.example.internal:28088/team-worker-api",
+         "api_key": "<Key>",
+         "as": "operator"
+       }
+     }
+   }
    ```
-   地址没有默认值：没设置时脚本报错退出（码 3），这时问用户要部署地址，不要猜。
-   Key 由部署方提供，或在服务器上执行 `docker exec --user node <容器名> team-worker key show` 读取。不要把 Key 写进命令行、仓库或回复。
-3. **自检**：`tw doctor` 输出 CLI 路径、服务地址、脱敏后的 Key 和团队列表。退出码 3 表示缺 Key、缺 CLI 或连不上；服务器地址会自动加入 `NO_PROXY`，需要走代理时设 `TEAMWORKER_USE_PROXY=1`。
+   - `server_url` 是完整的 API 地址，**要带上反向代理的路径**（115 是 `/team-worker-api`），不带时请求会落到 Nginx 的其他位置，返回 500。
+   - `as` 是消息和任务的发起人名字，默认 `operator`。需要经过代理才能连上时加 `"use_proxy": true`。
+   - 没有地址时问用户要，不要猜。Key 由部署方提供，或在服务器上执行 `docker exec --user node <容器名> team-worker key show` 读取。不要把 Key 写进命令行、仓库或回复。
+3. **自检**：`tw config health`。它显示用的是哪个远程配置、Key 是否设置、服务端是否应答，`config.json` 存了 Key 却对其他用户可读时也会报出来；有问题时退出码为 1。
 
-**完成标准**：`tw doctor` 列出了目标团队。
+**完成标准**：`tw config health` 显示 `Daemon: running`，`tw team discover` 列出了目标团队。
 
 ## 执行流程
 
@@ -31,7 +38,7 @@ tw team discover                     # 全部团队
 tw board show <team> -m 20           # 成员、任务和最近 20 条消息
 tw task list <team> --status in_progress
 tw agent list <team>                 # Agent 进程是否还活着
-tw inbox log <team> -l 30            # 消息历史，不消费
+tw inbox log <team> -l 30            # 消息历史，不取走
 tw cost show <team>
 ```
 
@@ -55,10 +62,13 @@ tw inbox send <team> <leader名> < brief.md                  # 长内容走 stdi
 ### 3. 等结果并核实
 
 ```bash
-tw wait <team> <任务ID>... --timeout 1800      # 只等这些任务；省略 ID 时等团队全部任务
+tw --json task wait <team> --task <任务ID> --task <任务ID> -t 1800   # 只等这些任务；不带 --task 时等团队全部任务
 ```
 
-`wait` 只轮询任务状态，每次变化输出一行 JSON，最后一行 `"event": "result"`：全部 `completed` 退出 0，超时退出 4（远端任务继续跑）。`blocked` 是在等前置任务，不算卡住。查询偶发失败（如请求超时）会输出 `"event": "error"` 并继续重试；连续 5 次失败或认证失败时退出 3，没有 `result` 行，远端任务不受影响，可以重新 `wait`。判断结果看 `wait` 自己的退出码，不要接在 `| tail` 之类的管道后面再取 `$?`，那拿到的是管道最后一个命令的退出码。
+- 输出逐行 JSON：`progress`（完成数变化）、`message`（收到的消息）、最后一行 `result`。全部 `completed` 时退出码为 0，超时或被打断时为 1，远端任务不受影响，可以重新等。
+- 用 `--remote` 时，`task wait` 读的是**操作员自己的收件箱**（成员或 Leader 发给 `operator` 的回复），读到的消息会被取走并打印出来；Leader 的收件箱不受影响。不要加 `--agent <leader名>`，那会把 Leader 的消息取走，Leader 就收不到成员汇报。
+- 查询偶发失败（比如请求超时）会在 stderr 打一行提示并重试，连续 5 次失败才放弃；认证失败、团队或任务不存在会立刻失败。
+- 判断结果看 `task wait` 自己的退出码，不要接在 `| tail` 之类的管道后面再取 `$?`。
 
 `completed` 只说明负责人把任务标成了完成。向用户报告前，用 `tw inbox log <team>` 找负责人给 Leader 的汇报，核对交付位置和结果；看不到实际结果时，如实说明只确认了状态。
 
@@ -66,17 +76,7 @@ tw wait <team> <任务ID>... --timeout 1800      # 只等这些任务；省略 I
 
 ## 不在远程做的事
 
-脚本会拒绝以下命令（退出码 2），不要绕过：
-
-- `task wait`、`inbox receive`、`inbox watch`：会读取并**消费**收件箱。不带 `--agent` 的 `task wait` 消费的是 Leader 的收件箱，外部操作者一跑，Leader 就收不到成员汇报。等结果用 `wait`，看消息用 `inbox log`。
-- `spawn`、`launch`、`agent resume`、`harness conduct`：会在**本机**启动 Agent。远程操作只调度已部署的团队。
+- `spawn`、`launch`、`agent resume`、`harness conduct`：`--remote` 下 CLI 会拒绝，因为它们会在**本机**启动 Agent。续接或重启 部署主机 上的成员，要到服务器的容器里执行（`docker exec -u node team-worker team-worker agent resume <team> <成员> --replace`）。
+- `inbox receive` / `inbox watch` 不带 `--agent` 时取的是操作员自己的收件箱，可以用；带 `--agent <其他成员>` 会取走那个成员的消息，不要这样用。
 
 远程能做但有限制：`agent screen` 只能看本机启动的 Agent；`agent stop` 对远端 Agent 只登记停止请求，由那台机器上带 `--keepalive` 的守护进程执行。`team cleanup` 会删除团队的任务和消息，只在用户明确要求时执行。
-
-## 验证
-
-```bash
-python3 -m unittest discover -s {baseDir}/tests -v
-```
-
-测试用假的 `team-worker` CLI，不连真实部署。
