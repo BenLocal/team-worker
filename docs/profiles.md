@@ -2,7 +2,7 @@
 
 > 用 profile 和 preset 管理启动 Agent 的命令、模型、端点与凭据变量。
 
-**运行配置**（profile）把启动一个 Agent 要用的命令、模型、模型端点和凭据变量记在一个名字下；**端点预设**（preset）描述一个模型服务的地址和鉴权变量，再按 CLI 生成运行配置。两者都保存在 `~/.team-worker/config.json`，字段名与 ClawTeam 相同，原有配置可以直接沿用。
+**运行配置**（profile）把启动一个 Agent 要用的命令、模型、模型端点和凭据变量记在一个名字下；**端点预设**（preset）描述一个模型服务的地址和鉴权变量，再按 CLI 生成运行配置。两者都保存在 **daemon 那台机器**的 `~/.team-worker/config.json`，字段名与 ClawTeam 相同，原有配置可以直接沿用。成员由 daemon 启动，所以 `profile`、`preset` 命令通过 API 读写 daemon 的这份配置，`profile test` 也在 daemon 上运行；凭据变量（`api_key_env` 等）从 daemon 的环境里读取。远程（`--remote`）执行这些命令时，改的是服务器上的配置，不是本机的。
 
 ```bash
 team-worker preset list                                  # 内置 13 个预设，本地同名预设覆盖内置的

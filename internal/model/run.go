@@ -120,3 +120,13 @@ type Conducting struct {
 	Conducting bool   `json:"conducting"`
 	Started    bool   `json:"started"`
 }
+
+// ProfileTest is the result of running a profile once with a short prompt.
+type ProfileTest struct {
+	Profile    string   `json:"profile"`
+	Agent      string   `json:"agent"`
+	Command    []string `json:"command"`
+	ReturnCode int      `json:"returncode"`
+	Stdout     string   `json:"stdout"`
+	Stderr     string   `json:"stderr"`
+}

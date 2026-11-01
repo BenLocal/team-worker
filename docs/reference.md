@@ -167,6 +167,8 @@ team-workerd 记录这些事件：
 | `GET /v1/teams/{team}/agents/{name}/screen?lines=N` | 成员终端（或 subprocess 日志）当前的内容 |
 | `POST /v1/teams/{team}/costs/sync?agent=...` | 从 daemon 那台机器上的原生会话文件记录 token 用量 |
 | `POST /v1/launch` | 按模板建团队并启动全部成员（`model.LaunchRequest`；`templateText` 是客户端读出的模板文件内容） |
+| `GET/PUT /v1/profiles` | 读取 / 整体保存 daemon `config.json` 里的运行配置和端点预设（`profile`、`preset` 命令用它） |
+| `POST /v1/profiles/{name}/test` | 在 daemon 上用一句短提示运行一次该 profile（请求体 `prompt`、`cwd`），返回命令、退出码和输出 |
 | `POST/DELETE /v1/teams/{team}/harness/conduct` | 让 daemon 开始 / 停止调度团队正在进行的 harness 运行，停止不影响这一轮本身 |
 | `POST /v1/teams/{team}/agents/stop` | 批量保存团队的停止意图并返回进程记录 |
 | `GET/PUT /v1/teams/{team}/sessions/{name}?user=...` | 读取 / 保存原生会话；保存时校验运行标识 |

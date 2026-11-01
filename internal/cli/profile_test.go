@@ -153,7 +153,7 @@ func TestProfileTestRunsTheCommand(t *testing.T) {
 	h := newHarness(t)
 	var res map[string]string
 	h.json(&res, "profile", "set", "echo", "--command", "sh -c 'echo profile-ok'")
-	var out profileTestResult
+	var out model.ProfileTest
 	h.json(&out, "profile", "test", "echo")
 	if out.ReturnCode != 0 || !strings.Contains(out.Stdout, "profile-ok") || out.Agent != "sh" {
 		t.Fatalf("profile test = %+v", out)

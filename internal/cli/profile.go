@@ -1,25 +1,16 @@
 package cli
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"os/exec"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 
-	"github.com/benlocal/team-worker/internal/agent"
-	"github.com/benlocal/team-worker/internal/agent/builtin"
-	"github.com/benlocal/team-worker/internal/config"
 	"github.com/benlocal/team-worker/internal/profile"
-	"github.com/benlocal/team-worker/internal/runner"
-	"github.com/benlocal/team-worker/internal/spawn"
 )
 
 // profileFlags are the fields shared by `profile set` and `preset set-client`.
@@ -153,9 +144,15 @@ func splitWords(s string) ([]string, error) {
 	return words, nil
 }
 
-func (a *app) loadProfiles() (profile.Config, error) { return profile.Load(config.FilePath()) }
+// The daemon owns the profiles and presets in its config.json, as it
+// starts the agents that use them; these commands edit them over the API.
+func (a *app) loadProfiles() (profile.Config, error) {
+	return a.client().Profiles(context.Background())
+}
 
-func (a *app) saveProfiles(c profile.Config) error { return profile.Save(config.FilePath(), c) }
+func (a *app) saveProfiles(c profile.Config) error {
+	return a.client().SaveProfiles(context.Background(), c)
+}
 
 func (a *app) presetCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "preset", Short: "Endpoint presets that generate client profiles",
@@ -499,7 +496,7 @@ func (a *app) profileCmd() *cobra.Command {
 	test := &cobra.Command{
 		Use: "test NAME", Short: "Run a profile once with a short prompt and report the result", Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			res, err := a.testProfile(cmd.Context(), args[0], prompt, cwd)
+			res, err := a.client().TestProfile(cmd.Context(), args[0], prompt, cwd)
 			if err != nil {
 				return a.fail(err)
 			}
@@ -520,7 +517,7 @@ func (a *app) profileCmd() *cobra.Command {
 		},
 	}
 	test.Flags().StringVar(&prompt, "prompt", "Reply with exactly TEAM_WORKER_PROFILE_OK", "Prompt sent to the agent")
-	test.Flags().StringVar(&cwd, "cwd", "", "Working directory for the test run (default: current directory)")
+	test.Flags().StringVar(&cwd, "cwd", "", "Working directory for the test run on the daemon's machine (default: the daemon's)")
 
 	cmd.AddCommand(set, &cobra.Command{
 		Use: "remove NAME", Short: "Remove a profile", Args: cobra.ExactArgs(1),
@@ -546,67 +543,6 @@ func (a *app) profileCmd() *cobra.Command {
 		},
 	}, test)
 	return cmd
-}
-
-type profileTestResult struct {
-	Profile    string   `json:"profile"`
-	Agent      string   `json:"agent"`
-	Command    []string `json:"command"`
-	ReturnCode int      `json:"returncode"`
-	Stdout     string   `json:"stdout"`
-	Stderr     string   `json:"stderr"`
-}
-
-// testProfile runs the profile's command non-interactively, the way a
-// subprocess agent starts, with the profile environment applied.
-func (a *app) testProfile(ctx context.Context, name, prompt, cwd string) (profileTestResult, error) {
-	cfg, err := a.loadProfiles()
-	if err != nil {
-		return profileTestResult{}, err
-	}
-	p, ok := cfg.Profiles[name]
-	if !ok {
-		return profileTestResult{}, fmt.Errorf("Profile '%s' not found", name)
-	}
-	caller := os.Environ()
-	applied, err := profile.Apply(p, nil, profile.CallerEnv(caller))
-	if err != nil {
-		return profileTestResult{}, err
-	}
-	registry, err := builtin.Load(config.AgentsDir())
-	if err != nil {
-		return profileTestResult{}, err
-	}
-	adapter := registry.For(applied.Command)
-	plan := adapter.Prepare(agent.Session{Command: applied.Command, Prompt: prompt, SkipPermissions: true})
-	env, err := spawn.ComposeEnv(spawn.EnvSpec{Caller: caller, Adapter: plan.Env, AdapterName: adapter.Name(),
-		Layers: []spawn.EnvLayer{{Name: "profile " + name, Set: applied.Env}}})
-	if err != nil {
-		return profileTestResult{}, err
-	}
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-	defer cancel()
-	run := exec.CommandContext(ctx, plan.Args[0], plan.Args[1:]...)
-	run.Dir = cwd
-	for k, v := range env.Vars {
-		run.Env = append(run.Env, k+"="+v)
-	}
-	if plan.Stdin != "" {
-		run.Stdin = strings.NewReader(plan.Stdin)
-	}
-	var stdout, stderr bytes.Buffer
-	run.Stdout, run.Stderr = &stdout, &stderr
-	res := profileTestResult{Profile: name, Agent: applied.Agent, Command: runner.HidePrompt(plan.Args, prompt)}
-	err = run.Run()
-	var exitErr *exec.ExitError
-	switch {
-	case errors.As(err, &exitErr):
-		res.ReturnCode = exitErr.ExitCode()
-	case err != nil:
-		return profileTestResult{}, fmt.Errorf("run %s: %w", plan.Args[0], err)
-	}
-	res.Stdout, res.Stderr = stdout.String(), stderr.String()
-	return res, nil
 }
 
 func sortedNames[V any](m map[string]V) []string {
