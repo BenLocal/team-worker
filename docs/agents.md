@@ -155,7 +155,7 @@ hook 命令不论成败都以退出码 0 结束。daemon 连不上或输入格�
 
 - Claude Code 对 Stop hook 的连续拦截有上限：Agent 没有调用工具、连续被拦 8 次后，它会强制停下。正常情况下，Agent 收到消息后会去调用 `team-worker` 等工具，计数随之清零。可以用 `CLAUDE_CODE_STOP_HOOK_BLOCK_CAP` 调大这个上限，例如在适配器里写 `[env]`。
 - Stop hook 等待期间，Claude Code 的界面会显示 "Waiting for team messages and tasks..."。这段时间里还能不能在终端输入，文档没有说明，以实际使用为准。
-- Agent 等待超时、已经完全停在输入框之后，hook 不会再被触发。这种情况由下一节的终端提醒接手。
+- Agent 等待超时、已经完全停在输入框之后，hook 不会再被触发。这种情况由下一节的终端提醒接手；带着 `in_progress` 任务停下的成员，也由下一节的「卡住的成员」处理。
 - 不想安装 hook 时，写一个适配器：`extends = "claude"` 加上 `hooks = false`。
 
 ### 给自己启动的会话装上 hook
@@ -213,5 +213,15 @@ hook 只在 Agent 这一轮还没结束时起作用。Agent 已经停在输入�
 画面规则按 CLI 区分，因为每个 CLI 的输入框、菜单和进度提示长得都不一样。内置的 claude、codex、gemini、kimi、qwen、opencode、pi 带有规则，原样取自 [herdr](https://github.com/herdrdev/herdr) 的 agent 检测清单（Apache-2.0，见 `internal/agent/builtin/detect/`）。规则同时读终端画面和 CLI 设置的终端标题（Claude Code 空闲时标题以 `✳` 开头，工作时是转动的符号），标题的判断优先于画面。`extends` 内置适配器的自定义适配器继承它的规则；dsh 和不继承内置适配器的自定义适配器没有规则，没有 hook 时 daemon 不会提醒它们。`paste` 方式送第一条提示词时，也用同一套规则判断输入框是否已经出现。
 
 提醒内容是：`You have N new team-worker message(s) in team <team>. Run team-worker inbox receive <team> and handle them.`。这行字相当于一次新的用户输入，Agent 会开始新的一轮，hook 也随之重新生效。同一批消息只提醒一次；有新消息到达时，距离上次提醒至少隔 20 秒才会再提醒；消息一直没读的话，每 5 分钟再提醒一次。
+
+### 卡住的成员
+
+成员名下有 `in_progress` 任务时，正常情况下 Stop hook 会拦下它，让它继续干。但如果这一轮是因为别的原因结束的，比如模型接口报错（Claude Code 这时不会触发 Stop hook），成员就会带着任务停在输入框；收件箱又是空的，上面的提醒也不会触发。daemon 用同样的方式判断它是否停在输入框（有状态上报的看"等待中"，没有的看画面），并按下面的节奏处理：
+
+1. 没有未读消息、名下有 `in_progress` 任务、已经连续停了 10 分钟：往终端输入一行提醒，列出任务 ID 和标题，让它继续；如果在等别人或无法继续，就把任务标成 `blocked`，或者告诉 leader。
+2. 距上次提醒 30 分钟后，如果它还停着，再提醒一次。
+3. 又过 30 分钟仍没动静，以 `team-worker` 的名义给 leader 发一条消息，说明是哪个成员、停了多久、卡在哪些任务上。之后不再提醒，直到它名下的 `in_progress` 任务有了变化。
+
+leader 不在检查范围内：成员干活时，leader 停在输入框等待是正常的。
 
 这个机制对所有 tmux 后端的 CLI 默认开启，包括没有 hook 的 CLI。subprocess 后端没有终端，所以不提醒。如果往某个 CLI 里打字会产生副作用，在适配器里写 `nudge = false` 关掉即可。
