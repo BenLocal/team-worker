@@ -54,6 +54,8 @@ team-worker inbox send my-team leader "远程调用测试"
 TEAM_WORKER_SERVER_URL='' TEAM_WORKER_API_KEY='' team-worker team discover
 ```
 
+`team-worker config health` 检查 CLI 依赖的东西，配置不对时先跑它。本地模式检查数据目录能否写入、数据库能否被当前用户以读写方式打开、socket 的权限是否为 0600，以及 daemon 是否应答；远程模式检查服务地址、是否设置了 Key，以及服务端是否应答。它不会启动 daemon：socket 文件还在但 daemon 已经退出时，报告 socket 不应答。发现问题时退出码为 1，`--json` 输出的字段名与 ClawTeam 的 `config health` 一致（`data_dir`、`writable`、`latency_ms`、`teams_count` 等），另有 `problems` 列出发现的问题。服务部署在反向代理的子路径下时，`TEAM_WORKER_SERVER_URL` 要带上这个路径（比如 `http://server-host:28088/team-worker-api`），否则请求会落到代理的其他位置。
+
 远程 CLI 可以执行所有命令。`spawn`、`launch`、`agent resume` 和 `harness conduct` 在客户端这台机器上启动 Agent，Agent 继承同样的服务地址和 Key；服务端记录每个 Agent 所在的主机（`host`），只探测、回收和提醒本机的 Agent，避免把另一台机器的 pane 编号当成本机进程。`agent screen` 和 `agent stop` 等进程操作只对本机的 Agent 生效；对其他机器上的 Agent 执行 `agent stop`、`team cleanup` 或 `harness abort` 时只登记停止请求，由那台机器上的 `--keepalive` 守护进程在几秒内结束它。看板的实时终端同样只覆盖看板所在机器上的 Agent。
 
 HTTP 请求使用 `Authorization: Bearer <API Key>`，包括健康检查在内的所有 API 均校验 Key；缺失或错误时返回 `401 {"error":"Unauthorized"}`。socket 请求按文件权限控制，不校验 Key。共享 Key 的读取接口仅在本地 socket 可用，已认证的远程 HTTP 请求也不能读取它。
