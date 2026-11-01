@@ -85,8 +85,9 @@ team-worker agent prompt set my-team alice ""   # 清空专属提示词
 # 开一轮：discuss → plan → execute → verify → ship；团队不存在时以当前身份为 leader 创建
 team-worker harness start -g "给待办应用加上标签功能" -t my-team -n 3
 
-# 前台运行，按阶段自动拉起规划者、执行者、评审者，关卡满足后自动推进；Ctrl+C 不影响这一轮
+# 让 daemon 按阶段自动拉起规划者、执行者、评审者，关卡满足后自动推进，直到这一轮结束；命令立刻返回
 team-worker harness conduct my-team
+team-worker harness conduct my-team --stop   # 停止调度，这一轮本身不受影响
 
 # 手动操作
 team-worker harness status my-team

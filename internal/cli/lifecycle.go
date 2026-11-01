@@ -11,7 +11,6 @@ import (
 	"github.com/benlocal/team-worker/internal/client"
 	"github.com/benlocal/team-worker/internal/config"
 	"github.com/benlocal/team-worker/internal/model"
-	"github.com/benlocal/team-worker/internal/proc"
 	"github.com/benlocal/team-worker/internal/store"
 )
 
@@ -237,13 +236,4 @@ func (a *app) agentScreenCmd() *cobra.Command {
 	}
 	cmd.Flags().IntVarP(&lines, "lines", "l", 0, "Extra scrollback lines to include")
 	return cmd
-}
-
-// reachable errors when ag's process runs on a machine other than this CLI's,
-// where its pane id or pid would name an unrelated process.
-func reachable(c *client.Client, ag model.Agent) error {
-	if proc.OnClient(ag, c.Remote()) {
-		return nil
-	}
-	return fmt.Errorf("Agent '%s' runs on %s; run this command there", ag.Name, proc.Where(ag))
 }

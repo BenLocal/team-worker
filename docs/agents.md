@@ -93,7 +93,7 @@ Agent 的环境变量按下表顺序一层层合成，后面的层覆盖前面�
 
 | 顺序 | 来源 | 说明 |
 |---|---|---|
-| 1 | 调用 `spawn` 的进程的环境 | 适配器设了 `inherit = false` 时，只保留 `pass` 里列出的变量 |
+| 1 | team-workerd 的环境 | 成员由 daemon 启动，所以是 daemon 的环境，不是执行命令的 shell 的；适配器设了 `inherit = false` 时，只保留 `pass` 里列出的变量 |
 | 2 | team-worker 的通用修正 | `TERM` 是 `dumb` 或为空时改成 `xterm-256color`；去掉 `TMUX` 和 `TMUX_PANE` |
 | 3 | 适配器 | 内置适配器的设置，或者 TOML 文件里的 `env` 和 `unset`；跳过权限确认时，再加上 `skip_permissions_env` |
 | 4 | 运行配置（profile） | `--profile` 或默认运行配置的 `env`、`env_map`、端点和 API Key 变量，`--dry-run` 里显示为 `profile <名字>`；见 [profiles.md](profiles.md) |

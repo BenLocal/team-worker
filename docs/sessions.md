@@ -19,7 +19,7 @@ team-worker spawn tmux --team my-team -n alice --keepalive --max-restarts 3 --re
 
 恢复复用原 CLI 命令、工作目录和权限设置，并重新读取团队说明、成员提示词和当前任务。已有运行中的同名 Agent 时拒绝恢复，可用 `--replace` 明确替换。`agent resume` 支持 `--task`（或 `--task-file`）、`--keepalive`、`--max-restarts`、`--restart-delay` 覆盖保存的设置。
 
-成员在另一台机器上（比如部署在服务器容器里）时，在本机用 `team-worker --remote <名字> agent resume <团队> <成员>` 让服务器替你续接：服务器在它那里执行同样的 `agent resume --replace`，上下文照样续上。服务器要以 `--remote-resume` 启动，详见 [reference.md](reference.md) 的操作员模式。会话 ID 为空的成员（比如目前的 `dsh tui`）续接不了，会返回 409。
+续接由 daemon 在它所在的机器上执行，所以在本机用 `team-worker --remote <名字> agent resume <团队> <成员>` 续接服务器上的成员，和在服务器上执行完全一样。会话 ID 为空的成员（比如目前的 `dsh tui`）续接不了。
 
 keepalive 适用于 tmux 和 subprocess，正常退出和异常退出均受重试上限约束；默认最多连续重启 3 次，等待时间逐次加倍、最长 1 分钟，一次运行达到 1 分钟后重置连续次数。原生会话 ID 缺失时停止恢复并报错。每轮进程使用独立 `run_id`，旧进程的退出回报不会修改新一轮的状态。退出时任务仍退回 pending，恢复后需重新检查任务归属并领取。
 
@@ -27,7 +27,7 @@ keepalive 适用于 tmux 和 subprocess，正常退出和异常退出均受重�
 
 `session clear` 删除保存的会话记录，用于换 CLI、上下文太长想重开或会话损坏的情况；原生 CLI 的历史文件不受影响。清除后 `agent resume` 会报错，按模板启动的脚本（比如先查会话、有就续接的恢复脚本）会改为全新启动。正在运行的 Agent 不会被停止，但它退出后 keepalive 不再重启它；要立即换成新会话，先 `agent stop` 再重新 `spawn`。
 
-数据库只保存会话标识和启动信息，原生 CLI 的历史文件仍需保留。环境变量的值不随会话保存；通过模板或 `--env` 设置的变量，手动恢复时需在调用者环境或新的 `--env` 参数中提供。Claude、Codex、Gemini、Kimi、Qwen、OpenCode、pi 和 dsh 分别构造自己的精确会话恢复参数；具体可用性取决于安装的 CLI 版本，未知 CLI 不支持自动恢复。
+数据库只保存会话标识和启动信息，原生 CLI 的历史文件仍需保留。环境变量的值不随会话保存；通过模板或 `--env` 设置的变量，手动恢复时需在 daemon 的环境或新的 `--env` 参数中提供。Claude、Codex、Gemini、Kimi、Qwen、OpenCode、pi 和 dsh 分别构造自己的精确会话恢复参数；具体可用性取决于安装的 CLI 版本，未知 CLI 不支持自动恢复。
 
 恢复流程的可重复验收（使用隔离数据目录，不影响现有团队）：
 

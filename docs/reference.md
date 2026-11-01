@@ -12,7 +12,6 @@
 | `TEAM_WORKER_API_KEY` | CLI HTTP 与 Web 共用的 Key；服务端设置时覆盖并保存到 SQLite；socket 不需要 | 服务端自动生成并保存在 SQLite，客户端按需提供 |
 | `TEAM_WORKER_WEB_BASE_PATH` | 看板在反向代理下的公开路径前缀；Docker 为 `/team-worker` | 空 |
 | `TEAM_WORKER_HTTP_ADDR` | daemon 的可选 HTTP 监听地址，可由 `--listen` 覆盖；启用时必须配置 Key | 未设置，不监听 TCP |
-| `TEAM_WORKER_REMOTE_RESUME` | 设为 `1` 时 daemon 允许 HTTP 调用方续接本机成员（`--remote-resume`），见操作员模式 | 未设置，只有本地 socket 能续接 |
 | `TEAM_WORKER_AGENT_NAME` | 当前 Agent 名称，作为发件人、锁持有者和默认收件箱 | `agent` |
 | `TEAM_WORKER_AGENT_ID` | 当前 Agent ID | 随机生成 |
 | `TEAM_WORKER_USER` | 多用户场景下的用户名，收件箱按 `<user>_<name>` 区分 | 配置文件中的 `user` |
@@ -57,7 +56,7 @@ TEAM_WORKER_SERVER_URL='' TEAM_WORKER_API_KEY='' team-worker team discover
 
 `team-worker config health` 检查 CLI 依赖的东西，配置不对时先跑它。本地模式检查数据目录能否写入、数据库能否被当前用户以读写方式打开、socket 的权限是否为 0600，以及 daemon 是否应答；远程模式检查服务地址、是否设置了 Key，以及服务端是否应答。它不会启动 daemon：socket 文件还在但 daemon 已经退出时，报告 socket 不应答。发现问题时退出码为 1，`--json` 输出的字段名与 ClawTeam 的 `config health` 一致（`data_dir`、`writable`、`latency_ms`、`teams_count` 等），另有 `problems` 列出发现的问题。服务部署在反向代理的子路径下时，`TEAM_WORKER_SERVER_URL` 要带上这个路径（比如 `http://server-host:28088/team-worker-api`），否则请求会落到代理的其他位置。
 
-远程 CLI 可以执行所有命令。`spawn`、`launch`、`agent resume` 和 `harness conduct` 在客户端这台机器上启动 Agent，Agent 继承同样的服务地址和 Key；服务端记录每个 Agent 所在的主机（`host`），只探测、回收和提醒本机的 Agent，避免把另一台机器的 pane 编号当成本机进程。`agent screen` 和 `agent stop` 等进程操作只对本机的 Agent 生效；对其他机器上的 Agent 执行 `agent stop`、`team cleanup` 或 `harness abort` 时只登记停止请求，由那台机器上的 `--keepalive` 守护进程在几秒内结束它。看板的实时终端同样只覆盖看板所在机器上的 Agent。
+team-workerd 是服务端，所有实际工作都由它完成；team-worker 只是客户端，走本地 socket 还是 HTTP 只是传输方式不同，命令的行为完全一样。启动成员（`spawn`、`launch`、`agent resume`、`harness conduct`）、停止成员（`agent stop`、`team cleanup`、`harness abort`）、看成员终端（`agent screen`）、读原生会话文件（`cost sync`、补抓 Codex 会话 ID）都在 daemon 所在的机器上进行。成员继承 **daemon 的环境变量**，再叠加适配器、profile、模板和请求里的 `--env`；profile 和按名字引用的模板也来自 daemon 那台机器的 `~/.team-worker`。命令里的路径（`--cwd` 等）指 daemon 那台机器上的路径；`--task-file`、`--team-prompt-file` 和 `launch` 的模板文件例外，由客户端读出内容发过去。看板的实时终端只在看板跑在 daemon 那台机器上时可用（`team-workerd --board`）。
 
 ### 操作员模式：`--remote`
 
@@ -83,10 +82,9 @@ team-worker --remote prod task list demo
 - `server_url` 是完整的 API 地址，反向代理加了路径前缀时要带上（Docker 部署是 `/team-worker-api`）。
 - 以 `as`（默认 `operator`）的身份发消息和建任务；本机的 Agent 身份变量（`TEAM_WORKER_AGENT_ID`、`TEAM_WORKER_TEAM_NAME` 等）会被忽略，在某个团队的 Agent 会话里执行也不会冒用那个成员的身份。
 - 不自动启动本机 daemon；默认不走环境里的代理（服务器地址加入 `NO_PROXY`），需要代理时设 `"use_proxy": true`。
-- 拒绝 `spawn`、`launch`、`agent resume`、`harness conduct`，因为它们会在本机启动 Agent。
 - `task wait` 不带 `--agent` 时读操作员自己的收件箱，不碰 Leader 的；`--task <ID>`（可重复）只等指定任务；查询临时失败会重试，连续 5 次失败才放弃。
 - `config.json` 存了 Key 却对其他用户可读时，`config health` 会报为问题；文件权限应为 600。
-- `agent resume` 交给服务器执行：服务器在它自己的机器上续接这个成员保存的会话，等于在那里执行 `agent resume --replace`。服务器要以 `team-workerd --remote-resume`（环境变量 `TEAM_WORKER_REMOTE_RESUME=1`）启动，默认关闭，因为它让持有 Key 的 HTTP 调用方能在服务器上启动进程；只能续接已保存的会话，命令和工作目录都来自会话记录。`--task`、`--task-file`、`--env`、`--profile` 这时不可用。不加 `--remote`、只设了 `TEAM_WORKER_SERVER_URL` 时，本机启动的成员在本机续接，其他成员交给服务器。
+- 鉴权只看 API Key：持有 Key 就能在服务器上启动、续接和停止成员，包括 `spawn ... -- <任意命令>`，所以 Key 要按服务器登录凭据的级别保管。
 
 HTTP 请求使用 `Authorization: Bearer <API Key>`，包括健康检查在内的所有 API 均校验 Key；缺失或错误时返回 `401 {"error":"Unauthorized"}`。socket 请求按文件权限控制，不校验 Key。共享 Key 的读取接口仅在本地 socket 可用，已认证的远程 HTTP 请求也不能读取它。
 
@@ -163,7 +161,13 @@ team-workerd 记录这些事件：
 | `GET /v1/teams/{team}/agents/{name}` | Agent 详情 |
 | `POST /v1/teams/{team}/agents/{name}/exit?run_id=...&code=...` | 按运行标识回报退出并释放任务；无标识的旧回报只适用于旧运行记录 |
 | `POST /v1/teams/{team}/agents/{name}/stop?run_id=...` | 保存该轮运行的停止意图 |
-| `POST /v1/teams/{team}/agents/{name}/resume?user=...` | 在 daemon 所在机器上续接该 Agent 保存的会话（等于在那里执行 `agent resume --replace`），返回同样的 JSON；请求体只能带 `keepalive`、`maxRestarts`、`restartDelay`、`dryRun`，其他字段返回 400。HTTP 上需要 daemon 开启 `--remote-resume`，否则 403；Agent 在别的机器上、同一个 Agent 的续接还没结束、或续接本身失败时返回 409，超过 60 秒返回 504 |
+| `POST /v1/teams/{team}/agents/{name}/spawn` | 在 daemon 所在机器上启动成员（`agent spawn` 的全部参数，见 `model.SpawnRequest`），返回启动结果；`dryRun` 只检查不启动 |
+| `POST /v1/teams/{team}/agents/{name}/resume` | 续接成员保存的原生会话（`model.ResumeRequest`：可覆盖 keepalive、重启次数、任务说明、`--env`、profile），`replace` 先停掉当前进程 |
+| `POST /v1/teams/{team}/agents/{name}/terminate` | 停掉成员：补存会话 ID、登记停止意图（keepalive 不再重启）、结束进程、释放任务 |
+| `GET /v1/teams/{team}/agents/{name}/screen?lines=N` | 成员终端（或 subprocess 日志）当前的内容 |
+| `POST /v1/teams/{team}/costs/sync?agent=...` | 从 daemon 那台机器上的原生会话文件记录 token 用量 |
+| `POST /v1/launch` | 按模板建团队并启动全部成员（`model.LaunchRequest`；`templateText` 是客户端读出的模板文件内容） |
+| `POST/DELETE /v1/teams/{team}/harness/conduct` | 让 daemon 开始 / 停止调度团队正在进行的 harness 运行，停止不影响这一轮本身 |
 | `POST /v1/teams/{team}/agents/stop` | 批量保存团队的停止意图并返回进程记录 |
 | `GET/PUT /v1/teams/{team}/sessions/{name}?user=...` | 读取 / 保存原生会话；保存时校验运行标识 |
 | `DELETE /v1/teams/{team}/sessions[/{name}]?user=...` | 删除一个 Agent 的会话，不带名字时删除整个团队的会话；返回 `{"cleared": N}` |

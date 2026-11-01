@@ -5,7 +5,7 @@ description: 从团队外部远程操作已部署的 team-worker 多 Agent 团�
 
 # 远程操作 team-worker 团队
 
-直接用 `team-worker` CLI 加全局参数 `--remote <名字>`。它从 `~/.team-worker/config.json` 读出这个部署的地址和 Key，以操作员身份（默认 `operator`）发起请求：忽略本机的 Agent 身份变量，不自动启动本机 daemon，默认不走环境里的代理，并拒绝 `spawn`、`launch`、`agent resume`、`harness conduct` 这类会在本机启动 Agent 的命令。下文 `tw` 指 `team-worker --remote prod`；用法以 `team-worker <命令> --help` 为准，需要解析时加 `--json`。建团队和启动 Agent 见仓库 [README](../../README.md)。
+直接用 `team-worker` CLI 加全局参数 `--remote <名字>`。它从 `~/.team-worker/config.json` 读出这个部署的地址和 Key，以操作员身份（默认 `operator`）发起请求：忽略本机的 Agent 身份变量，不自动启动本机 daemon，默认不走环境里的代理。所有工作都由服务器完成：成员的启动、续接、停止和看终端都发生在服务器上，效果和在服务器上执行同一条命令一样。下文 `tw` 指 `team-worker --remote prod`；用法以 `team-worker <命令> --help` 为准，需要解析时加 `--json`。建团队和启动 Agent 见仓库 [README](../../README.md)。
 
 ## 准备
 
@@ -84,13 +84,13 @@ tw agent resume <team> <成员> --dry-run             # 先看服务器会执行
 tw agent resume <team> <成员> --keepalive           # 服务器停掉当前进程，续接同一个会话
 ```
 
-- 由服务器在它那里执行 `agent resume --replace`，上下文续上，Run ID 换新。服务器没开 `TEAM_WORKER_REMOTE_RESUME=1` 时返回 403。
+- 由服务器续接，上下文续上，Run ID 换新。
 - 成员退出时手上的 `in_progress` 任务会退回 `pending`，续接后它会重新领取；向用户报告时说明这一点。
 - `sessionId` 为空（比如 `dsh tui` 成员）时返回 409，只能在服务器上重新 spawn，上下文会丢。`--task`、`--env`、`--profile` 这时不可用。
 
-## 不在远程做的事
+## 注意事项
 
-- `spawn`、`launch`、`harness conduct`：`--remote` 下 CLI 会拒绝，因为它们会在**本机**启动 Agent。
+- `spawn`、`launch`、`harness conduct`、`team cleanup` 会在服务器上启动或删除东西，只在用户明确要求时执行。路径参数（`--cwd` 等）指服务器上的路径；`--task-file`、`--team-prompt-file` 和模板文件由本机读出内容发过去。`harness conduct` 立刻返回，由服务器调度到这一轮结束，`--stop` 停止调度。
 - `inbox receive` / `inbox watch` 不带 `--agent` 时取的是操作员自己的收件箱，可以用；带 `--agent <其他成员>` 会取走那个成员的消息，不要这样用。
 
-远程能做但有限制：`agent screen` 只能看本机启动的 Agent；`agent stop` 对远端 Agent 只登记停止请求，由那台机器上带 `--keepalive` 的守护进程执行。`team cleanup` 会删除团队的任务和消息，只在用户明确要求时执行。
+`agent screen` 看服务器上成员的终端，`agent stop` 由服务器直接停掉进程。`team cleanup` 会停掉团队的成员并删除任务和消息，只在用户明确要求时执行。
