@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -11,7 +10,6 @@ import (
 	"github.com/benlocal/team-worker/internal/client"
 	"github.com/benlocal/team-worker/internal/config"
 	"github.com/benlocal/team-worker/internal/model"
-	"github.com/benlocal/team-worker/internal/proc"
 	"github.com/spf13/cobra"
 )
 
@@ -103,86 +101,27 @@ func (a *app) agentResumeCmd() *cobra.Command {
 	var envPairs []string
 	var profileName string
 	cmd := &cobra.Command{Use: "resume TEAM NAME", Short: "Resume an agent's exact saved CLI session", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
-		if c := a.client(); a.remote != "" || c.Remote() {
-			// An agent resumes on its own machine: the server's, unless this
-			// CLI started it here. An operator never starts agents here.
-			ag, err := c.GetAgent(cmd.Context(), args[0], args[1])
-			if a.remote != "" || err != nil || ag.Host != proc.Host() {
-				for _, f := range []string{"task", "task-file", "env", "profile"} {
-					if cmd.Flags().Changed(f) {
-						return a.fail(fmt.Errorf("--%s is not available when the server resumes the agent; it reuses the saved session", f))
-					}
-				}
-				in := model.AgentResume{DryRun: dryRun}
-				if cmd.Flags().Changed("keepalive") {
-					in.KeepAlive = &keepalive
-				}
-				if cmd.Flags().Changed("max-restarts") {
-					in.MaxRestarts = &maxRestarts
-				}
-				if cmd.Flags().Changed("restart-delay") {
-					in.RestartDelay = delay.String()
-				}
-				raw, err := c.ResumeAgent(cmd.Context(), args[0], args[1], config.IdentityFromEnv().User, in)
-				if err != nil {
-					return a.fail(err)
-				}
-				var res spawnResult
-				if err := json.Unmarshal(raw, &res); err != nil {
-					return a.fail(fmt.Errorf("read the server's resume result: %w", err))
-				}
-				a.emit(raw, func(w io.Writer) {
-					if dryRun {
-						printDryRun(w, res)
-					} else {
-						printSpawned(w, args[0], res)
-					}
-				})
-				return nil
-			}
-		}
-		session, err := a.client().GetSession(cmd.Context(), args[0], args[1], config.IdentityFromEnv().User)
-		if err != nil {
+		in := model.ResumeRequest{Team: args[0], Name: args[1], User: config.IdentityFromEnv().User,
+			Profile: profileName, Replace: replace, DryRun: dryRun}
+		var err error
+		if in.EnvLayers, err = envFlagLayer(envPairs); err != nil {
 			return a.fail(err)
-		}
-		if session.SessionID == "" {
-			return a.fail(fmt.Errorf("no native session id was captured; use session save first"))
-		}
-		layers, err := envFlagLayer(envPairs)
-		if err != nil {
-			return a.fail(err)
-		}
-		// A profile's variables come back from the profile, not the caller.
-		profileLayers, err := profileEnvLayer(profileName, session.Command)
-		if err != nil {
-			return a.fail(err)
-		}
-		layers = append(profileLayers, layers...)
-		for _, key := range session.EnvKeys {
-			_, supplied := os.LookupEnv(key)
-			for _, layer := range layers {
-				if _, ok := layer.Set[key]; ok {
-					supplied = true
-				}
-			}
-			if !supplied {
-				return a.fail(fmt.Errorf("resume requires environment variable %s; supply it with --env or the caller environment", key))
-			}
 		}
 		if cmd.Flags().Changed("keepalive") {
-			session.KeepAlive = keepalive
+			in.KeepAlive = &keepalive
 		}
 		if cmd.Flags().Changed("max-restarts") {
-			session.MaxRestarts = maxRestarts
+			in.MaxRestarts = &maxRestarts
 		}
 		if cmd.Flags().Changed("restart-delay") {
-			session.RestartDelayMillis = delay.Milliseconds()
+			in.RestartDelay = &delay
 		}
-		var taskSet bool
-		if task, taskSet, err = taskInput(cmd, task, taskFile); err != nil {
+		if text, set, err := taskInput(cmd, task, taskFile); err != nil {
 			return a.fail(err)
+		} else if set {
+			in.Task = &text
 		}
-		res, err := a.spawnAgent(cmd.Context(), spawnRequest{RequiredEnvKeys: session.EnvKeys, Team: args[0], Name: args[1], Task: task, TaskSet: taskSet, Command: session.Command, Backend: session.Backend, Cwd: session.Cwd, SkipPerms: session.SkipPermissions, KeepAlive: session.KeepAlive, MaxRestarts: session.MaxRestarts, RestartDelay: time.Duration(session.RestartDelayMillis) * time.Millisecond, ResumeID: session.SessionID, Replace: replace, DryRun: dryRun, EnvLayers: layers})
+		res, err := a.client().ResumeAgent(cmd.Context(), in)
 		if err != nil {
 			return a.fail(err)
 		}

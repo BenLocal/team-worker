@@ -29,7 +29,11 @@ func newHarness(t *testing.T) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ts := httptest.NewServer(server.New(st, nil))
+	srv := server.New(st, nil)
+	// Agents the test server starts run this test binary for their hooks,
+	// never a team-worker installed on the machine.
+	srv.SetRunner("", workerBinary())
+	ts := httptest.NewServer(srv)
 	t.Cleanup(func() {
 		ts.Close()
 		st.Close()
@@ -236,7 +240,7 @@ func TestTaskWaitCompletes(t *testing.T) {
 func TestSpawnDryRunChangesNothing(t *testing.T) {
 	h := newHarness(t)
 	t.Setenv("GATEWAY_KEY", "k1")
-	var res spawnResult
+	var res model.SpawnResult
 	h.json(&res, "spawn", "subprocess", "--team", "ghost", "-n", "alice", "--task", "do it", "--dry-run",
 		"--env", "API_KEY=${GATEWAY_KEY}", "--", "sh", "-c", "true")
 	if res.Status != "dry-run" || res.Adapter != "generic (builtin)" || !strings.Contains(res.Prompt, "do it") {
@@ -274,7 +278,7 @@ prompt = "flag:-c"
 [env]
 SHY = "1"
 `), 0o644)
-	var res spawnResult
+	var res model.SpawnResult
 	h.json(&res, "spawn", "subprocess", "--team", "t", "-n", "a", "--dry-run", "--", "sh")
 	if !strings.HasPrefix(res.Adapter, "shy (") || len(res.Args) != 3 || res.Args[1] != "-c" {
 		t.Fatalf("user adapter not used: %+v", res)

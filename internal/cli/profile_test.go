@@ -5,6 +5,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/benlocal/team-worker/internal/model"
 )
 
 func TestPresetListAndGenerateProfile(t *testing.T) {
@@ -91,7 +93,7 @@ func TestSpawnProfileLayerOrder(t *testing.T) {
 	if strings.Contains(out, "very-secret-key") {
 		t.Fatalf("dry run printed a secret: %s", out)
 	}
-	var dry spawnResult
+	var dry model.SpawnResult
 	if err := json.Unmarshal([]byte(out), &dry); err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +116,7 @@ func TestSpawnImplicitProfileAndExplicitCommand(t *testing.T) {
 	h := newHarness(t)
 	var res map[string]string
 	h.json(&res, "profile", "set", "only", "--command", "sh", "--env", "FROM_PROFILE=1")
-	var dry spawnResult
+	var dry model.SpawnResult
 	h.json(&dry, "spawn", "subprocess", "--team", "demo", "-n", "alice", "--dry-run")
 	if !slices.Equal(dry.Command, []string{"sh"}) || !hasOrigin(dry, "FROM_PROFILE", "profile only") {
 		t.Fatalf("implicit profile not used: %+v", dry)
@@ -181,7 +183,7 @@ func TestSplitWords(t *testing.T) {
 	}
 }
 
-func hasOrigin(res spawnResult, name, origin string) bool {
+func hasOrigin(res model.SpawnResult, name, origin string) bool {
 	for _, e := range res.Env {
 		if e.Name == name && e.Origin == origin {
 			return true

@@ -2,7 +2,6 @@ package client
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -55,11 +54,22 @@ func (c *Client) StopTeamAgents(ctx context.Context, team string) ([]model.Agent
 	return out, c.do(ctx, http.MethodPost, teamPath(team, "agents", "stop"), nil, struct{}{}, &out)
 }
 
-// ResumeAgent asks the daemon to resume name's saved session on the
-// daemon's machine and returns the output of its `agent resume --json`.
-func (c *Client) ResumeAgent(ctx context.Context, team, name, user string, in model.AgentResume) (json.RawMessage, error) {
-	var out json.RawMessage
-	return out, c.do(ctx, http.MethodPost, teamPath(team, "agents", name, "resume"), url.Values{"user": {user}}, in, &out)
+// SpawnAgent has the daemon start an agent on its machine.
+func (c *Client) SpawnAgent(ctx context.Context, req model.SpawnRequest) (model.SpawnResult, error) {
+	var out model.SpawnResult
+	return out, c.do(ctx, http.MethodPost, teamPath(req.Team, "agents", req.Name, "spawn"), nil, req, &out)
+}
+
+// ResumeAgent has the daemon resume an agent's saved session on its machine.
+func (c *Client) ResumeAgent(ctx context.Context, in model.ResumeRequest) (model.SpawnResult, error) {
+	var out model.SpawnResult
+	return out, c.do(ctx, http.MethodPost, teamPath(in.Team, "agents", in.Name, "resume"), nil, in, &out)
+}
+
+// Launch has the daemon create a team from a template and spawn its agents.
+func (c *Client) Launch(ctx context.Context, in model.LaunchRequest) (model.LaunchResult, error) {
+	var out model.LaunchResult
+	return out, c.do(ctx, http.MethodPost, "/v1/launch", nil, in, &out)
 }
 
 // TerminateAgent has the daemon stop an agent's process on its machine:

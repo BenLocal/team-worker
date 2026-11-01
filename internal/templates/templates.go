@@ -104,6 +104,12 @@ func Load(name, dir string) (Template, error) {
 	return parse(data, strings.TrimSuffix(filepath.Base(path), ".toml"), path)
 }
 
+// Parse reads a template from its TOML text; name is used when the file
+// sets none, source names it in errors.
+func Parse(data []byte, name, source string) (Template, error) {
+	return parse(data, name, source)
+}
+
 // List parses every *.toml template in dir, sorted by name.
 func List(userDir string) ([]Template, error) {
 	found := map[string]Template{}

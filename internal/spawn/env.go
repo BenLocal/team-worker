@@ -9,15 +9,11 @@ import (
 	"strings"
 
 	"github.com/benlocal/team-worker/internal/agent"
+	"github.com/benlocal/team-worker/internal/model"
 )
 
-// EnvLayer is one named source of environment variables. Values may use
-// ${NAME} to take a variable from the caller's environment.
-type EnvLayer struct {
-	Name  string
-	Set   map[string]string
-	Unset []string
-}
+// EnvLayer is model's, so spawn requests can carry layers over the API.
+type EnvLayer = model.EnvLayer
 
 type EnvSpec struct {
 	// Caller is the environment team-worker runs in, as from os.Environ.

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/benlocal/team-worker/internal/client"
+	"github.com/benlocal/team-worker/internal/model"
 )
 
 func TestAgentPromptCLIAndSpawnReuse(t *testing.T) {
@@ -33,7 +34,7 @@ func TestAgentPromptCLIAndSpawnReuse(t *testing.T) {
 	if shown.Prompt != "Review security" {
 		t.Fatalf("show=%+v", shown)
 	}
-	var res spawnResult
+	var res model.SpawnResult
 	h.json(&res, "spawn", "subprocess", "--team", "demo", "-n", "alice", "--dry-run", "--", "sh")
 	if !strings.Contains(res.Prompt, "Review security") {
 		t.Fatalf("reuse: %s", res.Prompt)
@@ -73,7 +74,7 @@ func TestSpawnReadsTaskFromFile(t *testing.T) {
 	if err := os.WriteFile(file, []byte("Line one\nLine two\n\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	var res spawnResult
+	var res model.SpawnResult
 	h.json(&res, "spawn", "subprocess", "--team", "demo", "-n", "alice", "--task-file", file, "--dry-run", "--", "sh")
 	if !strings.Contains(res.Prompt, "## Task\n\nLine one\nLine two\n\n## Coordination Protocol") {
 		t.Fatalf("task file not used as the task:\n%s", res.Prompt)

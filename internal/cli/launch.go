@@ -11,7 +11,6 @@ import (
 	"github.com/benlocal/team-worker/internal/config"
 	"github.com/benlocal/team-worker/internal/model"
 	"github.com/benlocal/team-worker/internal/spawn"
-	"github.com/benlocal/team-worker/internal/store"
 	"github.com/benlocal/team-worker/internal/templates"
 )
 
@@ -73,11 +72,6 @@ func (a *app) templateCmd() *cobra.Command {
 	return cmd
 }
 
-type launchedAgent struct {
-	spawnResult
-	Error string `json:"error,omitempty"`
-}
-
 func (a *app) launchCmd() *cobra.Command {
 	var goal, teamName, backend, cwd, promptFile, profileName string
 	var envPairs []string
@@ -93,127 +87,37 @@ func (a *app) launchCmd() *cobra.Command {
 			if dash := cmd.ArgsLenAtDash(); dash > 1 || (dash == -1 && len(args) > 1) {
 				return a.fail(fmt.Errorf("unexpected arguments; put the agent command after --"))
 			}
-			tmpl, err := templates.Load(args[0], config.TemplateDir())
-			if err != nil {
-				return a.fail(err)
+			in := model.LaunchRequest{Template: args[0], Goal: goal, Team: teamName, Backend: backend, Cwd: cwd,
+				Profile: profileName, NoSkip: noSkip, User: config.IdentityFromEnv().User}
+			// A template file is the caller's; a template name is the daemon's.
+			if strings.HasSuffix(args[0], ".toml") {
+				data, err := os.ReadFile(args[0])
+				if err != nil {
+					return a.fail(err)
+				}
+				in.TemplateText = string(data)
 			}
-			var override []string
 			if dash := cmd.ArgsLenAtDash(); dash >= 0 {
-				override = args[dash:]
+				in.Command = args[dash:]
 			}
-			flagLayers, err := envFlagLayer(envPairs)
-			if err != nil {
+			var err error
+			if in.EnvLayers, err = envFlagLayer(envPairs); err != nil {
 				return a.fail(err)
 			}
-			if teamName == "" {
-				teamName = tmpl.Name + "-" + store.NewAgentID()[:6]
-			}
-			if backend == "" {
-				backend = tmpl.Backend
-			}
-
-			ctx := cmd.Context()
-			c := a.client()
-			user := config.IdentityFromEnv().User
-			leader := tmpl.Leader
-			teamPrompt := ""
 			if promptFile != "" {
 				data, err := os.ReadFile(promptFile)
 				if err != nil {
 					return a.fail(err)
 				}
-				teamPrompt = strings.TrimRight(string(data), "\n")
+				in.TeamPrompt = strings.TrimRight(string(data), "\n")
 			}
-
-			var reqs []spawnRequest
-			for _, ag := range append([]templates.Agent{leader}, tmpl.Agents...) {
-				command := ag.Command
-				if len(override) > 0 {
-					command = override
-				} else if len(command) == 0 {
-					command = tmpl.Command
-				}
-				var layers []spawn.EnvLayer
-				if len(tmpl.Env) > 0 {
-					layers = append(layers, spawn.EnvLayer{Name: "template " + tmpl.Name, Set: tmpl.Env})
-				}
-				if len(ag.Env) > 0 {
-					layers = append(layers, spawn.EnvLayer{Name: "template agent " + ag.Name, Set: ag.Env})
-				}
-				req := spawnRequest{
-					Team: teamName, Name: ag.Name, AgentType: agentType(ag), Backend: backend, Command: command,
-					Task:    templates.Render(ag.Task, goal, teamName, ag.Name, leader.Name),
-					TaskSet: true,
-					Cwd:     cwd, EnvLayers: append(layers, flagLayers...), SkipPerms: !noSkip,
-				}
-				// The profile layer goes under the template's own environment.
-				if err := applyProfile(&req, profileName); err != nil {
-					return a.fail(fmt.Errorf("agent '%s': %w", ag.Name, err))
-				}
-				reqs = append(reqs, req)
-			}
-			// Check every agent's command and environment before the team exists,
-			// so a typo does not leave a half-launched team behind.
-			for _, req := range reqs {
-				req.DryRun = true
-				if _, err := a.spawnAgent(ctx, req); err != nil {
-					return a.fail(fmt.Errorf("agent '%s': %w", req.Name, err))
-				}
-			}
-
-			if _, err := c.CreateTeam(ctx, store.CreateTeamInput{Name: teamName, Description: tmpl.Description,
-				LeaderName: leader.Name, User: user, LeaderAgentType: agentType(leader)}); err != nil {
+			out, err := a.client().Launch(cmd.Context(), in)
+			if err != nil {
 				return a.fail(err)
 			}
-			if teamPrompt != "" {
-				if _, err := c.SetTeamPrompt(ctx, teamName, teamPrompt); err != nil {
-					return a.fail(err)
-				}
-			}
-			for _, ag := range tmpl.Agents {
-				if _, err := c.AddMember(ctx, teamName, store.AddMemberInput{
-					Name: ag.Name, AgentType: agentType(ag), User: user}); err != nil {
-					return a.fail(err)
-				}
-			}
-			ids := map[string]string{}
-			for _, task := range tmpl.Tasks {
-				var deps []string
-				for _, key := range task.BlockedBy {
-					deps = append(deps, ids[key])
-				}
-				in := store.CreateTaskInput{Subject: task.Subject,
-					Description: templates.Render(task.Description, goal, teamName, task.Owner, leader.Name),
-					Owner:       task.Owner, Priority: model.Priority(task.Priority), BlockedBy: deps}
-				created, err := c.CreateTask(ctx, teamName, in)
-				if err != nil {
-					return a.fail(err)
-				}
-				if task.Key != "" {
-					ids[task.Key] = created.ID
-				}
-			}
-
-			var launched []launchedAgent
-			failed := false
-			for _, req := range reqs {
-				res, err := a.spawnAgent(ctx, req)
-				entry := launchedAgent{spawnResult: res}
-				if err != nil {
-					failed = true
-					entry.AgentName, entry.Error = req.Name, err.Error()
-				}
-				launched = append(launched, entry)
-			}
-
-			status := "launched"
-			if failed {
-				status = "partial"
-			}
-			out := map[string]any{"status": status, "team": teamName, "template": tmpl.Name,
-				"backend": backend, "agents": launched}
+			teamName, launched, backend, failed := out.Team, out.Agents, out.Backend, out.Status == "partial"
 			a.emit(out, func(w io.Writer) {
-				fmt.Fprintf(w, "Team '%s' launched from template '%s'\n\n", teamName, tmpl.Name)
+				fmt.Fprintf(w, "Team '%s' launched from template '%s'\n\n", teamName, out.Template)
 				tw := newTable(w, "AGENT", "STATUS", "WORKSPACE")
 				for _, l := range launched {
 					state := "spawned"
@@ -245,11 +149,4 @@ func (a *app) launchCmd() *cobra.Command {
 	f.StringVar(&profileName, "profile", "", "Runtime profile for every agent; template environment still overrides it")
 	f.BoolVar(&noSkip, "no-skip-permissions", false, "Keep the agent CLIs' tool approval prompts")
 	return cmd
-}
-
-func agentType(a templates.Agent) string {
-	if a.Type == "" {
-		return "general-purpose"
-	}
-	return a.Type
 }

@@ -33,9 +33,6 @@ type Options struct {
 	// WebBasePath is the public path prefix a reverse proxy serves the
 	// board under, e.g. /team-worker; empty at the root.
 	WebBasePath string
-	// RemoteResume lets HTTP clients resume this machine's agents; over the
-	// socket it is always allowed.
-	RemoteResume bool
 }
 
 // Run serves the API on a Unix socket and an optional authenticated HTTP listener.
@@ -97,7 +94,7 @@ func Run(ctx context.Context, opts Options) error {
 	baseCtx, cancelBase := context.WithCancel(context.Background())
 	defer cancelBase()
 	handler := New(st, log)
-	handler.EnableResume(NewResumer(opts.DataDir, opts.Socket), opts.RemoteResume)
+	handler.SetRunner(opts.DataDir, "")
 	httpSrv := &http.Server{
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,

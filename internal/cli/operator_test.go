@@ -63,18 +63,9 @@ func TestRemoteActsAsOperator(t *testing.T) {
 	}
 }
 
-func TestRemoteRefusesLocalAgentsAndUnknownRemotes(t *testing.T) {
+func TestRemoteRejectsUnknownRemotes(t *testing.T) {
 	h := newHarness(t)
 	operatorFixture(t, h, 0o600)
-	for _, args := range [][]string{
-		{"spawn", "tmux", "--team", "demo", "-n", "bob", "--", "claude"},
-		{"launch", "x"},
-	} {
-		out, ok := h.run(append([]string{"--json", "--remote", "prod"}, args...)...)
-		if ok || !strings.Contains(out, "not available with --remote") {
-			t.Fatalf("%v should be refused: %v %s", args, ok, out)
-		}
-	}
 	if out, ok := h.run("--json", "--remote", "nope", "team", "discover"); ok || !strings.Contains(out, "configured: prod") {
 		t.Fatalf("unknown remote: %v %s", ok, out)
 	}
@@ -120,17 +111,12 @@ func TestHealthFlagsReadableConfigWithKeys(t *testing.T) {
 	}
 }
 
-func TestRemoteResumeGoesToTheServer(t *testing.T) {
+func TestRemoteResumeRunsOnTheServer(t *testing.T) {
 	h := newHarness(t)
 	operatorFixture(t, h, 0o600)
-	// The test server has no resumer, as a daemon without --remote-resume
-	// refuses over HTTP: the request reached the server, nothing ran here.
+	// The server looks the session up: the request reached it, nothing ran here.
 	out, ok := h.run("--json", "--remote", "prod", "agent", "resume", "demo", "leader", "--keepalive")
-	if ok || !strings.Contains(out, "--remote-resume") {
+	if ok || !strings.Contains(out, "No saved session for 'leader'") {
 		t.Fatalf("%v %s", ok, out)
-	}
-	out, ok = h.run("--json", "--remote", "prod", "agent", "resume", "demo", "leader", "--task", "new instructions")
-	if ok || !strings.Contains(out, "reuses the saved session") {
-		t.Fatalf("the server resume keeps the saved prompt: %v %s", ok, out)
 	}
 }

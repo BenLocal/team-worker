@@ -272,13 +272,3 @@ func ValidateIdentifier(value, kind string, allowEmpty bool) error {
 	}
 	return nil
 }
-
-// AgentResume asks the daemon to resume an agent's saved session on its own
-// machine. Only the keepalive policy can change: the command, directory and
-// prompt come from the saved session, so a caller cannot run anything else.
-type AgentResume struct {
-	KeepAlive    *bool  `json:"keepalive,omitempty"`
-	MaxRestarts  *int   `json:"maxRestarts,omitempty"`
-	RestartDelay string `json:"restartDelay,omitempty"`
-	DryRun       bool   `json:"dryRun,omitempty"`
-}

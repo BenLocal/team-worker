@@ -48,8 +48,6 @@ func main() {
 	if env := os.Getenv("TEAM_WORKER_BOARD_LINKS"); env != "" {
 		links = strings.Split(env, ",")
 	}
-	remoteResume := flag.Bool("remote-resume", os.Getenv("TEAM_WORKER_REMOTE_RESUME") == "1",
-		"Let HTTP clients resume this machine's agents from their saved sessions (env TEAM_WORKER_REMOTE_RESUME=1)")
 	flag.Var(&links, "board-link", "Link to another service in the board header, NAME=URL (repeatable; env TEAM_WORKER_BOARD_LINKS, comma-separated)")
 	var logOpts logging.Options
 	flag.StringVar(&logOpts.Level, "log-level", envOr("TEAM_WORKER_LOG_LEVEL", "info"),
@@ -82,7 +80,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	if err := server.Run(ctx, server.Options{DataDir: *dataDir, Socket: *socket, HTTPAddr: *httpAddr, APIKey: config.APIKey(), Logger: logger,
-		Board: *boardOn, BoardLinks: boardLinks, WebBasePath: config.WebBasePath(), RemoteResume: *remoteResume}); err != nil {
+		Board: *boardOn, BoardLinks: boardLinks, WebBasePath: config.WebBasePath()}); err != nil {
 		logger.Error("team-workerd failed", "err", err)
 		fmt.Fprintln(os.Stderr, "team-workerd:", err)
 		closer.Close()

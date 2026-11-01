@@ -8,8 +8,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/spf13/cobra"
-
 	"github.com/benlocal/team-worker/internal/config"
 )
 
@@ -21,17 +19,12 @@ var localIdentity = []string{
 	"TEAM_WORKER_RUN_ID", "TEAM_WORKER_WORKSPACE_DIR",
 }
 
-// localOnly are commands that start agents on this machine, which an
-// operator of a remote deployment never wants: the agent would run here,
-// without the deployment's workspace, sessions or credentials. agent resume
-// is not among them: under --remote the server resumes the agent.
-var localOnly = [][]string{{"spawn"}, {"launch"}, {"harness", "conduct"}}
-
 // useRemote turns this process into an operator of the named remote: it
 // points the client at the remote with its key, takes the remote's sender
 // name instead of any local agent identity, never autostarts a daemon and,
-// unless the remote says otherwise, bypasses the proxy for its host.
-func useRemote(name string, cmd *cobra.Command) error {
+// unless the remote says otherwise, bypasses the proxy for its host. Agents
+// start on the remote's machine, as every command is an API call.
+func useRemote(name string) error {
 	remotes := config.Load().Remotes
 	r, ok := remotes[name]
 	if !ok {
@@ -48,12 +41,6 @@ func useRemote(name string, cmd *cobra.Command) error {
 	}
 	if r.APIKey == "" {
 		return fmt.Errorf("remote '%s' needs api_key", name)
-	}
-	words := strings.Fields(cmd.CommandPath())[1:]
-	for _, prefix := range localOnly {
-		if len(words) >= len(prefix) && slices.Equal(words[:len(prefix)], prefix) {
-			return fmt.Errorf("%s starts agents on this machine; it is not available with --remote", strings.Join(prefix, " "))
-		}
 	}
 	for _, key := range localIdentity {
 		if err := os.Unsetenv(key); err != nil {

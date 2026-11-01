@@ -60,7 +60,7 @@ func NewRoot(newClient func() *client.Client) *cobra.Command {
 			if a.remote == "" {
 				return nil
 			}
-			if err := useRemote(a.remote, cmd); err != nil {
+			if err := useRemote(a.remote); err != nil {
 				return a.fail(err)
 			}
 			return nil
