@@ -41,7 +41,7 @@ team-worker board serve ──> internal/board (同一看板的独立进程，�
 | `internal/board` | 只读 Web 看板（页面 `embed` 进二进制） | `client`、`proc` | `store`、`server` |
 | `internal/cli` | cobra 命令、人类可读输出与 `--json` | `client`、`model`、`config`、`spawn`、`agent`、`agent/builtin`、`proc`、`templates`、`board`、`store`（仅复用 `*Input` 类型） | `store` 的读写方法、`server`（测试除外） |
 
-- 依赖方向硬规则：`cli → client → (HTTP) → server → store → model`，单向。进程相关能力（`spawn` / `proc` / `tmux`）由 CLI 进程直接使用；服务端只经 `store.Probe = proc.Probe` 注入进程探测，判断任务锁持有者是否已死。业务规则只写在 `store`，`server` 只做参数解析和错误码映射，`cli` 只做展示。
+- 依赖方向硬规则：`cli → client → (HTTP/socket) → server → store → model`，单向。team-workerd 是服务端，所有实际工作都由它做：启动、续接、停止成员，看终端，读原生会话文件，调度 harness，都在 `server` / `runner` 里用 `spawn` / `proc` / `tmux` 完成；team-worker 只是客户端，CLI 里不碰进程和本机文件（客户端读出 `--task-file` 这类文件内容再发过去除外），本地和远程只差传输方式。业务规则只写在 `store`，`server` 只做参数解析和错误码映射，`cli` 只做展示。
 - `cli_test.go` 例外：用 `httptest` + `server.New(store)` 搭真实服务端做端到端测试。
 
 ## 三、分层约定
