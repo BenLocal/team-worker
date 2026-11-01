@@ -33,6 +33,12 @@ FAKE_CLI = textwrap.dedent(
     if args[:2] == ["task", "get"]:
         open(counter, "w").write(str(n + 1))
         status = plan["statuses"][min(n, len(plan["statuses"]) - 1)]
+        if status == "ERROR":
+            print(json.dumps({{"error": "context deadline exceeded (Client.Timeout)"}}))
+            sys.exit(1)
+        if status == "UNAUTHORIZED":
+            print("Unauthorized", file=sys.stderr)
+            sys.exit(1)
         print(json.dumps({{"id": args[3], "subject": "做事", "status": status, "owner": "alice"}}))
     elif args[:2] == ["task", "list"]:
         print(json.dumps(plan.get("list", [])))
@@ -160,6 +166,30 @@ class TeamworkerTest(unittest.TestCase):
         )
         self.assertEqual(p.returncode, 4)
         self.assertEqual(json.loads(p.stdout.splitlines()[-1])["status"], "timeout")
+
+    def test_wait_retries_transient_poll_errors(self):
+        self.plan({"statuses": ["in_progress", "ERROR", "ERROR", "completed"]})
+        p = self.run_cli("wait", "demo", "T1", "--interval", "0.01")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        events = [json.loads(line) for line in p.stdout.splitlines()]
+        self.assertEqual(
+            [e["attempt"] for e in events if e["event"] == "error"], [1, 2]
+        )
+        self.assertEqual(events[-1]["status"], "completed")
+
+    def test_wait_gives_up_after_consecutive_poll_errors(self):
+        self.plan({"statuses": ["in_progress", "ERROR"]})
+        p = self.run_cli("wait", "demo", "T1", "--interval", "0.01")
+        self.assertEqual(p.returncode, 3)
+        self.assertIn("连续 5 次", p.stderr)
+        # 放弃时没有 result 行，调用方不会把它当成完成或超时
+        self.assertNotIn('"event": "result"', p.stdout)
+
+    def test_wait_does_not_retry_unauthorized(self):
+        self.plan({"statuses": ["UNAUTHORIZED", "completed"]})
+        p = self.run_cli("wait", "demo", "T1", "--interval", "0.01")
+        self.assertEqual(p.returncode, 3)
+        self.assertEqual(len(self.calls()), 1)
 
     def test_wait_without_ids_waits_for_all_listed_tasks(self):
         self.plan(

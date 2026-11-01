@@ -8,7 +8,8 @@
 - 拦截会消费他人收件箱的命令，以及会在本机启动 Agent 的命令；
 - 提供只读的 wait：轮询任务状态，不读任何收件箱。
 
-退出码：wait 全部完成 0、超时 4；被拦截或用法错误 2；配置或连接问题 3；
+退出码：wait 全部完成 0、超时 4；被拦截或用法错误 2；配置或连接问题 3
+（wait 查询偶发失败会重试，连续 5 次失败或认证失败也返回 3）；
 其余命令沿用 team-worker 的退出码。只依赖 Python 3.9+ 标准库。
 """
 
@@ -47,6 +48,8 @@ BLOCKED = {
     ("harness", "conduct"): "会在本机启动 Agent，不属于远程操作",
 }
 DONE = "completed"
+# wait 连续查询失败到这个次数才放弃，偶发超时由重试吸收
+MAX_POLL_ERRORS = 5
 
 
 class Fail(Exception):
@@ -201,8 +204,30 @@ def brief(task):
 def cmd_wait(cli, env, opts):
     deadline = time.monotonic() + opts.timeout
     seen = {}
+    errors = 0
     while True:
-        tasks = snapshot(cli, env, opts.team, opts.ids)
+        try:
+            tasks = snapshot(cli, env, opts.team, opts.ids)
+        except Fail as e:
+            # 一次请求超时不该打断长时间等待；认证失败重试也不会好
+            if "Unauthorized" in str(e):
+                raise
+            errors += 1
+            print(
+                json.dumps(
+                    {"event": "error", "attempt": errors, "message": str(e)},
+                    ensure_ascii=False,
+                ),
+                flush=True,
+            )
+            if errors >= MAX_POLL_ERRORS:
+                raise Fail(
+                    f"连续 {errors} 次查询任务状态失败，停止等待（远端任务不受影响）：{e}",
+                    3,
+                )
+            time.sleep(opts.interval)
+            continue
+        errors = 0
         for t in tasks:
             b = brief(t)
             if seen.get(b["id"]) != b:

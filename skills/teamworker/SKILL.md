@@ -58,7 +58,7 @@ tw inbox send <team> <leader名> < brief.md                  # 长内容走 stdi
 tw wait <team> <任务ID>... --timeout 1800      # 只等这些任务；省略 ID 时等团队全部任务
 ```
 
-`wait` 只轮询任务状态，每次变化输出一行 JSON，最后一行 `"event": "result"`：全部 `completed` 退出 0，超时退出 4（远端任务继续跑）。`blocked` 是在等前置任务，不算卡住。
+`wait` 只轮询任务状态，每次变化输出一行 JSON，最后一行 `"event": "result"`：全部 `completed` 退出 0，超时退出 4（远端任务继续跑）。`blocked` 是在等前置任务，不算卡住。查询偶发失败（如请求超时）会输出 `"event": "error"` 并继续重试；连续 5 次失败或认证失败时退出 3，没有 `result` 行，远端任务不受影响，可以重新 `wait`。判断结果看 `wait` 自己的退出码，不要接在 `| tail` 之类的管道后面再取 `$?`，那拿到的是管道最后一个命令的退出码。
 
 `completed` 只说明负责人把任务标成了完成。向用户报告前，用 `tw inbox log <team>` 找负责人给 Leader 的汇报，核对交付位置和结果；看不到实际结果时，如实说明只确认了状态。
 
