@@ -320,29 +320,31 @@ func configureMagpie(path string, env map[string]string, magpie func(...string) 
 		model, _ = stringOr(c.claude, "model", "")
 	}
 	if model == "" {
-		settings, err := readJSONFile(filepath.Join(homeDir(), ".claude/settings.json"))
-		if err != nil {
+		if model, err = magpieClaudeModel(); err != nil {
 			return "", err
 		}
-		settingsEnv, _ := asMap(settings["env"])
-		base, _ := settingsEnv["ANTHROPIC_BASE_URL"].(string)
-		if strings.HasPrefix(base, "http://127.0.0.1:3425") {
-			model, _ = settings["model"].(string)
+	}
+	// A model Magpie cannot apply now, e.g. on a provider turned off in its
+	// panel or out of quota, only warns: failing here would stop the
+	// container and restart it into the same failure. The agents keep the
+	// models Magpie already gives them.
+	if model != "" {
+		if err := magpie("claude", model); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: cannot set Claude's model to %s (%v); Claude keeps its current model\n", model, err)
+			if model, err = magpieClaudeModel(); err != nil {
+				return "", err
+			}
+		} else if effort, ok := c.claude["effort"].(string); ok {
+			if err := magpie("claude", "effort", effort); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: cannot set Claude's effort to %s (%v)\n", effort, err)
+			}
 		}
 	}
 	if model != "" {
-		if err := magpie("claude", model); err != nil {
-			return "", err
-		}
-		if effort, ok := c.claude["effort"].(string); ok {
-			if err := magpie("claude", "effort", effort); err != nil {
-				return "", err
-			}
-		}
 		if _, err := exec.LookPath("dsh"); err == nil {
 			// dsh workers share the leader's model; Magpie writes every dsh profile.
 			if err := magpie("dsh", model); err != nil {
-				return "", err
+				fmt.Fprintf(os.Stderr, "warning: cannot set dsh's model to %s (%v)\n", model, err)
 			}
 		}
 		if err := trustWorkspace(); err != nil {
@@ -356,11 +358,10 @@ func configureMagpie(path string, env map[string]string, magpie func(...string) 
 	}
 	if _, err := exec.LookPath("codex"); err == nil && codexModel != "" {
 		if err := magpie("codex", codexModel); err != nil {
-			return "", err
-		}
-		if effort, ok := c.codex["effort"].(string); ok {
+			fmt.Fprintf(os.Stderr, "warning: cannot set Codex's model to %s (%v); Codex keeps its current model\n", codexModel, err)
+		} else if effort, ok := c.codex["effort"].(string); ok {
 			if err := magpie("codex", "effort", effort); err != nil {
-				return "", err
+				fmt.Fprintf(os.Stderr, "warning: cannot set Codex's effort to %s (%v)\n", effort, err)
 			}
 		}
 	}
@@ -372,6 +373,22 @@ func configureMagpie(path string, env map[string]string, magpie func(...string) 
 	} else if err := os.Remove(pendingPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return "", err
 	}
+	return model, nil
+}
+
+// magpieClaudeModel returns the model Magpie gives Claude now, or "" when
+// Claude does not go through the Magpie gateway.
+func magpieClaudeModel() (string, error) {
+	settings, err := readJSONFile(filepath.Join(homeDir(), ".claude/settings.json"))
+	if err != nil {
+		return "", err
+	}
+	settingsEnv, _ := asMap(settings["env"])
+	base, _ := settingsEnv["ANTHROPIC_BASE_URL"].(string)
+	if !strings.HasPrefix(base, "http://127.0.0.1:3425") {
+		return "", nil
+	}
+	model, _ := settings["model"].(string)
 	return model, nil
 }
 

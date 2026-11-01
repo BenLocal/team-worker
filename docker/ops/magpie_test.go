@@ -273,3 +273,47 @@ func toYAMLValue(t *testing.T, v any) any {
 	}
 	return out
 }
+
+func TestMagpieModelItCannotApplyOnlyWarns(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		settings string
+		want     string
+	}{
+		{"keeps the model Magpie gives Claude", `{"model":"relay/old","env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:3425"}}`, "relay/old"},
+		{"Claude outside Magpie", `{"model":"claude-x"}`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home, path := setupMagpieHome(t, providersConfig())
+			if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(home, ".claude/settings.json"), []byte(tc.settings), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			log := fakeMagpie(t, false)
+			bin := filepath.Dir(log)
+			// Magpie refuses the model, as it does for a provider turned off.
+			script := "#!/bin/sh\nIFS='\t'\nprintf '%s\\n' \"$*\" >> " + log + "\n" +
+				"if [ \"$1\" = claude ] || [ \"$1\" = codex ]; then exit 1; fi\n"
+			if err := os.WriteFile(filepath.Join(bin, "magpie"), []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(bin, "codex"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			env := map[string]string{"TEST_BASE": "http://gateway:8000/v1", "TEST_KEY": "secret"}
+			model, err := configureMagpie(path, env, runMagpie)
+			if err != nil || model != tc.want {
+				t.Fatalf("model %q, err %v; want %q and no error", model, err, tc.want)
+			}
+			calls := magpieCalls(t, log)
+			has := func(want ...string) bool {
+				return slices.ContainsFunc(calls, func(c []string) bool { return slices.Equal(c, want) })
+			}
+			if !has("claude", "group/coding") || !has("group", "add", "coding", "models=relay/test-model", "routing=order", "stays=off") {
+				t.Fatalf("providers and the model must still be tried: %v", calls)
+			}
+		})
+	}
+}

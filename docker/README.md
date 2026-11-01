@@ -11,7 +11,7 @@ TEAM_WORKER_ENV_FILE=/绝对路径/team-worker.env \
   ./docker/team-worker.sh start /绝对路径/你的项目 "创建团队，实现登录功能并验证"
 ```
 
-先编辑 `docker/magpie-config/providers.yaml`，或用 `TEAM_WORKER_PROVIDERS_FILE=/path/to/providers.yaml` 指定文件。默认配置通过环境变量 `LLM_API_BASE` 读取 OpenAI 兼容网关地址，所以 env-file 至少要有 `LLM_API_BASE=http://your-gateway:8000/v1`。每次启动都会导入该文件并配置 Claude；凭据通过环境变量或挂载文件提供，不写进镜像。没有选择 Magpie 模型时，仍可使用 Claude 自身的登录配置。
+先编辑 `docker/magpie-config/providers.yaml`，或用 `TEAM_WORKER_PROVIDERS_FILE=/path/to/providers.yaml` 指定文件。默认配置通过环境变量 `LLM_API_BASE` 读取 OpenAI 兼容网关地址，所以 env-file 至少要有 `LLM_API_BASE=http://your-gateway:8000/v1`。每次启动都会导入该文件并配置 Claude；凭据通过环境变量或挂载文件提供，不写进镜像。文件格式错误会让启动失败；而 Magpie 暂时用不了的模型（比如所在 provider 在 Magpie 面板里被停用，或欠费）只在日志里留一条 `warning`，Claude、Codex 和 dsh 继续用 Magpie 当前给它们的模型，容器照常启动，不会反复重启。没有选择 Magpie 模型时，仍可使用 Claude 自身的登录配置。
 
 ```bash
 ./docker/team-worker.sh attach   # 回到 Leader；Ctrl-b w 选择其他窗口，Ctrl-b d 脱离
