@@ -111,3 +111,12 @@ type LaunchResult struct {
 	Backend  string          `json:"backend"`
 	Agents   []LaunchedAgent `json:"agents"`
 }
+
+// Conducting reports a team's harness conductor in the daemon. Started is
+// false when one was already running.
+type Conducting struct {
+	Team       string `json:"team"`
+	Run        string `json:"run,omitempty"`
+	Conducting bool   `json:"conducting"`
+	Started    bool   `json:"started"`
+}

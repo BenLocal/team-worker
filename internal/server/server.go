@@ -52,6 +52,7 @@ type Server struct {
 	log   *slog.Logger
 	// runDataDir and workerBin configure the agents it starts (SetRunner).
 	runDataDir, workerBin string
+	conduct               conductors
 }
 
 // New wires the store's change notifications into a hub and registers
@@ -60,7 +61,8 @@ func New(s *store.Store, log *slog.Logger) *Server {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	srv := &Server{store: s, hub: NewHub(), mux: http.NewServeMux(), log: log}
+	srv := &Server{store: s, hub: NewHub(), mux: http.NewServeMux(), log: log,
+		conduct: conductors{running: map[string]context.CancelFunc{}}}
 	s.OnChange = srv.hub.Notify
 	srv.routes()
 	return srv
@@ -171,6 +173,8 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /v1/teams/{team}/agents/{name}/spawn", s.spawnAgent)
 	m.HandleFunc("POST /v1/teams/{team}/agents/{name}/resume", s.resumeAgent)
 	m.HandleFunc("POST /v1/launch", s.launchTeam)
+	m.HandleFunc("POST /v1/teams/{team}/harness/conduct", s.startConducting)
+	m.HandleFunc("DELETE /v1/teams/{team}/harness/conduct", s.stopConducting)
 	m.HandleFunc("POST /v1/teams/{team}/agents/{name}/activity", s.agentActivity)
 	m.HandleFunc("GET /v1/teams/{team}/sessions/{name}", s.getSession)
 	m.HandleFunc("PUT /v1/teams/{team}/sessions/{name}", s.saveSession)

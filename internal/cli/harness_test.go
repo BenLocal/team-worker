@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/benlocal/team-worker/internal/model"
+	"github.com/benlocal/team-worker/internal/runner"
 	"github.com/benlocal/team-worker/internal/store"
 )
 
@@ -115,8 +117,6 @@ func TestHarnessConductorDrivesARunToShip(t *testing.T) {
 	h.json(&started, "harness", "start", "-g", "add tags", "-t", "demo", "-n", "2")
 	run := started["harness_id"]
 
-	a := &app{out: &strings.Builder{}, errOut: &strings.Builder{}, newClient: nil}
-	a.c = h.api
 	var spawned, stopped []string
 	// Fake agents use this test's PID, so they look alive until "stopped".
 	spawn := func(ctx context.Context, team, name, role, cli, prompt string) error {
@@ -135,13 +135,14 @@ func TestHarnessConductorDrivesARunToShip(t *testing.T) {
 		_, err := h.api.AgentExited(ctx, team, name)
 		return err
 	}
-	newConductor := func() *conductor {
-		return &conductor{a: a, team: "demo", poll: time.Millisecond, spawn: spawn, stop: stop}
+	newConductor := func() *runner.Conductor {
+		return &runner.Conductor{Client: h.api, Team: "demo", Poll: time.Millisecond, Spawn: spawn, Stop: stop,
+			Log: slog.New(slog.DiscardHandler)}
 	}
 	cd := newConductor()
 	tick := func() {
 		t.Helper()
-		if done, err := cd.tick(ctx); err != nil || done {
+		if done, err := cd.Tick(ctx); err != nil || done {
 			t.Fatalf("tick: done=%v err=%v", done, err)
 		}
 	}
@@ -203,10 +204,8 @@ func TestHarnessConductorDrivesARunToShip(t *testing.T) {
 	if st := status(); st.Status != model.HarnessCompleted {
 		t.Fatalf("status = %+v", st)
 	}
-	// run returns once the run is over, after stopping the evaluator.
-	if err := cd.run(ctx); err != nil {
-		t.Fatal(err)
-	}
+	// Run returns once the run is over, after stopping the evaluator.
+	cd.Run(ctx)
 	if len(stopped) != 4 {
 		t.Fatalf("stopped %v", stopped)
 	}

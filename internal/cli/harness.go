@@ -1,23 +1,18 @@
 package cli
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
-	"os/signal"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/benlocal/team-worker/internal/client"
 	"github.com/benlocal/team-worker/internal/config"
-	harnessprompt "github.com/benlocal/team-worker/internal/harness"
 	"github.com/benlocal/team-worker/internal/model"
 	"github.com/benlocal/team-worker/internal/store"
 )
@@ -354,31 +349,50 @@ func (a *app) harnessTaskCmd() *cobra.Command {
 func (a *app) harnessConductCmd() *cobra.Command {
 	var in store.StartHarnessInput
 	var poll time.Duration
+	var stopIt bool
 	cmd := &cobra.Command{
 		Use:   "conduct TEAM",
-		Short: "Start the role agents of each phase and advance the run automatically",
-		Long: "Resumes the team's running run, or starts one when --goal is given. Each poll reloads\n" +
-			"the run, starts the agents the phase needs (planner, executors, evaluator), stops those\n" +
-			"of finished phases and advances when the gate opens. Ctrl+C leaves the run running.",
+		Short: "Have the daemon start the role agents of each phase and advance the run",
+		Long: "Has the daemon conduct the team's running run, or start one when --goal is given. Every\n" +
+			"poll it reloads the run, starts the agents the phase needs (planner, executors, evaluator),\n" +
+			"stops those of finished phases and advances when the gate opens, until the run ends. It\n" +
+			"returns at once; follow with harness status. --stop ends conducting; the run keeps running.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
-			defer stop()
-			team := args[0]
-			st, err := a.client().HarnessStatus(ctx, team, "")
+			ctx, team, c := cmd.Context(), args[0], a.client()
+			if stopIt {
+				stopped, err := c.StopConducting(ctx, team)
+				if err != nil {
+					return a.fail(err)
+				}
+				a.emit(map[string]any{"team": team, "stopped": stopped}, func(w io.Writer) {
+					if stopped {
+						fmt.Fprintf(w, "OK Stopped conducting '%s'; its harness run keeps running\n", team)
+					} else {
+						fmt.Fprintf(w, "No conductor runs for '%s'\n", team)
+					}
+				})
+				return nil
+			}
+			st, err := c.HarnessStatus(ctx, team, "")
 			if in.Goal != "" && (err != nil && client.IsNotFound(err) || err == nil && st.Status != model.HarnessRunning) {
 				if _, err = a.startHarness(ctx, team, in); err != nil {
 					return a.fail(err)
 				}
 			} else if err != nil {
 				return a.fail(err)
-			} else if st.Status != model.HarnessRunning {
-				return a.fail(fmt.Errorf("harness run %s is %s; pass --goal to start a new one", st.ID, st.Status))
 			}
-			cd := &conductor{a: a, team: team, poll: poll, spawn: a.spawnHarnessAgent, stop: a.stopAgent}
-			if err := cd.run(ctx); err != nil {
+			out, err := c.Conduct(ctx, team, poll)
+			if err != nil {
 				return a.fail(err)
 			}
+			a.emit(out, func(w io.Writer) {
+				if out.Started {
+					fmt.Fprintf(w, "OK The daemon conducts harness run %s of '%s'; follow with team-worker harness status %s\n", out.Run, team, team)
+				} else {
+					fmt.Fprintf(w, "OK Harness run %s of '%s' is already being conducted\n", out.Run, team)
+				}
+			})
 			return nil
 		},
 	}
@@ -387,116 +401,7 @@ func (a *app) harnessConductCmd() *cobra.Command {
 	f.StringVarP(&in.CLI, "cli", "c", "claude", "Agent CLI for a new run")
 	f.IntVarP(&in.AgentCount, "agents", "n", 3, "Number of executors for a new run")
 	f.IntVar(&in.MaxAttempts, "max-attempts", 2, "Execute/verify attempts for a new run")
-	f.DurationVar(&poll, "poll", 5*time.Second, "How often to check the run")
+	f.DurationVar(&poll, "poll", 5*time.Second, "How often the daemon checks the run")
+	f.BoolVar(&stopIt, "stop", false, "Stop conducting; the run keeps running")
 	return cmd
-}
-
-// harnessSpawner starts one role agent of a run.
-type harnessSpawner func(ctx context.Context, team, name, role, cli, prompt string) error
-
-// spawnHarnessAgent runs this binary's spawn command, so role agents get the
-// same identity, workspace, hooks and keepalive as any spawned agent.
-func (a *app) spawnHarnessAgent(ctx context.Context, team, name, role, cli, prompt string) error {
-	exe, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	cmd := exec.CommandContext(ctx, exe, "spawn", "tmux", "--team", team, "-n", name, "--agent-type", role,
-		"--keepalive", "--task", prompt, "--", cli)
-	var out bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &out
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("spawn %s: %w: %s", name, err, strings.TrimSpace(out.String()))
-	}
-	return nil
-}
-
-// conductor drives one team's running harness run. It keeps no state of
-// its own: every tick reloads the run, so another process may approve,
-// advance or abort it in between.
-type conductor struct {
-	a     *app
-	team  string
-	poll  time.Duration
-	spawn harnessSpawner
-	stop  harnessStopper
-}
-
-func (cd *conductor) run(ctx context.Context) error {
-	for {
-		done, err := cd.tick(ctx)
-		if err != nil {
-			if ctx.Err() != nil {
-				break
-			}
-			// The daemon may be restarting; try again on the next poll.
-			fmt.Fprintf(cd.a.errOut, "harness: %v\n", err)
-		}
-		if done {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-		case <-time.After(cd.poll):
-			continue
-		}
-		break
-	}
-	fmt.Fprintf(cd.a.out, "Stopped conducting; the harness run of '%s' keeps running. Resume with `team-worker harness conduct %s`.\n", cd.team, cd.team)
-	return nil
-}
-
-func (cd *conductor) tick(ctx context.Context) (bool, error) {
-	a, c := cd.a, cd.a.client()
-	st, err := c.HarnessStatus(ctx, cd.team, "")
-	if err != nil {
-		return false, err
-	}
-	if st.Status != model.HarnessRunning {
-		stopped := a.stopHarnessAgents(ctx, cd.team, st.Agents, "", cd.stop)
-		fmt.Fprintf(a.out, "Harness %s is %s in phase %s; stopped %d agent(s)\n", st.ID, st.Status, st.Phase, len(stopped))
-		return true, nil
-	}
-	role := model.HarnessPhaseRole[st.Phase]
-	for _, name := range a.stopHarnessAgents(ctx, cd.team, st.Agents, role, cd.stop) {
-		fmt.Fprintf(a.out, "Stopped %s: its phase is over\n", name)
-	}
-	if role != "" {
-		want := 1
-		if role == model.RoleExecutor {
-			want = st.AgentCount
-		}
-		live := 0
-		for _, ag := range st.Agents {
-			if ag.Role == role && a.harnessAgentAlive(ctx, cd.team, ag.Name) {
-				live++
-			}
-		}
-		for ; live < want; live++ {
-			name := role + "-" + randomSuffix()
-			// Record first, so a conductor resumed after a crash counts this agent.
-			if _, err := c.AddHarnessAgent(ctx, cd.team, st.ID, store.HarnessAgentInput{Name: name, Role: role, Phase: st.Phase}); err != nil {
-				return false, err
-			}
-			prompt := harnessprompt.RolePrompt(harnessprompt.PromptParams{Team: cd.team, RunID: st.ID, Goal: st.Goal, Phase: st.Phase,
-				Role: role, Agent: name, Attempt: st.Attempt})
-			if err := cd.spawn(ctx, cd.team, name, role, st.CLI, prompt); err != nil {
-				return false, err
-			}
-			fmt.Fprintf(a.out, "Started %s %s for phase %s\n", role, name, st.Phase)
-		}
-	}
-	if !st.CanAdvance {
-		return false, nil
-	}
-	out, err := c.AdvanceHarness(ctx, cd.team, st.ID)
-	if err != nil {
-		return false, err
-	}
-	printAdvance(a.out, out)
-	return false, nil
-}
-
-func randomSuffix() string {
-	return store.NewAgentID()[:6]
 }

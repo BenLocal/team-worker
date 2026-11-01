@@ -95,6 +95,7 @@ func Run(ctx context.Context, opts Options) error {
 	defer cancelBase()
 	handler := New(st, log)
 	handler.SetRunner(opts.DataDir, "")
+	defer handler.Close()
 	httpSrv := &http.Server{
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,

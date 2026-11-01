@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"github.com/benlocal/team-worker/internal/model"
 	"github.com/benlocal/team-worker/internal/store"
@@ -73,4 +74,21 @@ func (c *Client) CreateHarnessTask(ctx context.Context, team, id string, in stor
 func (c *Client) AddHarnessAgent(ctx context.Context, team, id string, in store.HarnessAgentInput) (model.HarnessAgent, error) {
 	var out model.HarnessAgent
 	return out, c.do(ctx, http.MethodPost, teamPath(team, "harness", harnessRun(id), "agents"), nil, in, &out)
+}
+
+// Conduct has the daemon conduct the team's running harness run, polling
+// every poll; a conductor already running is left as it is.
+func (c *Client) Conduct(ctx context.Context, team string, poll time.Duration) (model.Conducting, error) {
+	var out model.Conducting
+	body := map[string]float64{"pollSeconds": poll.Seconds()}
+	return out, c.do(ctx, http.MethodPost, teamPath(team, "harness", "conduct"), nil, body, &out)
+}
+
+// StopConducting stops the daemon's conductor of the team's harness run and
+// reports whether one was running; the run itself keeps running.
+func (c *Client) StopConducting(ctx context.Context, team string) (bool, error) {
+	var out struct {
+		Stopped bool `json:"stopped"`
+	}
+	return out.Stopped, c.do(ctx, http.MethodDelete, teamPath(team, "harness", "conduct"), nil, nil, &out)
 }
