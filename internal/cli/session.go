@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"github.com/benlocal/team-worker/internal/client"
 	"github.com/benlocal/team-worker/internal/config"
 	"github.com/benlocal/team-worker/internal/model"
+	"github.com/benlocal/team-worker/internal/proc"
 	"github.com/spf13/cobra"
 )
 
@@ -110,6 +112,44 @@ func (a *app) agentResumeCmd() *cobra.Command {
 	var envPairs []string
 	var profileName string
 	cmd := &cobra.Command{Use: "resume TEAM NAME", Short: "Resume an agent's exact saved CLI session", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
+		if c := a.client(); a.remote != "" || c.Remote() {
+			// An agent resumes on its own machine: the server's, unless this
+			// CLI started it here. An operator never starts agents here.
+			ag, err := c.GetAgent(cmd.Context(), args[0], args[1])
+			if a.remote != "" || err != nil || ag.Host != proc.Host() {
+				for _, f := range []string{"task", "task-file", "env", "profile"} {
+					if cmd.Flags().Changed(f) {
+						return a.fail(fmt.Errorf("--%s is not available when the server resumes the agent; it reuses the saved session", f))
+					}
+				}
+				in := model.AgentResume{DryRun: dryRun}
+				if cmd.Flags().Changed("keepalive") {
+					in.KeepAlive = &keepalive
+				}
+				if cmd.Flags().Changed("max-restarts") {
+					in.MaxRestarts = &maxRestarts
+				}
+				if cmd.Flags().Changed("restart-delay") {
+					in.RestartDelay = delay.String()
+				}
+				raw, err := c.ResumeAgent(cmd.Context(), args[0], args[1], config.IdentityFromEnv().User, in)
+				if err != nil {
+					return a.fail(err)
+				}
+				var res spawnResult
+				if err := json.Unmarshal(raw, &res); err != nil {
+					return a.fail(fmt.Errorf("read the server's resume result: %w", err))
+				}
+				a.emit(raw, func(w io.Writer) {
+					if dryRun {
+						printDryRun(w, res)
+					} else {
+						printSpawned(w, args[0], res)
+					}
+				})
+				return nil
+			}
+		}
 		session, err := a.client().GetSession(cmd.Context(), args[0], args[1], config.IdentityFromEnv().User)
 		if err != nil {
 			return a.fail(err)

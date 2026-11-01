@@ -19,6 +19,8 @@ team-worker spawn tmux --team my-team -n alice --keepalive --max-restarts 3 --re
 
 恢复复用原 CLI 命令、工作目录和权限设置，并重新读取团队说明、成员提示词和当前任务。已有运行中的同名 Agent 时拒绝恢复，可用 `--replace` 明确替换。`agent resume` 支持 `--task`（或 `--task-file`）、`--keepalive`、`--max-restarts`、`--restart-delay` 覆盖保存的设置。
 
+成员在另一台机器上（比如部署在服务器容器里）时，在本机用 `team-worker --remote <名字> agent resume <团队> <成员>` 让服务器替你续接：服务器在它那里执行同样的 `agent resume --replace`，上下文照样续上。服务器要以 `--remote-resume` 启动，详见 [reference.md](reference.md) 的操作员模式。会话 ID 为空的成员（比如目前的 `dsh tui`）续接不了，会返回 409。
+
 keepalive 适用于 tmux 和 subprocess，正常退出和异常退出均受重试上限约束；默认最多连续重启 3 次，等待时间逐次加倍、最长 1 分钟，一次运行达到 1 分钟后重置连续次数。原生会话 ID 缺失时停止恢复并报错。每轮进程使用独立 `run_id`，旧进程的退出回报不会修改新一轮的状态。退出时任务仍退回 pending，恢复后需重新检查任务归属并领取。
 
 `agent stop`、批准 shutdown 和 `team cleanup` 会先保存停止意图，阻止后续重启。整个 tmux pane 或 supervisor 被结束后不会自动创建新 pane，可使用 `agent resume` 手动恢复。daemon 重启后已保存的会话仍可读取。

@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -52,4 +53,11 @@ func (c *Client) SetAgentActivity(ctx context.Context, team, name, runID string,
 func (c *Client) StopTeamAgents(ctx context.Context, team string) ([]model.Agent, error) {
 	var out []model.Agent
 	return out, c.do(ctx, http.MethodPost, teamPath(team, "agents", "stop"), nil, struct{}{}, &out)
+}
+
+// ResumeAgent asks the daemon to resume name's saved session on the
+// daemon's machine and returns the output of its `agent resume --json`.
+func (c *Client) ResumeAgent(ctx context.Context, team, name, user string, in model.AgentResume) (json.RawMessage, error) {
+	var out json.RawMessage
+	return out, c.do(ctx, http.MethodPost, teamPath(team, "agents", name, "resume"), url.Values{"user": {user}}, in, &out)
 }

@@ -74,9 +74,23 @@ tw --json task wait <team> --task <任务ID> --task <任务ID> -t 1800   # 只�
 
 **完成标准**：回复里写明服务地址、团队、任务 ID、当前状态、交付结果或阻塞原因。
 
+### 4. 续接成员（保住上下文）
+
+只在用户要求重启或续接某个成员时做，会结束它当前的进程。
+
+```bash
+tw --json session show <team> --agent <成员>       # sessionId 不能为空，否则续接不了
+tw agent resume <team> <成员> --dry-run             # 先看服务器会执行什么
+tw agent resume <team> <成员> --keepalive           # 服务器停掉当前进程，续接同一个会话
+```
+
+- 由服务器在它那里执行 `agent resume --replace`，上下文续上，Run ID 换新。服务器没开 `TEAM_WORKER_REMOTE_RESUME=1` 时返回 403。
+- 成员退出时手上的 `in_progress` 任务会退回 `pending`，续接后它会重新领取；向用户报告时说明这一点。
+- `sessionId` 为空（比如 `dsh tui` 成员）时返回 409，只能在服务器上重新 spawn，上下文会丢。`--task`、`--env`、`--profile` 这时不可用。
+
 ## 不在远程做的事
 
-- `spawn`、`launch`、`agent resume`、`harness conduct`：`--remote` 下 CLI 会拒绝，因为它们会在**本机**启动 Agent。续接或重启 部署主机 上的成员，要到服务器的容器里执行（`docker exec -u node team-worker team-worker agent resume <team> <成员> --replace`）。
+- `spawn`、`launch`、`harness conduct`：`--remote` 下 CLI 会拒绝，因为它们会在**本机**启动 Agent。
 - `inbox receive` / `inbox watch` 不带 `--agent` 时取的是操作员自己的收件箱，可以用；带 `--agent <其他成员>` 会取走那个成员的消息，不要这样用。
 
 远程能做但有限制：`agent screen` 只能看本机启动的 Agent；`agent stop` 对远端 Agent 只登记停止请求，由那台机器上带 `--keepalive` 的守护进程执行。`team cleanup` 会删除团队的任务和消息，只在用户明确要求时执行。

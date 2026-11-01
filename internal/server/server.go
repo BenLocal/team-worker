@@ -49,6 +49,16 @@ type Server struct {
 	hub   *Hub
 	mux   *http.ServeMux
 	log   *slog.Logger
+	// resumer runs agent resumes on this machine; nil turns them off.
+	// remoteResume also allows them over HTTP, not only over the socket.
+	resumer      *Resumer
+	remoteResume bool
+}
+
+// EnableResume lets callers resume agents on this machine through the API:
+// over the Unix socket always, over HTTP only when remote is true.
+func (s *Server) EnableResume(r *Resumer, remote bool) {
+	s.resumer, s.remoteResume = r, remote
 }
 
 // New wires the store's change notifications into a hub and registers
@@ -162,6 +172,7 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /v1/teams/{team}/agents/{name}", s.getAgent)
 	m.HandleFunc("POST /v1/teams/{team}/agents/{name}/exit", s.agentExited)
 	m.HandleFunc("POST /v1/teams/{team}/agents/{name}/stop", s.requestAgentStop)
+	m.HandleFunc("POST /v1/teams/{team}/agents/{name}/resume", s.resumeAgent)
 	m.HandleFunc("POST /v1/teams/{team}/agents/{name}/activity", s.agentActivity)
 	m.HandleFunc("GET /v1/teams/{team}/sessions/{name}", s.getSession)
 	m.HandleFunc("PUT /v1/teams/{team}/sessions/{name}", s.saveSession)

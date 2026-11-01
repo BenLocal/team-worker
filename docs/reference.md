@@ -12,6 +12,7 @@
 | `TEAM_WORKER_API_KEY` | CLI HTTP 与 Web 共用的 Key；服务端设置时覆盖并保存到 SQLite；socket 不需要 | 服务端自动生成并保存在 SQLite，客户端按需提供 |
 | `TEAM_WORKER_WEB_BASE_PATH` | 看板在反向代理下的公开路径前缀；Docker 为 `/team-worker` | 空 |
 | `TEAM_WORKER_HTTP_ADDR` | daemon 的可选 HTTP 监听地址，可由 `--listen` 覆盖；启用时必须配置 Key | 未设置，不监听 TCP |
+| `TEAM_WORKER_REMOTE_RESUME` | 设为 `1` 时 daemon 允许 HTTP 调用方续接本机成员（`--remote-resume`），见操作员模式 | 未设置，只有本地 socket 能续接 |
 | `TEAM_WORKER_AGENT_NAME` | 当前 Agent 名称，作为发件人、锁持有者和默认收件箱 | `agent` |
 | `TEAM_WORKER_AGENT_ID` | 当前 Agent ID | 随机生成 |
 | `TEAM_WORKER_USER` | 多用户场景下的用户名，收件箱按 `<user>_<name>` 区分 | 配置文件中的 `user` |
@@ -85,6 +86,7 @@ team-worker --remote prod task list demo
 - 拒绝 `spawn`、`launch`、`agent resume`、`harness conduct`，因为它们会在本机启动 Agent。
 - `task wait` 不带 `--agent` 时读操作员自己的收件箱，不碰 Leader 的；`--task <ID>`（可重复）只等指定任务；查询临时失败会重试，连续 5 次失败才放弃。
 - `config.json` 存了 Key 却对其他用户可读时，`config health` 会报为问题；文件权限应为 600。
+- `agent resume` 交给服务器执行：服务器在它自己的机器上续接这个成员保存的会话，等于在那里执行 `agent resume --replace`。服务器要以 `team-workerd --remote-resume`（环境变量 `TEAM_WORKER_REMOTE_RESUME=1`）启动，默认关闭，因为它让持有 Key 的 HTTP 调用方能在服务器上启动进程；只能续接已保存的会话，命令和工作目录都来自会话记录。`--task`、`--task-file`、`--env`、`--profile` 这时不可用。不加 `--remote`、只设了 `TEAM_WORKER_SERVER_URL` 时，本机启动的成员在本机续接，其他成员交给服务器。
 
 HTTP 请求使用 `Authorization: Bearer <API Key>`，包括健康检查在内的所有 API 均校验 Key；缺失或错误时返回 `401 {"error":"Unauthorized"}`。socket 请求按文件权限控制，不校验 Key。共享 Key 的读取接口仅在本地 socket 可用，已认证的远程 HTTP 请求也不能读取它。
 
@@ -161,6 +163,7 @@ team-workerd 记录这些事件：
 | `GET /v1/teams/{team}/agents/{name}` | Agent 详情 |
 | `POST /v1/teams/{team}/agents/{name}/exit?run_id=...&code=...` | 按运行标识回报退出并释放任务；无标识的旧回报只适用于旧运行记录 |
 | `POST /v1/teams/{team}/agents/{name}/stop?run_id=...` | 保存该轮运行的停止意图 |
+| `POST /v1/teams/{team}/agents/{name}/resume?user=...` | 在 daemon 所在机器上续接该 Agent 保存的会话（等于在那里执行 `agent resume --replace`），返回同样的 JSON；请求体只能带 `keepalive`、`maxRestarts`、`restartDelay`、`dryRun`，其他字段返回 400。HTTP 上需要 daemon 开启 `--remote-resume`，否则 403；Agent 在别的机器上、同一个 Agent 的续接还没结束、或续接本身失败时返回 409，超过 60 秒返回 504 |
 | `POST /v1/teams/{team}/agents/stop` | 批量保存团队的停止意图并返回进程记录 |
 | `GET/PUT /v1/teams/{team}/sessions/{name}?user=...` | 读取 / 保存原生会话；保存时校验运行标识 |
 | `DELETE /v1/teams/{team}/sessions[/{name}]?user=...` | 删除一个 Agent 的会话，不带名字时删除整个团队的会话；返回 `{"cleared": N}` |

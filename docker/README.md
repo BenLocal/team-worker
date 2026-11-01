@@ -98,6 +98,7 @@ team-workerd 在容器里以前台方式运行，日志写到 stderr，和其他
 | `TEAM_WORKER_TEAM_NAME` | 容器团队名，默认 `team-worker-docker` |
 | `TEAM_WORKER_API_KEY` | 覆盖并保存到 SQLite 的共享 Web / CLI HTTP Key；默认自动生成 |
 | `TEAM_WORKER_HTTP_ADDR` | HTTP 监听地址；内置 Nginx 路由使用 `127.0.0.1:8082` |
+| `TEAM_WORKER_REMOTE_RESUME` | 设为 `1` 后，持有 Key 的远程 CLI 可以用 `team-worker --remote <名字> agent resume` 续接容器里的成员；默认关闭 |
 | `TEAM_WORKER_MODEL` | Magpie 模型路由，优先于 `providers.yaml` 的 `claude.model` |
 | `TEAM_WORKER_LEADER_RESTART_DELAY` | Leader 续接的初始等待秒数，默认 10，最大 60 |
 | `TEAM_WORKER_LEADER_MAX_RESTARTS` | Leader 连续快速退出后的最大续接次数，默认 3 |

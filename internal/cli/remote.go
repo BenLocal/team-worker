@@ -23,8 +23,9 @@ var localIdentity = []string{
 
 // localOnly are commands that start agents on this machine, which an
 // operator of a remote deployment never wants: the agent would run here,
-// without the deployment's workspace, sessions or credentials.
-var localOnly = [][]string{{"spawn"}, {"launch"}, {"agent", "resume"}, {"harness", "conduct"}}
+// without the deployment's workspace, sessions or credentials. agent resume
+// is not among them: under --remote the server resumes the agent.
+var localOnly = [][]string{{"spawn"}, {"launch"}, {"harness", "conduct"}}
 
 // useRemote turns this process into an operator of the named remote: it
 // points the client at the remote with its key, takes the remote's sender
