@@ -60,3 +60,51 @@
 
 - [x] 定义阶段、交付物、验收条件和失败处理：discuss（需 `discussion.md`）→ plan（需 `spec.md` 和已批准的规划者计划）→ execute（本轮任务全部完成）→ verify（`eval-report.json` 结论为 pass）→ ship（完成）。验证不通过时退回 execute 并生成返工任务，超过 `--max-attempts` 后整轮标记为失败。
 - [x] 在所依赖能力就绪后，实现先规划后执行的阶段编排：`harness start/status/advance/approve/abort/artifact/artifacts/task/conduct`。`conduct` 每次检查都从数据库重新读取状态，按阶段拉起规划者、执行者、评审者，关卡满足后自动推进，中断后可接着运行。
+
+## 与 ClawTeam 的差距
+
+2026-10-30 对照 ClawTeam `120813f` 的 CLI 整理。以下是 ClawTeam 有、team-worker 尚未实现的能力，按建议顺序排列。消息唤醒（`runtime inject/watch`、`team watch`）、崩溃处理（`lifecycle should-keepalive/on-crash`）和浏览器终端（`board terminals`）已由 CLI hook、终端提醒、keepalive 和 Web 看板覆盖，不再单列。
+
+### 7. `workspace`：Agent 的 git 工作区隔离
+
+ClawTeam 为每个 Agent 建独立分支（worktree），team-worker 的 spawn 只创建普通目录 `<数据目录>/workspaces/<team>/<agent>`，分支与合并由 Agent 自行处理。多个 Agent 并行改同一仓库时需要这一项。
+
+- [ ] 明确工作区与 spawn 的关系：何时创建 worktree、分支命名、基准分支、`--cwd` 指向已有仓库时的行为。
+- [ ] 实现 `workspace list/status/checkpoint/merge/cleanup`：自动提交检查点、合并回基准分支、清理 worktree 与分支。
+
+### 8. `context`：跨 Agent 的改动上下文
+
+依赖 `workspace`。
+
+- [ ] 实现 `context diff/files/log`：各 Agent 分支相对基准的 diff 统计、文件归属（哪个 Agent 改了哪些文件）、提交记录。
+- [ ] 实现 `context conflicts`：检测多个分支改动同一文件。
+- [ ] 实现 `context inject`：把上述上下文注入给指定 Agent。
+
+### 9. 团队快照
+
+- [ ] 实现 `team snapshot/snapshots/restore/snapshot-delete`：保存与恢复团队配置、任务、消息、会话、计划和费用；明确与在线 daemon 并发时的一致性。
+
+### 10. 事件 hook 与插件
+
+team-worker 现有的 `hook` 子命令是给 Agent CLI 回调的，与 ClawTeam 的用户事件 hook 不是一回事，实现时需另起命名。
+
+- [ ] 定义事件类型（任务状态变化、成员加入/退出、Agent 崩溃、预算超限等），实现用户事件 hook 的增删查与测试（对应 ClawTeam `hook list/add/remove/test`）。
+- [ ] 评估是否需要插件机制（ClawTeam `plugin list/info`，如 ralph loop）。
+
+### 11. MCP server
+
+- [ ] 评估把团队、任务、消息操作暴露为 MCP 工具（对应 `clawteam/mcp`），供不便调用 CLI 的 Agent 使用。
+
+### 12. 配置与诊断
+
+- [x] 实现 `config health`：本地模式检查数据目录能否写入、数据库能否以读写方式打开、socket 权限是否为 0600、daemon 是否应答；远程模式检查服务地址、Key 和服务端是否应答。不会启动 daemon，发现问题时退出码为 1，`--json` 字段名与 ClawTeam 一致。
+- [ ] 实现 `config show/set/get`。
+- [ ] 实现交互式 `profile wizard` 和 `profile doctor`。
+
+### 13. 其余命令
+
+- [ ] `run`：包装任意 CLI 并接入生命周期管理。
+- [ ] `board overview`（所有团队总览）、`board live`（终端内实时刷新的看板）、`board attach`（tmux 平铺查看全部 Agent）；`board update`、`board gource` 视需要再定。
+- [x] `session clear`：命令和 JSON 输出与 ClawTeam 一致，不带 `--agent` 时清除整个团队的会话；另有 `DELETE /v1/teams/{team}/sessions[/{name}]`。
+- [ ] `identity set`、`harness contracts`、`lifecycle check-zombies`（长时间运行的 Agent 告警）。带着 `in_progress` 任务停在输入框的成员已由 daemon 的卡住检测处理（提醒两次后报告 leader，见 `docs/agents.md`），`check-zombies` 只需覆盖一直在跑却不出活的情况。
+- [ ] 不做或另行评估：ClawTeam 的 file / p2p transport 与 wsh 后端。team-worker 采用单 daemon + HTTP 远程，跨机器场景由远程 API 覆盖。
