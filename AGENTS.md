@@ -67,6 +67,7 @@
 ## 🧠 记忆索引（docs/memory/，脚本生成）
 <!-- MEMORY:START -->
 - [Agent 会话恢复的参考实现问题](docs/memory/agent-lifecycle.md) — 对照 ClawTeam 时需要注意的会话标识、退出清理和重启判定。
+- [部署主机 部署](docs/memory/deploy-server.md) — 在 部署主机 上更新 team-worker 二进制的做法，以及重建容器时的启动循环。
 - [看板终端显示问题](docs/memory/known-pitfalls.md) — Ghostty 终端的浏览器光标、自动高度与网格滚动的排查结论。
 - [Agent 画面状态判断](docs/memory/screen-detection.md) — 从 tmux 画面和终端标题判断 Agent 空闲 / 工作 / 等用户时踩过的坑与实测结论。
 - [Web 访问鉴权与反向代理](docs/memory/web-access.md) — 看板登录经过 Nginx 路径前缀时的跳转约定和实测问题。
