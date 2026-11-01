@@ -133,6 +133,7 @@ team-workerd 记录这些事件：
 | `POST /v1/teams/{team}/agents/{name}/stop?run_id=...` | 保存该轮运行的停止意图 |
 | `POST /v1/teams/{team}/agents/stop` | 批量保存团队的停止意图并返回进程记录 |
 | `GET/PUT /v1/teams/{team}/sessions/{name}?user=...` | 读取 / 保存原生会话；保存时校验运行标识 |
+| `DELETE /v1/teams/{team}/sessions[/{name}]?user=...` | 删除一个 Agent 的会话，不带名字时删除整个团队的会话；返回 `{"cleared": N}` |
 | `GET/POST /v1/teams/{team}/costs` | 用量汇总和明细（`agent` 只筛选明细）/ 上报一次用量 |
 | `PUT /v1/teams/{team}/costs/sessions` | 记录一个原生会话的累计 token，按会话覆盖 |
 | `GET/PUT /v1/teams/{team}/budget` | 读取 / 设置预算（`budgetCents`、`enforce`），读取时含已花费和是否已耗尽 |

@@ -9,6 +9,7 @@ Agent 退出时，退出钩子会通知服务。如果 tmux 窗口是被直接�
 ```bash
 team-worker session show my-team --agent alice
 team-worker session save my-team --agent alice --session-id <原生会话ID>
+team-worker session clear my-team --agent alice   # 不带 --agent 时清除整个团队的会话
 team-worker agent resume my-team alice --dry-run
 team-worker agent resume my-team alice
 
@@ -21,6 +22,8 @@ team-worker spawn tmux --team my-team -n alice --keepalive --max-restarts 3 --re
 keepalive 适用于 tmux 和 subprocess，正常退出和异常退出均受重试上限约束；默认最多连续重启 3 次，等待时间逐次加倍、最长 1 分钟，一次运行达到 1 分钟后重置连续次数。原生会话 ID 缺失时停止恢复并报错。每轮进程使用独立 `run_id`，旧进程的退出回报不会修改新一轮的状态。退出时任务仍退回 pending，恢复后需重新检查任务归属并领取。
 
 `agent stop`、批准 shutdown 和 `team cleanup` 会先保存停止意图，阻止后续重启。整个 tmux pane 或 supervisor 被结束后不会自动创建新 pane，可使用 `agent resume` 手动恢复。daemon 重启后已保存的会话仍可读取。
+
+`session clear` 删除保存的会话记录，用于换 CLI、上下文太长想重开或会话损坏的情况；原生 CLI 的历史文件不受影响。清除后 `agent resume` 会报错，按模板启动的脚本（比如先查会话、有就续接的恢复脚本）会改为全新启动。正在运行的 Agent 不会被停止，但它退出后 keepalive 不再重启它；要立即换成新会话，先 `agent stop` 再重新 `spawn`。
 
 数据库只保存会话标识和启动信息，原生 CLI 的历史文件仍需保留。环境变量的值不随会话保存；通过模板或 `--env` 设置的变量，手动恢复时需在调用者环境或新的 `--env` 参数中提供。Claude、Codex、Gemini、Kimi、Qwen、OpenCode、pi 和 dsh 分别构造自己的精确会话恢复参数；具体可用性取决于安装的 CLI 版本，未知 CLI 不支持自动恢复。
 

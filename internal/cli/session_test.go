@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/benlocal/team-worker/internal/client"
 	"github.com/benlocal/team-worker/internal/model"
 )
 
@@ -140,5 +141,42 @@ func TestStartupHookCapturesOnlyItsOwnRun(t *testing.T) {
 	got, err = h.api.GetSession(context.Background(), "demo", "alice", "")
 	if err != nil || got.SessionID != "native-hook-id" {
 		t.Fatalf("late hook overwrote session: %+v %v", got, err)
+	}
+}
+
+func TestSessionClearForgetsSavedSessions(t *testing.T) {
+	h := newHarness(t)
+	command, _ := supervisedFixture(t, h, 0)
+	ctx := context.Background()
+
+	out, ok := h.run("--json", "session", "clear", "demo", "-a", "alice")
+	if !ok || !strings.Contains(out, `"cleared"`) || !strings.Contains(out, `"alice"`) {
+		t.Fatalf("%v %s", ok, out)
+	}
+	if _, err := h.api.GetSession(ctx, "demo", "alice", ""); !client.IsNotFound(err) {
+		t.Fatalf("session still saved: %v", err)
+	}
+	if out, ok := h.run("agent", "resume", "demo", "alice", "--dry-run"); ok {
+		t.Fatalf("resumed a cleared session: %s", out)
+	}
+	if out, ok := h.run("--json", "session", "clear", "demo", "--agent", "alice"); !ok || !strings.Contains(out, `"not_found"`) {
+		t.Fatalf("%v %s", ok, out)
+	}
+
+	// Without --agent every session in the team goes.
+	h.run("team", "add-member", "demo", "bob")
+	if _, err := h.api.RegisterAgent(ctx, model.Agent{Team: "demo", Name: "bob", RunID: "bob-run", Backend: "subprocess", Command: []string{command}}); err != nil {
+		t.Fatal(err)
+	}
+	for name, run := range map[string]string{"alice": "initial", "bob": "bob-run"} {
+		if _, err := h.api.SaveSession(ctx, model.Session{Team: "demo", Agent: name, RunID: run, Client: "claude", SessionID: name + "-session", Command: []string{command}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if out, ok := h.run("--json", "session", "clear", "demo"); !ok || !strings.Contains(out, `"count": 2`) {
+		t.Fatalf("%v %s", ok, out)
+	}
+	if out, ok := h.run("session", "clear", "missing"); ok {
+		t.Fatalf("cleared sessions of a missing team: %s", out)
 	}
 }

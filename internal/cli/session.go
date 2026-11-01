@@ -76,7 +76,29 @@ func (a *app) sessionCmd() *cobra.Command {
 	save.Flags().StringVar(&nativeID, "session-id", "", "Exact native session id")
 	save.Flags().StringVar(&cliName, "client", "", "Native CLI name")
 	save.MarkFlagRequired("session-id")
-	cmd.AddCommand(show, save)
+	var clearName string
+	clearCmd := &cobra.Command{Use: "clear TEAM", Short: "Clear saved sessions so the next start is a fresh conversation",
+		Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+			n, err := a.client().ClearSessions(cmd.Context(), args[0], clearName, config.IdentityFromEnv().User)
+			if err != nil {
+				return a.fail(err)
+			}
+			switch {
+			case clearName == "":
+				a.emit(map[string]any{"status": "cleared", "count": n}, func(w io.Writer) { fmt.Fprintf(w, "OK Cleared %d session(s)\n", n) })
+			case n > 0:
+				a.emit(map[string]any{"status": "cleared", "agent": clearName}, func(w io.Writer) {
+					fmt.Fprintf(w, "OK Session cleared for '%s'\n", clearName)
+				})
+			default:
+				a.emit(map[string]any{"status": "not_found", "agent": clearName}, func(w io.Writer) {
+					fmt.Fprintf(w, "No session for '%s'\n", clearName)
+				})
+			}
+			return nil
+		}}
+	clearCmd.Flags().StringVarP(&clearName, "agent", "a", "", "Agent name (default: all)")
+	cmd.AddCommand(show, save, clearCmd)
 	return cmd
 }
 

@@ -165,6 +165,8 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /v1/teams/{team}/agents/{name}/activity", s.agentActivity)
 	m.HandleFunc("GET /v1/teams/{team}/sessions/{name}", s.getSession)
 	m.HandleFunc("PUT /v1/teams/{team}/sessions/{name}", s.saveSession)
+	m.HandleFunc("DELETE /v1/teams/{team}/sessions/{name}", s.clearSessions)
+	m.HandleFunc("DELETE /v1/teams/{team}/sessions", s.clearSessions)
 
 	m.HandleFunc("POST /v1/teams/{team}/messages", s.send)
 	m.HandleFunc("POST /v1/teams/{team}/broadcast", s.broadcast)

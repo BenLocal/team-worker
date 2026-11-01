@@ -56,6 +56,28 @@ func (s *Store) GetSession(ctx context.Context, team, name, user string) (model.
 	return out, err
 }
 
+// ClearSessions deletes saved sessions: the named agent's for user, or every
+// session in the team when name is empty. It returns how many it deleted.
+func (s *Store) ClearSessions(ctx context.Context, team, name, user string) (int, error) {
+	var n int64
+	err := s.write(ctx, func(tx *sql.Tx) error {
+		if err := requireTeam(ctx, tx, team); err != nil {
+			return err
+		}
+		query, args := "DELETE FROM sessions WHERE team = ?", []any{team}
+		if name != "" {
+			query, args = query+" AND agent = ? AND user_name = ?", append(args, name, user)
+		}
+		res, err := tx.ExecContext(ctx, query, args...)
+		if err != nil {
+			return err
+		}
+		n, err = res.RowsAffected()
+		return err
+	})
+	return int(n), err
+}
+
 func (s *Store) RequestAgentStop(ctx context.Context, team, name, runID string) (model.Agent, error) {
 	var out model.Agent
 	err := s.write(ctx, func(tx *sql.Tx) error {

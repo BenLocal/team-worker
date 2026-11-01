@@ -21,6 +21,13 @@ func (s *Server) saveSession(w http.ResponseWriter, r *http.Request) {
 	respond(w, out, err)
 }
 
+// clearSessions deletes one agent's saved session, or the whole team's when
+// the route names no agent.
+func (s *Server) clearSessions(w http.ResponseWriter, r *http.Request) {
+	n, err := s.store.ClearSessions(r.Context(), r.PathValue("team"), r.PathValue("name"), r.URL.Query().Get("user"))
+	respond(w, map[string]int{"cleared": n}, err)
+}
+
 func (s *Server) requestAgentStop(w http.ResponseWriter, r *http.Request) {
 	out, err := s.store.RequestAgentStop(r.Context(), r.PathValue("team"), r.PathValue("name"), r.URL.Query().Get("run_id"))
 	respond(w, out, err)

@@ -19,6 +19,20 @@ func (c *Client) SaveSession(ctx context.Context, session model.Session) (model.
 	return out, c.do(ctx, http.MethodPut, teamPath(session.Team, "sessions", session.Agent), url.Values{"user": {session.User}}, session, &out)
 }
 
+// ClearSessions deletes the named agent's saved session for user, or every
+// saved session in the team when name is empty, and returns how many.
+func (c *Client) ClearSessions(ctx context.Context, team, name, user string) (int, error) {
+	var out struct {
+		Cleared int `json:"cleared"`
+	}
+	path := teamPath(team, "sessions")
+	var query url.Values
+	if name != "" {
+		path, query = teamPath(team, "sessions", name), url.Values{"user": {user}}
+	}
+	return out.Cleared, c.do(ctx, http.MethodDelete, path, query, nil, &out)
+}
+
 func (c *Client) AgentExitedRun(ctx context.Context, team, name, runID string, code int) (model.AgentExit, error) {
 	var out model.AgentExit
 	return out, c.do(ctx, http.MethodPost, teamPath(team, "agents", name, "exit"), url.Values{"run_id": {runID}, "code": {strconv.Itoa(code)}}, struct{}{}, &out)
