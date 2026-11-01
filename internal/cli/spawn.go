@@ -12,7 +12,6 @@ import (
 
 	"github.com/benlocal/team-worker/internal/config"
 	"github.com/benlocal/team-worker/internal/model"
-	"github.com/benlocal/team-worker/internal/spawn"
 	"github.com/benlocal/team-worker/internal/store"
 )
 
@@ -64,7 +63,7 @@ func workerBinary() string {
 }
 
 // envFlagLayer turns repeated --env KEY=VALUE flags into the last env layer.
-func envFlagLayer(pairs []string) ([]spawn.EnvLayer, error) {
+func envFlagLayer(pairs []string) ([]model.EnvLayer, error) {
 	if len(pairs) == 0 {
 		return nil, nil
 	}
@@ -76,7 +75,7 @@ func envFlagLayer(pairs []string) ([]spawn.EnvLayer, error) {
 		}
 		env[k] = v
 	}
-	return []spawn.EnvLayer{{Name: "--env", Set: env}}, nil
+	return []model.EnvLayer{{Name: "--env", Set: env}}, nil
 }
 
 func (a *app) spawnCmd() *cobra.Command {
@@ -180,7 +179,7 @@ func printSpawned(w io.Writer, team string, res model.SpawnResult) {
 	fmt.Fprintf(w, "OK Spawned '%s' (%s, id: %s)\n", res.AgentName, res.Backend, res.AgentID)
 	fmt.Fprintf(w, "  Workspace: %s\n", res.Workspace)
 	if res.Backend == "tmux" {
-		fmt.Fprintf(w, "  Watch: tmux attach -t %s\n", spawn.SessionName(team))
+		fmt.Fprintf(w, "  Watch: tmux attach -t %s\n", model.TmuxSession(team))
 	} else {
 		fmt.Fprintf(w, "  Log: %s\n", res.Target)
 	}

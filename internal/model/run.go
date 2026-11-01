@@ -130,3 +130,6 @@ type ProfileTest struct {
 	Stdout     string   `json:"stdout"`
 	Stderr     string   `json:"stderr"`
 }
+
+// TmuxSession names the tmux session that holds a team's agent windows.
+func TmuxSession(team string) string { return "team-worker-" + team }

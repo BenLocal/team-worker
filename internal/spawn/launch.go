@@ -15,6 +15,7 @@ import (
 
 	"github.com/benlocal/team-worker/internal/agent"
 	"github.com/benlocal/team-worker/internal/agent/builtin"
+	"github.com/benlocal/team-worker/internal/model"
 	"github.com/benlocal/team-worker/internal/sysproc"
 	"github.com/benlocal/team-worker/internal/tmux"
 )
@@ -69,7 +70,7 @@ func (r Result) FinishStartup() {
 }
 
 // SessionName is the tmux session holding a team's agent windows.
-func SessionName(team string) string { return "team-worker-" + team }
+func SessionName(team string) string { return model.TmuxSession(team) }
 
 // Build prepares the command and environment without starting anything.
 func Build(opts Options) (Built, error) {

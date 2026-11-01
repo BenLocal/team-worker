@@ -10,7 +10,6 @@ import (
 
 	"github.com/benlocal/team-worker/internal/config"
 	"github.com/benlocal/team-worker/internal/model"
-	"github.com/benlocal/team-worker/internal/spawn"
 	"github.com/benlocal/team-worker/internal/templates"
 )
 
@@ -129,7 +128,7 @@ func (a *app) launchCmd() *cobra.Command {
 				tw.Flush()
 				fmt.Fprintln(w)
 				if backend == "tmux" {
-					fmt.Fprintf(w, "Watch:  tmux attach -t %s\n", spawn.SessionName(teamName))
+					fmt.Fprintf(w, "Watch:  tmux attach -t %s\n", model.TmuxSession(teamName))
 				}
 				fmt.Fprintf(w, "Board:  team-worker board show %s   (web: team-worker board serve)\n", teamName)
 			})

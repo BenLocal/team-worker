@@ -30,7 +30,8 @@ team-worker board serve ──> internal/board (同一看板的独立进程，�
 | `internal/model` | 共享数据类型与枚举校验，JSON 字段名沿用 ClawTeam | 标准库 | 其他 internal 包 |
 | `internal/config` | 数据目录、socket 路径、`TEAM_WORKER_*` 环境变量与身份 | 标准库 | 其他 internal 包 |
 | `internal/store` | 全部状态与业务规则（依赖解锁、任务锁、收件箱消费），事务内完成 | `model` | `server`、`client`、`cli` |
-| `internal/server` | 把 store 暴露成 JSON API，长轮询，服务生命周期 | `store`、`model`、`config` | `client`、`cli` |
+| `internal/server` | 把 store 暴露成 JSON API，长轮询，服务生命周期；在本机停止成员、读终端和会话文件、投递消息、调度 harness | `store`、`model`、`config`、`client`、`runner`、`board`、`agent`、`profile`、`proc`、`tmux`、`usage` | `cli` |
+| `internal/runner` | 在 daemon 所在机器上启动成员：spawn、resume、launch、harness 调度、profile test；经进程内的 LocalClient 调用自己的 API | `client`、`spawn`、`proc`、`agent`、`agent/builtin`、`harness`、`profile`、`templates`、`config`、`model`、`store`（仅复用 `*Input` 类型和 ID 生成） | `cli`、`store` 的读写方法 |
 | `internal/client` | socket / 远程 HTTP 客户端；仅 socket 模式自动拉起服务 | `model`、`config`、`store`（仅复用 `*Input` / `TaskFilter` 类型） | `server`、`cli` |
 | `internal/tmux` | 封装 tmux 命令：建窗口、发按键、粘贴、截屏 | 标准库 | 其他 internal 包 |
 | `internal/proc` | 探测与停止 agent 进程（tmux / subprocess 两种后端） | `model`、`tmux` | `store`、`server` |
@@ -39,7 +40,7 @@ team-worker board serve ──> internal/board (同一看板的独立进程，�
 | `internal/spawn` | 准备环境、按 CLI 适配器启动 agent，处理启动界面与 prompt 粘贴 | `tmux`、`agent`、`agent/builtin` | `store`、`server`、`client` |
 | `internal/templates` | 读取 `~/.team-worker/templates` 下的 TOML 团队模板 | 标准库 + `BurntSushi/toml` | 其他 internal 包 |
 | `internal/board` | 只读 Web 看板（页面 `embed` 进二进制） | `client`、`proc` | `store`、`server` |
-| `internal/cli` | cobra 命令、人类可读输出与 `--json` | `client`、`model`、`config`、`spawn`、`agent`、`agent/builtin`、`proc`、`templates`、`board`、`store`（仅复用 `*Input` 类型） | `store` 的读写方法、`server`（测试除外） |
+| `internal/cli` | cobra 命令、人类可读输出与 `--json`；纯客户端，`supervise.go`、`hook.go` 是成员窗口里运行的部分 | `client`、`model`、`config`、`board`、`profile`、`templates`、`agent`、`agent/builtin`、`store`（仅复用 `*Input` 类型）；`spawn`、`proc`、`tmux` 只许 `supervise.go`、`hook.go` 用（`imports_test.go` 检查） | `store` 的读写方法、`server`、`runner`（测试除外） |
 
 - 依赖方向硬规则：`cli → client → (HTTP/socket) → server → store → model`，单向。team-workerd 是服务端，所有实际工作都由它做：启动、续接、停止成员，看终端，读原生会话文件，调度 harness，都在 `server` / `runner` 里用 `spawn` / `proc` / `tmux` 完成；team-worker 只是客户端，CLI 里不碰进程和本机文件（客户端读出 `--task-file` 这类文件内容再发过去除外），本地和远程只差传输方式。业务规则只写在 `store`，`server` 只做参数解析和错误码映射，`cli` 只做展示。
 - `cli_test.go` 例外：用 `httptest` + `server.New(store)` 搭真实服务端做端到端测试。
