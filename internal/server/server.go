@@ -182,6 +182,7 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /v1/teams/{team}/workspaces", s.listWorkspaces)
 	m.HandleFunc("PUT /v1/teams/{team}/workspaces", s.saveWorkspace)
 	m.HandleFunc("POST /v1/teams/{team}/workspaces/cleanup", s.cleanupWorkspaces)
+	m.HandleFunc("POST /v1/teams/{team}/workspaces/import", s.importWorkspaces)
 	m.HandleFunc("DELETE /v1/teams/{team}/workspaces/{agent}", s.deleteWorkspace)
 	m.HandleFunc("GET /v1/teams/{team}/workspaces/{agent}/status", s.workspaceStatus)
 	m.HandleFunc("POST /v1/teams/{team}/workspaces/{agent}/checkpoint", s.checkpointWorkspace)

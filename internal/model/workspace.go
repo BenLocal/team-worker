@@ -42,4 +42,6 @@ type WorkspaceRequest struct {
 	Message   string `json:"message,omitempty"`
 	Target    string `json:"target,omitempty"`
 	NoCleanup bool   `json:"noCleanup,omitempty"`
+	// File is a ClawTeam workspace-registry.json to import, on the daemon's machine.
+	File string `json:"file,omitempty"`
 }

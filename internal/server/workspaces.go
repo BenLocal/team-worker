@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -50,7 +51,7 @@ func (s *Server) agentWorkspaces(ctx context.Context, team, agent, repo string) 
 		}
 		return all, nil
 	}
-	root, _ := workspace.Toplevel(ctx, repo)
+	root, _ := workspace.MainRoot(ctx, repo)
 	for _, ws := range all {
 		if ws.RepoRoot == repo || ws.RepoRoot == root || filepath.Base(ws.RepoRoot) == repo {
 			return []model.Workspace{ws}, nil
@@ -236,4 +237,55 @@ func (s *Server) cleanupTeamWorkspaces(ctx context.Context, team string) {
 				"status", res.Status, "detail", res.Output)
 		}
 	}
+}
+
+// importWorkspaces records the worktrees in a ClawTeam workspace registry,
+// by default ~/.clawteam/workspaces/<team>/workspace-registry.json on this
+// machine, so a team moved from ClawTeam keeps its agents' worktrees.
+// Entries whose worktree is gone are skipped.
+func (s *Server) importWorkspaces(w http.ResponseWriter, r *http.Request) {
+	team := r.PathValue("team")
+	var in model.WorkspaceRequest
+	if !decode(w, r, &in) {
+		return
+	}
+	file := in.File
+	if file == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			respond(w, nil, err)
+			return
+		}
+		file = filepath.Join(home, ".clawteam", "workspaces", team, "workspace-registry.json")
+	}
+	data, err := os.ReadFile(file)
+	if err != nil {
+		respond(w, nil, &store.Error{Kind: store.KindNotFound, Msg: "read ClawTeam workspace registry: " + err.Error()})
+		return
+	}
+	var registry struct {
+		Workspaces []model.Workspace `json:"workspaces"`
+	}
+	if err := json.Unmarshal(data, &registry); err != nil {
+		respond(w, nil, &store.Error{Kind: store.KindInvalid, Msg: fmt.Sprintf("parse %s: %v", file, err)})
+		return
+	}
+	op := model.WorkspaceOp{Status: "imported", Team: team}
+	for _, ws := range registry.Workspaces {
+		res := model.WorkspaceRepo{Repo: ws.RepoRoot, Branch: ws.BranchName, Path: ws.WorktreePath, Status: "imported"}
+		root, err := workspace.MainRoot(r.Context(), ws.RepoRoot)
+		if err != nil || !workspace.IsWorktreeOf(r.Context(), ws.WorktreePath, root) {
+			res.Status, res.Output = "skipped", "not a worktree of "+ws.RepoRoot
+			op.Repos = append(op.Repos, res)
+			continue
+		}
+		ws.TeamName, ws.RepoRoot = team, root
+		if _, err := s.store.SaveWorkspace(r.Context(), ws); err != nil {
+			respond(w, nil, err)
+			return
+		}
+		op.Count++
+		op.Repos = append(op.Repos, res)
+	}
+	respond(w, op, nil)
 }

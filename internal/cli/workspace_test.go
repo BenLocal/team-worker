@@ -153,3 +153,39 @@ func TestWorkspaceSpawnChoices(t *testing.T) {
 		t.Fatalf("--cwd: %+v", res)
 	}
 }
+
+func TestWorkspaceImportTakesOverClawTeamWorktrees(t *testing.T) {
+	h := newHarness(t)
+	t.Setenv("TEAM_WORKER_WORKSPACE", "auto")
+	repo := gitRepo(t, "app")
+	// ClawTeam made alice's worktree outside team-worker's workspace directory.
+	tree := filepath.Join(t.TempDir(), "clawteam", "alice")
+	gitIn(t, repo, "worktree", "add", "-q", "-b", "clawteam/demo/alice", tree, "main")
+	tree, _ = filepath.EvalSymlinks(tree)
+	registry := filepath.Join(t.TempDir(), "workspace-registry.json")
+	body := `{"team_name":"demo","repo_root":"` + repo + `","workspaces":[
+	  {"agent_name":"alice","agent_id":"a1","team_name":"demo","branch_name":"clawteam/demo/alice","worktree_path":"` + tree + `","repo_root":"` + repo + `","base_branch":"main","created_at":"2026-10-27T08:53:58+00:00"},
+	  {"agent_name":"bob","agent_id":"b1","team_name":"demo","branch_name":"clawteam/demo/bob","worktree_path":"/gone/bob","repo_root":"` + repo + `","base_branch":"main","created_at":"2026-10-27T08:53:58+00:00"}]}`
+	if err := os.WriteFile(registry, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h.run("team", "spawn-team", "demo")
+	var op model.WorkspaceOp
+	h.json(&op, "workspace", "import", "demo", "--file", registry)
+	if op.Count != 1 || len(op.Repos) != 2 || op.Repos[1].Status != "skipped" {
+		t.Fatalf("import: %+v", op)
+	}
+	// Spawning alice again works in the imported worktree where it is.
+	var res model.SpawnResult
+	h.json(&res, "spawn", "subprocess", "--team", "demo", "-n", "alice", "--repo", repo, "--dry-run", "--", "true")
+	if res.Workspace != tree || len(res.Workspaces) != 1 || res.Workspaces[0].WorktreePath != tree {
+		t.Fatalf("spawn after import: %+v", res)
+	}
+	// A repository named through another agent's worktree is still the
+	// repository itself, with its checked-out branch as the base.
+	res = model.SpawnResult{}
+	h.json(&res, "spawn", "subprocess", "--team", "demo", "-n", "carol", "--repo", tree, "--dry-run", "--", "true")
+	if len(res.Workspaces) != 1 || res.Workspaces[0].RepoRoot != repo || res.Workspaces[0].BaseBranch != "main" {
+		t.Fatalf("spawn from a worktree: %+v", res)
+	}
+}

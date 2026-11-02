@@ -206,3 +206,23 @@ func TestMergeNeverSwitchesBranches(t *testing.T) {
 		t.Fatalf("a dirty checkout must stop the merge: ok=%v err=%v\n%s", ok, err, out)
 	}
 }
+
+func TestMainRootLeavesLinkedWorktrees(t *testing.T) {
+	ctx := context.Background()
+	root := newRepo(t, "app")
+	leader := filepath.Join(t.TempDir(), "leader")
+	if _, err := Create(ctx, root, leader, BranchName("demo", "leader"), "main"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(leader, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{root, leader, filepath.Join(leader, "sub")} {
+		if got, err := MainRoot(ctx, dir); err != nil || got != root {
+			t.Fatalf("MainRoot(%s) = %q, %v; want %s", dir, got, err, root)
+		}
+	}
+	if _, err := MainRoot(ctx, t.TempDir()); err == nil {
+		t.Fatal("a plain directory has no repository")
+	}
+}

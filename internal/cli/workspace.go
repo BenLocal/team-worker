@@ -13,7 +13,7 @@ import (
 func (a *app) workspaceCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "workspace", Short: "Agents' git worktrees: list, status, checkpoint, merge, cleanup"}
 	cmd.AddCommand(a.workspaceListCmd(), a.workspaceStatusCmd(), a.workspaceCheckpointCmd(),
-		a.workspaceMergeCmd(), a.workspaceCleanupCmd())
+		a.workspaceMergeCmd(), a.workspaceCleanupCmd(), a.workspaceImportCmd())
 	return cmd
 }
 
@@ -169,6 +169,31 @@ func (a *app) workspaceCleanupCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVarP(&in.Agent, "agent", "a", "", "Agent name (all if omitted)")
 	repoFlag(cmd, &in.Repo)
+	return cmd
+}
+
+func (a *app) workspaceImportCmd() *cobra.Command {
+	var in model.WorkspaceRequest
+	cmd := &cobra.Command{
+		Use:   "import TEAM",
+		Short: "Take over the worktrees of a team moved from ClawTeam",
+		Long: "Records the worktrees listed in ClawTeam's workspace registry, by default\n" +
+			"~/.clawteam/workspaces/TEAM/workspace-registry.json on the daemon's machine. Worktrees that\n" +
+			"no longer exist are skipped. Agents spawned again reuse the imported worktrees where they are.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			op, err := a.client().ImportWorkspaces(cmd.Context(), args[0], in)
+			if err != nil {
+				return a.fail(err)
+			}
+			a.emit(op, func(w io.Writer) {
+				fmt.Fprintf(w, "OK Imported %d workspace(s) for team '%s'.\n", op.Count, args[0])
+				printRepoNotes(w, op.Repos)
+			})
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&in.File, "file", "", "ClawTeam workspace-registry.json on the daemon's machine")
 	return cmd
 }
 

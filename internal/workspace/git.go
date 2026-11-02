@@ -70,6 +70,25 @@ func Toplevel(ctx context.Context, dir string) (string, error) {
 	return realPath(out), nil
 }
 
+// MainRoot is the main worktree of the repository dir is in, even when
+// dir is inside a linked worktree such as another agent's: worktrees are
+// made from the repository itself, whose checked-out branch is the base.
+func MainRoot(ctx context.Context, dir string) (string, error) {
+	top, err := Toplevel(ctx, dir)
+	if err != nil {
+		return "", err
+	}
+	common, err := git(ctx, top, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil {
+		return "", err
+	}
+	if filepath.Base(common) != ".git" {
+		// A bare repository or a separate git dir has no main worktree to use.
+		return top, nil
+	}
+	return realPath(filepath.Dir(common)), nil
+}
+
 func realPath(p string) string {
 	if resolved, err := filepath.EvalSymlinks(p); err == nil {
 		return resolved

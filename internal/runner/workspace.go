@@ -56,7 +56,7 @@ func planWorkspaces(ctx context.Context, c *client.Client, dataDir string, req R
 	var roots []string
 	seen := map[string]bool{}
 	for _, repo := range req.Repos {
-		root, err := workspace.Toplevel(ctx, repo)
+		root, err := workspace.MainRoot(ctx, repo)
 		if err != nil {
 			return nil, "", err
 		}
@@ -66,7 +66,7 @@ func planWorkspaces(ctx context.Context, c *client.Client, dataDir string, req R
 		}
 	}
 	if len(roots) == 0 && req.CallerDir != "" {
-		if root, err := workspace.Toplevel(ctx, req.CallerDir); err == nil {
+		if root, err := workspace.MainRoot(ctx, req.CallerDir); err == nil {
 			roots = append(roots, root)
 		}
 	}
@@ -88,7 +88,9 @@ func planWorkspaces(ctx context.Context, c *client.Client, dataDir string, req R
 	paths := workspace.Paths(dir, roots)
 	planned := make([]plannedWorkspace, len(roots))
 	for i, root := range roots {
-		if ws, ok := recorded[root]; ok && ws.WorktreePath == paths[i] && workspace.IsWorktreeOf(ctx, ws.WorktreePath, root) {
+		// A recorded worktree is reused where it is, such as one imported
+		// from ClawTeam outside the workspace directory.
+		if ws, ok := recorded[root]; ok && workspace.IsWorktreeOf(ctx, ws.WorktreePath, root) {
 			ws.AgentID = req.AgentID
 			planned[i] = plannedWorkspace{Workspace: ws, reuse: true}
 			continue
@@ -99,6 +101,10 @@ func planWorkspaces(ctx context.Context, c *client.Client, dataDir string, req R
 		}
 		planned[i] = plannedWorkspace{Workspace: model.Workspace{AgentName: req.Name, AgentID: req.AgentID,
 			TeamName: req.Team, BranchName: branch, WorktreePath: paths[i], RepoRoot: root, BaseBranch: base}}
+	}
+	if len(planned) == 1 {
+		// One repository: the agent works in its worktree, wherever it is.
+		dir = planned[0].WorktreePath
 	}
 	return planned, dir, nil
 }

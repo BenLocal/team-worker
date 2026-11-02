@@ -178,6 +178,7 @@ team-workerd 记录这些事件：
 | `GET /v1/teams/{team}/workspaces/{agent}/status?repo=...` | 各 worktree 未提交改动的 diff 统计 |
 | `POST /v1/teams/{team}/workspaces/{agent}/checkpoint` | 提交 worktree 里的全部改动（请求体 `repo`、`message`） |
 | `POST /v1/teams/{team}/workspaces/{agent}/merge` | 全部试合并通过后合并回基准分支（`repo`、`target`、`noCleanup`）；拒绝时返回 `status: merge_failed` |
+| `POST /v1/teams/{team}/workspaces/import` | 登记 ClawTeam workspace registry（请求体 `file`，默认 daemon 机器上该团队的）里仍然存在的 worktree |
 | `POST /v1/teams/{team}/workspaces/cleanup` | 删除一个 Agent（`agent`）或整个团队的 worktree，保留有未合并提交的分支 |
 | `DELETE /v1/teams/{team}/sessions[/{name}]?user=...` | 删除一个 Agent 的会话，不带名字时删除整个团队的会话；返回 `{"cleared": N}` |
 | `GET/POST /v1/teams/{team}/costs` | 用量汇总和明细（`agent` 只筛选明细）/ 上报一次用量 |

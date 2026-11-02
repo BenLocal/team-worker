@@ -20,9 +20,9 @@
 
 worktree 的约定：
 
-- 分支 `clawteam/<team>/<agent>`，从仓库当前检出的分支（detached 时为提交号）拉出，这个分支记为基准分支。
+- 分支 `clawteam/<team>/<agent>`，从仓库当前检出的分支（detached 时为提交号）拉出，这个分支记为基准分支。`--repo` 或当前目录在另一个 worktree 里（比如 leader 自己的 worktree）时，按它所属的主仓库算，基准取主仓库检出的分支。
 - 目录是 Agent 的工作目录 `<数据目录>/workspaces/<team>/<agent>`。
-- 同一个 Agent 再次 spawn 时，已有的 worktree 原样复用，里面未提交的改动保留；worktree 删掉后分支还在时，新 worktree 接着用这个分支，之前的提交都在。
+- 同一个 Agent 再次 spawn 时，已登记的 worktree 在原位置复用（包括从 ClawTeam 导入的），里面未提交的改动保留；worktree 删掉后分支还在时，新 worktree 接着用这个分支，之前的提交都在。
 - 目录已存在且不是这个 Agent 的 worktree 时报错，不会删除或接管它。
 - spawn 失败时撤销本次新建的 worktree 和分支，复用的不受影响。
 - 第一条提示词里写明 worktree、分支和基准分支，并要求完成任务前提交。
@@ -47,7 +47,10 @@ team-worker workspace status demo alice            # 未提交改动的 diff 统
 team-worker workspace checkpoint demo alice -m "wip"
 team-worker workspace merge demo alice             # 合并回基准分支，--target 换目标，--no-cleanup 保留 worktree
 team-worker workspace cleanup demo -a alice        # 不带 -a 时清理整个团队
+team-worker workspace import demo                  # 接管从 ClawTeam 迁来的团队的 worktree
 ```
+
+- `import`：读取 daemon 机器上 ClawTeam 的 `~/.clawteam/workspaces/<team>/workspace-registry.json`（`--file` 可换），登记其中仍然存在的 worktree，已经不在的跳过。之后这些成员再次 spawn 时，就在原来的 worktree 里继续工作。
 
 - `checkpoint`：`git add -A` 后提交，没有改动时返回 `no_changes`。默认提交信息 `[clawteam] checkpoint: <agent> @ <时间>`。
 - `merge`：先 checkpoint，再把每个仓库用 `git merge-tree` 试合并（不碰工作区，需要 git 2.38 及以上）。任何一个仓库有冲突，或目标分支检出处有未提交改动，就一个都不合并，返回 `merge_failed` 并列出原因，退出码为 1。全部没问题才逐个合并，都生成合并提交。合并不切换任何分支：目标分支检出在某个 worktree 时在那里合并，没检出时直接移动分支引用。合并后默认删除 worktree 和分支。

@@ -51,3 +51,10 @@ func (c *Client) CleanupWorkspaces(ctx context.Context, team string, in model.Wo
 	var out model.WorkspaceOp
 	return out, c.do(ctx, http.MethodPost, teamPath(team, "workspaces", "cleanup"), nil, in, &out)
 }
+
+// ImportWorkspaces records the worktrees of a ClawTeam workspace registry
+// on the daemon's machine (in.File, default ClawTeam's for the team).
+func (c *Client) ImportWorkspaces(ctx context.Context, team string, in model.WorkspaceRequest) (model.WorkspaceOp, error) {
+	var out model.WorkspaceOp
+	return out, c.do(ctx, http.MethodPost, teamPath(team, "workspaces", "import"), nil, in, &out)
+}
