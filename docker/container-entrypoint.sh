@@ -18,6 +18,29 @@ if [[ ${1:-} != start ]]; then
     exec "$@"
 fi
 shift
+# dsh records which process has each session open by pid, in the home volume.
+# A new container hands out the same pids again, so a record left by the last
+# container can make dsh refuse to resume a session nobody has open ("mounted
+# by another TUI terminal"). Drop the records older than this container.
+if [[ -f $HOME/.dsh-tui/session-mounts.json ]]; then
+    python3 - "$HOME/.dsh-tui/session-mounts.json" <<'PY' || echo 'warning: could not prune dsh session mounts' >&2
+import json, os, sys
+path = sys.argv[1]
+with open("/proc/stat") as f:
+    boot = next(int(line.split()[1]) for line in f if line.startswith("btime "))
+with open("/proc/1/stat") as f:
+    started = boot + int(f.read().rsplit(")", 1)[1].split()[19]) / os.sysconf("SC_CLK_TCK")
+with open(path) as f:
+    ledger = json.load(f)
+owners = ledger.get("owners", [])
+kept = [o for o in owners if o.get("startedAt", 0) / 1000 >= started]
+if len(kept) != len(owners):
+    ledger["owners"] = kept
+    with open(path + ".tmp", "w") as f:
+        json.dump(ledger, f, indent=2)
+    os.replace(path + ".tmp", path)
+PY
+fi
 if ! git rev-parse --show-toplevel >/dev/null 2>&1; then
     echo "Error: $PWD must be a Git repository; run git init on the host and make a commit." >&2
     exit 1

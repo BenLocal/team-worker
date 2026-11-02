@@ -2,7 +2,9 @@
 # Upgrade a Docker Compose deployment of team-worker to this checkout's
 # binaries: build them here, copy them over with ah, add them as one layer on
 # the base image, point the compose file at the new tag and recreate the
-# container. Recreating ends every agent, so it refuses while the team has
+# container. The layer also carries the image's entrypoint scripts and the
+# Dockerfile's team-workerd settings, so changes to those arrive too; other
+# Dockerfile changes need a full image build. Recreating ends every agent, so it refuses while the team has
 # in-progress tasks unless --force is given.
 set -euo pipefail
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
@@ -55,8 +57,16 @@ if [[ -n $open && $force != true ]]; then
     exit 1
 fi
 
+# The daemon's settings come from the Dockerfile, so the layer cannot drift from it.
+daemon_env=$(grep -oE 'TEAM_WORKER_(HTTP_ADDR|BOARD|WEB_BASE_PATH|BOARD_LINKS)=("[^"]*"|[^ \\]+)' "$ROOT/docker/Dockerfile" | tr '\n' ' ')
+if [[ $(wc -w <<<"$daemon_env") -ne 4 ]]; then
+    echo "could not read the four team-workerd settings from docker/Dockerfile" >&2
+    exit 1
+fi
+
 echo "building binaries for $rev"
 "$ROOT/docker/team-worker.sh" bins >/dev/null
+cp "$ROOT/docker/container-entrypoint.sh" "$ROOT/docker/docker-entrypoint.sh" "$ROOT/bin/docker/"
 ah --timeout 240s cp -r "$ROOT/bin/docker" "$host:$build"
 local_sums=$(cd "$ROOT/bin/docker" && sha256sum team-worker team-workerd team-worker-ops)
 remote_sums=$(ah --timeout 60s connect "$host" "cd '$build' && sha256sum team-worker team-workerd team-worker-ops")
@@ -68,7 +78,15 @@ fi
 echo "building $image on $host and recreating the container"
 ah --timeout 600s connect "$host" "set -e
 cd '$build'
-printf 'FROM %s\nUSER root\nCOPY team-worker team-workerd team-worker-ops /usr/local/bin/\nUSER node\n' '$base' > Dockerfile
+cat > Dockerfile <<'DOCKERFILE'
+FROM $base
+USER root
+COPY team-worker team-workerd team-worker-ops /usr/local/bin/
+COPY --chmod=755 container-entrypoint.sh /usr/local/bin/container-entrypoint
+COPY --chmod=755 docker-entrypoint.sh /usr/local/bin/team-worker-docker-entrypoint
+ENV $daemon_env
+USER node
+DOCKERFILE
 docker build -q -t '$image' . >/dev/null
 cd '$dir'
 cp -p docker-compose.yml bak.docker-compose.yml.bak-\$(date +%Y%m%dT%H%M%S)
