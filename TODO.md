@@ -67,18 +67,24 @@
 
 ### 7. `workspace`：Agent 的 git 工作区隔离
 
-ClawTeam 为每个 Agent 建独立分支（worktree），team-worker 的 spawn 只创建普通目录 `<数据目录>/workspaces/<team>/<agent>`，分支与合并由 Agent 自行处理。多个 Agent 并行改同一仓库时需要这一项。
+ClawTeam 为每个 Agent 建独立分支（worktree），team-worker 的 spawn 只创建普通目录 `<数据目录>/workspaces/<team>/<agent>`，分支与合并由 Agent 自行处理。多个 Agent 并行改同一仓库时需要这一项。2026-11-02 对照 ClawTeam `120813f` 定下方案（用户确认）：命令、参数和 `--json` 字段与 ClawTeam 一致，git 操作都在 daemon 所在的机器上执行。用法见 `docs/workspaces.md`。
 
-- [ ] 明确工作区与 spawn 的关系：何时创建 worktree、分支命名、基准分支、`--cwd` 指向已有仓库时的行为。
-- [ ] 实现 `workspace list/status/checkpoint/merge/cleanup`：自动提交检查点、合并回基准分支、清理 worktree 与分支。
+- [x] 存储：迁移新增 `workspaces` 表，按 (team, agent, repo_root) 每个仓库一行，字段同 ClawTeam 的 `WorkspaceInfo`（`agent_name, agent_id, team_name, branch_name, worktree_path, repo_root, base_branch, created_at`）。
+- [x] spawn / launch：`--workspace/--no-workspace`、可重复的 `--repo`；模式取配置 `workspace`（`auto`/`always`/`never`，环境变量 `TEAM_WORKER_WORKSPACE`，默认 `auto`）。本地模式 CLI 把自己的当前目录作为候选仓库，远程模式只认 `--repo`（daemon 机器上的路径）。分支 `clawteam/{team}/{agent}`，从仓库当前分支拉出；有残留时先清掉。spawn 失败回滚 worktree；prompt 写明目录、分支和完成前提交。
+- [x] 多仓库：只有一个仓库时 `workspaces/{team}/{agent}` 就是 worktree（与 ClawTeam 一致）；多个仓库时它是普通目录，每个仓库一个以仓库目录名命名的 worktree 子目录（重名加序号），各仓库分支同名。
+- [ ] 团队或模板可配默认仓库列表，成员的 `--repo` 优先。
+- [x] `workspace list/status/checkpoint/merge/cleanup`：默认作用于成员的全部仓库，`--repo` 限定一个；只有一个仓库时输出与 ClawTeam 相同。
+- [x] merge：先对每个仓库用 `git merge-tree --write-tree` 试合并，全部无冲突才逐个 `merge --no-ff`，否则一个都不合并并报告冲突的仓库和文件；主仓库有未提交改动时拒绝，合并后切回原分支；成功后默认清理 worktree 和分支。
+- [x] 团队删除和 `team cleanup`：先 checkpoint 再删 worktree，**保留分支**（与 ClawTeam 不同，避免丢掉未合并的提交），删除表中记录。
+- [x] 修正 ClawTeam 的已知问题：显式 `--workspace` 但不是 git 仓库时报错而不是静默降级；并发 spawn 不丢记录（SQLite）；merge 不留下切换过的主仓库分支。
 
 ### 8. `context`：跨 Agent 的改动上下文
 
-依赖 `workspace`。
+依赖 `workspace`。算法和 JSON 字段照搬 ClawTeam。
 
-- [ ] 实现 `context diff/files/log`：各 Agent 分支相对基准的 diff 统计、文件归属（哪个 Agent 改了哪些文件）、提交记录。
-- [ ] 实现 `context conflicts`：检测多个分支改动同一文件。
-- [ ] 实现 `context inject`：把上述上下文注入给指定 Agent。
+- [ ] 实现 `context diff/files/log`：各 Agent 分支相对基准的 diff 统计、文件归属（哪个 Agent 改了哪些文件）、提交记录。多仓库时文件写成“仓库名/路径”；`log` 用 NUL 分隔，避免提交信息含 `|` 时解析错误。
+- [ ] 实现 `context conflicts`：多个分支改动同一仓库的同一文件；改动行有交集为 `high`，否则 `medium`。
+- [ ] 实现 `context inject`：生成上述上下文的 Markdown，spawn 时放进初始 prompt（与 ClawTeam 一致）；另加 `--send` 作为消息发给该 Agent。
 
 ### 9. 团队快照
 

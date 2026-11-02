@@ -43,6 +43,8 @@ func newHarness(t *testing.T) *harness {
 	t.Setenv("TEAM_WORKER_DATA_DIR", t.TempDir())
 	// Adapters and templates are read from $HOME/.team-worker; keep the user's out of tests.
 	t.Setenv("HOME", t.TempDir())
+	// Tests run inside this repository: spawn must not give agents worktrees of it.
+	t.Setenv("TEAM_WORKER_WORKSPACE", "never")
 	return &harness{t: t, api: client.NewHTTP(ts.URL, ts.Client())}
 }
 

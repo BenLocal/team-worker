@@ -207,7 +207,7 @@ func TestBuildPromptPicksProtocolByRole(t *testing.T) {
 		strings.Contains(leader, "## Worker Loop Protocol") || strings.Contains(leader, "inbox send demo lead") {
 		t.Errorf("leader prompt has the wrong protocol:\n%s", leader)
 	}
-	if !strings.HasSuffix(worker, "keep working until you can stop.\n") || !strings.HasSuffix(leader, "while the workspaces stay.\n") {
+	if !strings.HasSuffix(worker, "keep working until you can stop.\n") || !strings.HasSuffix(leader, "plain workspace directories stay.\n") {
 		t.Errorf("prompts should end with one newline")
 	}
 }
@@ -237,5 +237,19 @@ func TestBuildPromptRoutesUserQuestionsThroughTheLeader(t *testing.T) {
 	if !strings.Contains(worker, "send the leader the question, the options and your recommendation") ||
 		!strings.Contains(worker, "never open an interactive question menu") || strings.Contains(worker, "### Asking the user") {
 		t.Errorf("worker prompt should send user questions to the leader:\n%s", worker)
+	}
+}
+
+func TestBuildPromptNamesTheAgentsWorktrees(t *testing.T) {
+	p := BuildPrompt(PromptParams{AgentName: "alice", Team: "demo", Leader: "leader", Workspace: "/w/alice",
+		Worktrees: []Worktree{{Path: "/w/alice", Repo: "/src/app", Branch: "clawteam/demo/alice", Base: "main"}}})
+	for _, want := range []string{"`/w/alice` is your isolated git worktree of /src/app, on branch `clawteam/demo/alice` (created from `main`)",
+		"Commit your changes in your worktree"} {
+		if !strings.Contains(p, want) {
+			t.Fatalf("prompt lacks %q:\n%s", want, p)
+		}
+	}
+	if strings.Contains(BuildPrompt(PromptParams{AgentName: "alice", Workspace: "/w/alice"}), "worktree") {
+		t.Fatal("an agent without worktrees must not be told about them")
 	}
 }

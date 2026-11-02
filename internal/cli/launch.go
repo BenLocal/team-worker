@@ -73,7 +73,7 @@ func (a *app) templateCmd() *cobra.Command {
 
 func (a *app) launchCmd() *cobra.Command {
 	var goal, teamName, backend, cwd, promptFile, profileName string
-	var envPairs []string
+	var envPairs, repos []string
 	var noSkip bool
 	cmd := &cobra.Command{
 		Use:   "launch TEMPLATE|FILE.toml [-- COMMAND ARGS...]",
@@ -87,7 +87,7 @@ func (a *app) launchCmd() *cobra.Command {
 				return a.fail(fmt.Errorf("unexpected arguments; put the agent command after --"))
 			}
 			in := model.LaunchRequest{Template: args[0], Goal: goal, Team: teamName, Backend: backend, Cwd: cwd,
-				Profile: profileName, NoSkip: noSkip, User: config.IdentityFromEnv().User}
+				Profile: profileName, NoSkip: noSkip, User: config.IdentityFromEnv().User, Repos: repos}
 			// A template file is the caller's; a template name is the daemon's.
 			if strings.HasSuffix(args[0], ".toml") {
 				data, err := os.ReadFile(args[0])
@@ -110,7 +110,11 @@ func (a *app) launchCmd() *cobra.Command {
 				}
 				in.TeamPrompt = strings.TrimRight(string(data), "\n")
 			}
-			out, err := a.client().Launch(cmd.Context(), in)
+			c := a.client()
+			if choice, dir := workspaceFlags(cmd, c.Remote()); choice != nil && *choice {
+				in.Workspace, in.CallerDir = true, dir
+			}
+			out, err := c.Launch(cmd.Context(), in)
 			if err != nil {
 				return a.fail(err)
 			}
@@ -144,6 +148,8 @@ func (a *app) launchCmd() *cobra.Command {
 	f.StringVarP(&backend, "backend", "b", "", "Override the template backend: tmux or subprocess")
 	f.StringVar(&promptFile, "team-prompt-file", "", "Team instructions every agent receives in its first prompt")
 	f.StringVar(&cwd, "cwd", "", "Working directory for every agent (default: one workspace per agent)")
+	f.BoolP("workspace", "w", false, "Give every agent a git worktree (of --repo, else the current directory's repository)")
+	f.StringArrayVar(&repos, "repo", nil, "Git repository to give every agent a worktree of, a path on the daemon's machine (repeatable)")
 	f.StringArrayVar(&envPairs, "env", nil, "Extra environment variable KEY=VALUE for every agent")
 	f.StringVar(&profileName, "profile", "", "Runtime profile for every agent; template environment still overrides it")
 	f.BoolVar(&noSkip, "no-skip-permissions", false, "Keep the agent CLIs' tool approval prompts")

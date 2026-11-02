@@ -128,7 +128,9 @@ func (a *app) spawnCmd() *cobra.Command {
 			if req.Task, req.TaskSet, err = taskInput(cmd, req.Task, taskFile); err != nil {
 				return a.fail(err)
 			}
-			res, err := a.client().SpawnAgent(cmd.Context(), req)
+			c := a.client()
+			req.Workspace, req.CallerDir = workspaceFlags(cmd, c.Remote())
+			res, err := c.SpawnAgent(cmd.Context(), req)
 			if err != nil {
 				return a.fail(err)
 			}
@@ -150,6 +152,7 @@ func (a *app) spawnCmd() *cobra.Command {
 	f.StringVar(&taskFile, "task-file", "", "Read the agent instructions from this file instead of --task")
 	cmd.MarkFlagsMutuallyExclusive("task", "task-file")
 	f.StringVar(&req.Cwd, "cwd", "", "Working directory (default: <data-dir>/workspaces/<team>/<agent>)")
+	addWorkspaceFlags(cmd, &req.Repos)
 	f.StringArrayVar(&envPairs, "env", nil, "Extra environment variable KEY=VALUE (repeatable)")
 	f.StringVar(&profileName, "profile", "", "Runtime profile (default: default_profile, else the only profile; none with an explicit command)")
 	f.BoolVar(&noSkip, "no-skip-permissions", false, "Keep the agent CLI's tool approval prompts")
@@ -162,10 +165,42 @@ func (a *app) spawnCmd() *cobra.Command {
 	return cmd
 }
 
+// addWorkspaceFlags adds ClawTeam's worktree flags: --workspace and
+// --no-workspace override the daemon's workspace mode, --repo names the
+// repositories to give the agent worktrees of.
+func addWorkspaceFlags(cmd *cobra.Command, repos *[]string) {
+	f := cmd.Flags()
+	f.BoolP("workspace", "w", false, "Give the agent a git worktree (default: the daemon's workspace mode, auto)")
+	f.Bool("no-workspace", false, "Do not give the agent a git worktree")
+	cmd.MarkFlagsMutuallyExclusive("workspace", "no-workspace")
+	f.StringArrayVar(repos, "repo", nil,
+		"Git repository to give the agent a worktree of, a path on the daemon's machine (repeatable; default: the current directory's repository, locally)")
+}
+
+// workspaceFlags reads --workspace/--no-workspace, and the directory to look
+// for a repository in: this CLI's own working directory, which only means
+// something to a daemon on the same machine.
+func workspaceFlags(cmd *cobra.Command, remote bool) (*bool, string) {
+	var choice *bool
+	if cmd.Flags().Changed("workspace") {
+		on := true
+		choice = &on
+	} else if cmd.Flags().Changed("no-workspace") {
+		off := false
+		choice = &off
+	}
+	dir := ""
+	if !remote {
+		dir, _ = os.Getwd()
+	}
+	return choice, dir
+}
+
 func printDryRun(w io.Writer, res model.SpawnResult) {
 	fmt.Fprintf(w, "Adapter:   %s\n", res.Adapter)
 	fmt.Fprintf(w, "Backend:   %s\n", res.Backend)
 	fmt.Fprintf(w, "Workspace: %s\n", res.Workspace)
+	printWorktrees(w, res.Workspaces)
 	fmt.Fprintf(w, "Command:   %s\n", strings.Join(res.Args, " "))
 	fmt.Fprintf(w, "Prompt:    %d chars (--json shows the text)\n\nEnvironment (values hidden):\n", len(res.Prompt))
 	tw := newTable(w, "  NAME", "FROM")
@@ -178,9 +213,16 @@ func printDryRun(w io.Writer, res model.SpawnResult) {
 func printSpawned(w io.Writer, team string, res model.SpawnResult) {
 	fmt.Fprintf(w, "OK Spawned '%s' (%s, id: %s)\n", res.AgentName, res.Backend, res.AgentID)
 	fmt.Fprintf(w, "  Workspace: %s\n", res.Workspace)
+	printWorktrees(w, res.Workspaces)
 	if res.Backend == "tmux" {
 		fmt.Fprintf(w, "  Watch: tmux attach -t %s\n", model.TmuxSession(team))
 	} else {
 		fmt.Fprintf(w, "  Log: %s\n", res.Target)
+	}
+}
+
+func printWorktrees(w io.Writer, list []model.Workspace) {
+	for _, ws := range list {
+		fmt.Fprintf(w, "  Worktree:  %s (%s, branch %s from %s)\n", ws.WorktreePath, ws.RepoRoot, ws.BranchName, ws.BaseBranch)
 	}
 }

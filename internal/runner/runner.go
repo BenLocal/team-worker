@@ -54,7 +54,7 @@ func dollars(cents float64) string { return fmt.Sprintf("$%.2f", cents/100) }
 // agent as leader when needed), prepares its workspace and prompt, starts
 // it and records the process with the daemon. Everything that can fail is
 // checked before the team is changed, and a dry run stops there.
-func Spawn(ctx context.Context, e Env, req Request) (Result, error) {
+func Spawn(ctx context.Context, e Env, req Request) (_ Result, err error) {
 	c := e.Client
 	if req.AgentType == "" {
 		req.AgentType = "general-purpose"
@@ -119,16 +119,17 @@ func Spawn(ctx context.Context, e Env, req Request) (Result, error) {
 	}
 
 	dataDir := e.DataDir
-	cwd := req.Cwd
-	if cwd == "" {
-		cwd = config.WorkspaceDir(dataDir, req.Team, req.Name)
-	}
-	if cwd, err = filepath.Abs(cwd); err != nil {
+	planned, cwd, err := planWorkspaces(ctx, c, dataDir, req)
+	if err != nil {
 		return Result{}, err
+	}
+	var worktrees []spawn.Worktree
+	for _, p := range planned {
+		worktrees = append(worktrees, spawn.Worktree{Path: p.WorktreePath, Repo: p.RepoRoot, Branch: p.BranchName, Base: p.BaseBranch})
 	}
 	prompt := spawn.BuildPrompt(spawn.PromptParams{
 		AgentName: req.Name, AgentID: req.AgentID, AgentType: req.AgentType, Team: req.Team,
-		Leader: leader, User: req.User, Workspace: cwd, TeamPrompt: teamPrompt, Task: req.Task,
+		Leader: leader, User: req.User, Workspace: cwd, Worktrees: worktrees, TeamPrompt: teamPrompt, Task: req.Task,
 		PlanRequired: req.PlanRequired,
 	})
 	identity := map[string]string{
@@ -159,7 +160,7 @@ func Spawn(ctx context.Context, e Env, req Request) (Result, error) {
 		return Result{}, err
 	}
 	result := Result{Backend: req.Backend, AgentName: req.Name, AgentID: req.AgentID, Workspace: cwd,
-		Command: req.Command, Adapter: adapter.Name() + " (" + adapter.Source() + ")"}
+		Command: req.Command, Adapter: adapter.Name() + " (" + adapter.Source() + ")", Workspaces: workspacesOf(planned)}
 	if req.DryRun {
 		result.Status = "dry-run"
 		result.Args = HidePrompt(built.Plan.Args, prompt)
@@ -217,6 +218,16 @@ func Spawn(ctx context.Context, e Env, req Request) (Result, error) {
 	} else if !client.IsNotFound(err) {
 		return Result{}, err
 	}
+	rollback, err := createWorkspaces(ctx, c, planned)
+	if err != nil {
+		return Result{}, err
+	}
+	// Worktrees created for an agent that then fails to start go again.
+	defer func() {
+		if err != nil {
+			rollback()
+		}
+	}()
 	if err := os.MkdirAll(cwd, 0o755); err != nil {
 		return Result{}, err
 	}

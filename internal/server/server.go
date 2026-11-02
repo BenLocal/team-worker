@@ -179,6 +179,13 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /v1/teams/{team}/harness/conduct", s.startConducting)
 	m.HandleFunc("DELETE /v1/teams/{team}/harness/conduct", s.stopConducting)
 	m.HandleFunc("POST /v1/teams/{team}/agents/{name}/activity", s.agentActivity)
+	m.HandleFunc("GET /v1/teams/{team}/workspaces", s.listWorkspaces)
+	m.HandleFunc("PUT /v1/teams/{team}/workspaces", s.saveWorkspace)
+	m.HandleFunc("POST /v1/teams/{team}/workspaces/cleanup", s.cleanupWorkspaces)
+	m.HandleFunc("DELETE /v1/teams/{team}/workspaces/{agent}", s.deleteWorkspace)
+	m.HandleFunc("GET /v1/teams/{team}/workspaces/{agent}/status", s.workspaceStatus)
+	m.HandleFunc("POST /v1/teams/{team}/workspaces/{agent}/checkpoint", s.checkpointWorkspace)
+	m.HandleFunc("POST /v1/teams/{team}/workspaces/{agent}/merge", s.mergeWorkspace)
 	m.HandleFunc("GET /v1/teams/{team}/sessions/{name}", s.getSession)
 	m.HandleFunc("PUT /v1/teams/{team}/sessions/{name}", s.saveSession)
 	m.HandleFunc("DELETE /v1/teams/{team}/sessions/{name}", s.clearSessions)
@@ -268,6 +275,8 @@ func (s *Server) deleteTeam(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Worktrees go before their records do; branches with unmerged work stay.
+	s.cleanupTeamWorkspaces(r.Context(), r.PathValue("team"))
 	deleted, err := s.store.DeleteTeam(r.Context(), r.PathValue("team"))
 	if deleted {
 		s.log.Info("team deleted", "team", r.PathValue("team"))

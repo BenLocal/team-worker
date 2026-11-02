@@ -7,17 +7,25 @@ import (
 )
 
 type PromptParams struct {
-	AgentName  string
-	AgentID    string
-	AgentType  string
-	Team       string
-	Leader     string
-	User       string
-	Workspace  string
+	AgentName string
+	AgentID   string
+	AgentType string
+	Team      string
+	Leader    string
+	User      string
+	Workspace string
+	// Worktrees are the agent's isolated git worktrees, if any.
+	Worktrees  []Worktree
 	TeamPrompt string
 	Task       string
 	// PlanRequired adds how to get a plan approved before starting work.
 	PlanRequired bool
+}
+
+// Worktree is one git worktree an agent works in: its directory, the
+// repository it belongs to, its branch and the branch it started from.
+type Worktree struct {
+	Path, Repo, Branch, Base string
 }
 
 // IsLeader reports whether the prompt is for the team's leader, who gets the

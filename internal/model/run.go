@@ -28,6 +28,13 @@ type SpawnRequest struct {
 	Backend         string        `json:"backend"`
 	Command         []string      `json:"command,omitempty"`
 	Cwd             string        `json:"cwd,omitempty"`
+	// Workspace forces a git worktree on (true) or off (false); nil follows
+	// the daemon's workspace mode. Repos are the repositories to give the
+	// agent worktrees of, as paths on the daemon's machine; CallerDir is a
+	// local client's working directory, used when no repository is named.
+	Workspace *bool    `json:"workspace,omitempty"`
+	Repos     []string `json:"repos,omitempty"`
+	CallerDir string   `json:"callerDir,omitempty"`
 	// EnvLayers come from the template, the template agent and --env, in that order.
 	EnvLayers []EnvLayer `json:"envLayers,omitempty"`
 	SkipPerms bool       `json:"skipPermissions,omitempty"`
@@ -50,6 +57,8 @@ type SpawnResult struct {
 	Workspace string   `json:"workspace"`
 	Command   []string `json:"command"`
 	Adapter   string   `json:"adapter"`
+	// Workspaces are the agent's git worktrees, or those a dry run would use.
+	Workspaces []Workspace `json:"workspaces,omitempty"`
 	// Dry runs also report the full start: final arguments, prompt and
 	// where each environment variable comes from (never its value).
 	Args   []string    `json:"args,omitempty"`
@@ -82,16 +91,20 @@ type ResumeRequest struct {
 // template is TemplateText when set (a file the client read), else the
 // daemon's template called Template.
 type LaunchRequest struct {
-	Template     string     `json:"template"`
-	TemplateText string     `json:"templateText,omitempty"`
-	Goal         string     `json:"goal,omitempty"`
-	Team         string     `json:"team,omitempty"`
-	Backend      string     `json:"backend,omitempty"`
-	Cwd          string     `json:"cwd,omitempty"`
-	TeamPrompt   string     `json:"teamPrompt,omitempty"`
-	EnvLayers    []EnvLayer `json:"envLayers,omitempty"`
-	Profile      string     `json:"profile,omitempty"`
-	NoSkip       bool       `json:"noSkipPermissions,omitempty"`
+	Template     string `json:"template"`
+	TemplateText string `json:"templateText,omitempty"`
+	Goal         string `json:"goal,omitempty"`
+	Team         string `json:"team,omitempty"`
+	Backend      string `json:"backend,omitempty"`
+	Cwd          string `json:"cwd,omitempty"`
+	// Workspace and Repos give every agent git worktrees, as for spawn.
+	Workspace  bool       `json:"workspace,omitempty"`
+	Repos      []string   `json:"repos,omitempty"`
+	CallerDir  string     `json:"callerDir,omitempty"`
+	TeamPrompt string     `json:"teamPrompt,omitempty"`
+	EnvLayers  []EnvLayer `json:"envLayers,omitempty"`
+	Profile    string     `json:"profile,omitempty"`
+	NoSkip     bool       `json:"noSkipPermissions,omitempty"`
 	// Command replaces the template's agent command for every agent.
 	Command []string `json:"command,omitempty"`
 	User    string   `json:"user,omitempty"`

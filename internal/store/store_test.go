@@ -369,3 +369,46 @@ func TestWriteCanceledMidTransactionReportsCancel(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkspacesAreKeptPerAgentAndRepository(t *testing.T) {
+	s := newTestStore(t)
+	newTeam(t, s, "alice", "bob")
+	ctx := context.Background()
+	for _, ws := range []model.Workspace{
+		{TeamName: "demo", AgentName: "alice", RepoRoot: "/repo/a", BranchName: "clawteam/demo/alice", WorktreePath: "/w/alice/a"},
+		{TeamName: "demo", AgentName: "alice", RepoRoot: "/repo/b", BranchName: "clawteam/demo/alice", WorktreePath: "/w/alice/b"},
+		{TeamName: "demo", AgentName: "bob", RepoRoot: "/repo/a", BranchName: "clawteam/demo/bob", WorktreePath: "/w/bob"},
+	} {
+		if _, err := s.SaveWorkspace(ctx, ws); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Saving the same agent and repository again replaces the record.
+	if _, err := s.SaveWorkspace(ctx, model.Workspace{TeamName: "demo", AgentName: "bob", RepoRoot: "/repo/a",
+		BranchName: "clawteam/demo/bob", WorktreePath: "/w/bob2"}); err != nil {
+		t.Fatal(err)
+	}
+	all, err := s.ListWorkspaces(ctx, "demo", "")
+	if err != nil || len(all) != 3 {
+		t.Fatalf("%+v %v", all, err)
+	}
+	alice, err := s.ListWorkspaces(ctx, "demo", "alice")
+	if err != nil || len(alice) != 2 || alice[0].CreatedAt == "" {
+		t.Fatalf("%+v %v", alice, err)
+	}
+	if ok, err := s.DeleteWorkspace(ctx, "demo", "alice", "/repo/b"); err != nil || !ok {
+		t.Fatalf("%v %v", ok, err)
+	}
+	if _, err := s.SaveWorkspace(ctx, model.Workspace{TeamName: "ghost", AgentName: "x", RepoRoot: "/r",
+		BranchName: "b", WorktreePath: "/p"}); KindOf(err) != KindNotFound {
+		t.Fatalf("an unknown team must be refused: %v", err)
+	}
+	// The records go with the team.
+	if _, err := s.DeleteTeam(ctx, "demo"); err != nil {
+		t.Fatal(err)
+	}
+	newTeam(t, s)
+	if left, err := s.ListWorkspaces(ctx, "demo", ""); err != nil || len(left) != 0 {
+		t.Fatalf("%+v %v", left, err)
+	}
+}

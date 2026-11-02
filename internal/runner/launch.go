@@ -68,6 +68,10 @@ func Launch(ctx context.Context, e Env, in LaunchRequest) (LaunchResult, error) 
 			TaskSet: true, User: in.User,
 			Cwd: in.Cwd, EnvLayers: append(layers, in.EnvLayers...), SkipPerms: !in.NoSkip,
 		}
+		if in.Workspace || len(in.Repos) > 0 {
+			on := true
+			req.Workspace, req.Repos, req.CallerDir = &on, in.Repos, in.CallerDir
+		}
 		// The profile layer goes under the template's own environment.
 		if err := ApplyProfile(&req, in.Profile); err != nil {
 			return LaunchResult{}, fmt.Errorf("agent '%s': %w", ag.Name, err)

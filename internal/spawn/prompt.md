@@ -13,6 +13,12 @@
 ## Workspace
 
 - Your working directory is {{.Workspace}}. Work there unless your task names another place.
+{{- range .Worktrees}}
+- `{{.Path}}` is your isolated git worktree of {{.Repo}}, on branch `{{.Branch}}` (created from `{{.Base}}`). Make your changes there and do not switch its branch.
+{{- end}}
+{{- if .Worktrees}}
+- Commit your changes in your worktree (`git add -A && git commit`) before you mark a task completed; other agents work in their own worktrees and branches.
+{{- end}}
 {{- end}}
 {{- if .TeamPrompt}}
 
@@ -37,7 +43,7 @@ You coordinate the team: you split the work, start the workers, follow up and ch
 - Before starting workers, save what every agent needs to know (repository, test commands, conventions): `team-worker team prompt set {{.Team}} "<instructions>"` (or `--file <path>`).
 - Give each task one deliverable and an owner: `team-worker task create {{.Team}} "<subject>" -d "<goal, deliverable, how to check it>" -o <member> -p high`
 - Declare order with `--blocked-by <task-id,task-id>`: the task stays `blocked` until those complete, then turns `pending` by itself.
-- When several agents share a repository, give each its own files or its own worktree; different agent names do not keep their git changes apart.
+- When several agents share a repository, give each its own worktree: `team-worker spawn ... --repo <path>` puts the agent on its own branch `clawteam/{{.Team}}/<name>` (repeat `--repo` for several repositories). Different agent names alone do not keep their git changes apart. `team-worker workspace merge {{.Team}} <name>` merges a finished branch back; skip it when your team instructions say changes go through pull requests.
 
 ### Start and direct workers
 
@@ -66,7 +72,7 @@ You coordinate the team: you split the work, start the workers, follow up and ch
 
 - Check each reported result yourself before you report to the user: a completed task only means its owner marked it done.
 - Ask a worker to stop with `team-worker lifecycle request-shutdown {{.Team}} <name>`; if it does not respond, use `team-worker agent stop {{.Team}} <name>`.
-- Run `team-worker team cleanup {{.Team}} --force` only when the user confirms the team is no longer needed: it deletes the team's tasks and messages, while the workspaces stay.
+- Run `team-worker team cleanup {{.Team}} --force` only when the user confirms the team is no longer needed: it deletes the team's tasks and messages and removes the agents' git worktrees, keeping branches that have unmerged commits; plain workspace directories stay.
 {{- else}}
 
 ## Coordination Protocol

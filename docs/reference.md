@@ -16,10 +16,11 @@
 | `TEAM_WORKER_AGENT_ID` | 当前 Agent ID | 随机生成 |
 | `TEAM_WORKER_USER` | 多用户场景下的用户名，收件箱按 `<user>_<name>` 区分 | 配置文件中的 `user` |
 | `TEAM_WORKER_WORKSPACE_DIR` | spawn 为 Agent 设置的工作目录 | 由 spawn 设置 |
+| `TEAM_WORKER_WORKSPACE` | daemon 的工作区模式：`auto`、`always` 或 `never`，决定 spawn 是否给 Agent 建 git worktree（见 [workspaces.md](workspaces.md)） | 配置文件中的 `workspace`，否则 `auto` |
 | `TEAM_WORKER_NO_AUTOSTART` | 设为任意值时不自动拉起服务 | 未设置 |
 | `TEAM_WORKER_START_BLOCKED_FILE` | keepalive 在该文件移除后才启动子进程；Docker 用于等待 provider Key 配置 | 未设置 |
 
-配置文件固定为 `~/.team-worker/config.json`，可设置 `data_dir`、`user`、`server_url` 和 `remotes`（见下文「HTTP 远程调用」里的操作员模式）。`server_url` 会让本机所有命令都走远程，此时 API Key 由环境变量提供；服务端默认值保存在 SQLite。Unix socket 路径不能超过约 100 个字符；数据目录路径较长时，用 `TEAM_WORKER_SOCKET` 把 socket 放到短路径下。
+配置文件固定为 `~/.team-worker/config.json`，可设置 `data_dir`、`user`、`server_url`、`workspace` 和 `remotes`（见下文「HTTP 远程调用」里的操作员模式）。`server_url` 会让本机所有命令都走远程，此时 API Key 由环境变量提供；服务端默认值保存在 SQLite。Unix socket 路径不能超过约 100 个字符；数据目录路径较长时，用 `TEAM_WORKER_SOCKET` 把 socket 放到短路径下。
 
 ## 数据目录
 
@@ -172,6 +173,12 @@ team-workerd 记录这些事件：
 | `POST/DELETE /v1/teams/{team}/harness/conduct` | 让 daemon 开始 / 停止调度团队正在进行的 harness 运行，停止不影响这一轮本身 |
 | `POST /v1/teams/{team}/agents/stop` | 批量保存团队的停止意图并返回进程记录 |
 | `GET/PUT /v1/teams/{team}/sessions/{name}?user=...` | 读取 / 保存原生会话；保存时校验运行标识 |
+| `GET/PUT /v1/teams/{team}/workspaces?agent=...` | 列出团队（或一个 Agent）的 git worktree / 保存一条记录（daemon 的 spawn 用） |
+| `DELETE /v1/teams/{team}/workspaces/{agent}?repo=...` | 删除一条 worktree 记录，不动磁盘 |
+| `GET /v1/teams/{team}/workspaces/{agent}/status?repo=...` | 各 worktree 未提交改动的 diff 统计 |
+| `POST /v1/teams/{team}/workspaces/{agent}/checkpoint` | 提交 worktree 里的全部改动（请求体 `repo`、`message`） |
+| `POST /v1/teams/{team}/workspaces/{agent}/merge` | 全部试合并通过后合并回基准分支（`repo`、`target`、`noCleanup`）；拒绝时返回 `status: merge_failed` |
+| `POST /v1/teams/{team}/workspaces/cleanup` | 删除一个 Agent（`agent`）或整个团队的 worktree，保留有未合并提交的分支 |
 | `DELETE /v1/teams/{team}/sessions[/{name}]?user=...` | 删除一个 Agent 的会话，不带名字时删除整个团队的会话；返回 `{"cleared": N}` |
 | `GET/POST /v1/teams/{team}/costs` | 用量汇总和明细（`agent` 只筛选明细）/ 上报一次用量 |
 | `PUT /v1/teams/{team}/costs/sessions` | 记录一个原生会话的累计 token，按会话覆盖 |

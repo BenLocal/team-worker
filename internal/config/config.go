@@ -3,6 +3,7 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,6 +19,8 @@ type File struct {
 	DataDir   string `json:"data_dir"`
 	User      string `json:"user"`
 	ServerURL string `json:"server_url,omitempty"`
+	// Workspace is the daemon's worktree mode for spawn: auto, always or never.
+	Workspace string `json:"workspace,omitempty"`
 	// Remotes are deployments the CLI reaches as an operator with --remote.
 	Remotes map[string]Remote `json:"remotes,omitempty"`
 }
@@ -58,6 +61,23 @@ func ServerURL() string {
 		return value
 	}
 	return Load().ServerURL
+}
+
+// WorkspaceMode is whether spawn gives agents git worktrees: "auto" when a
+// repository is known (the default), "always", or "never". It comes from
+// TEAM_WORKER_WORKSPACE, then config workspace.
+func WorkspaceMode() (string, error) {
+	mode := os.Getenv("TEAM_WORKER_WORKSPACE")
+	if mode == "" {
+		mode = Load().Workspace
+	}
+	switch mode {
+	case "":
+		return "auto", nil
+	case "auto", "always", "never":
+		return mode, nil
+	}
+	return "", fmt.Errorf("invalid workspace mode %q: use auto, always or never", mode)
 }
 
 func APIKey() string { return os.Getenv("TEAM_WORKER_API_KEY") }
