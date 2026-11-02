@@ -23,6 +23,7 @@ import (
 type agentWork struct {
 	ws   model.Workspace
 	head string
+	base string // ws.BaseBranch, or its upstream when that is ahead
 }
 
 // teamWork returns the team's worktrees with the commits they are at,
@@ -44,7 +45,8 @@ func (s *Server) teamWork(ctx context.Context, team, repo string) ([]agentWork, 
 			continue
 		}
 		roots[ws.RepoRoot] = true
-		works = append(works, agentWork{ws: ws, head: workspace.Head(ctx, ws.RepoRoot, ws.WorktreePath, ws.BranchName)})
+		works = append(works, agentWork{ws: ws, head: workspace.Head(ctx, ws.RepoRoot, ws.WorktreePath, ws.BranchName),
+			base: workspace.CurrentBase(ctx, ws.RepoRoot, ws.BaseBranch)})
 	}
 	return works, len(roots) > 1, nil
 }
@@ -64,7 +66,7 @@ func agentDiff(ctx context.Context, works []agentWork, agent string, multi bool)
 		if w.ws.AgentName != agent {
 			continue
 		}
-		diff, err := workspace.BranchDiff(ctx, w.ws.RepoRoot, w.ws.BaseBranch, w.head)
+		diff, err := workspace.BranchDiff(ctx, w.ws.RepoRoot, w.base, w.head)
 		if err != nil {
 			return d, err
 		}
@@ -99,7 +101,7 @@ type fileOwner struct {
 func fileOwners(ctx context.Context, works []agentWork, multi bool) (map[string][]fileOwner, error) {
 	owners := map[string][]fileOwner{}
 	for _, w := range works {
-		diff, err := workspace.BranchDiff(ctx, w.ws.RepoRoot, w.ws.BaseBranch, w.head)
+		diff, err := workspace.BranchDiff(ctx, w.ws.RepoRoot, w.base, w.head)
 		if err != nil {
 			return nil, err
 		}
@@ -134,7 +136,7 @@ func overlaps(ctx context.Context, works []agentWork, multi bool) ([]model.FileO
 		}
 		lines := make([]map[int]bool, len(list))
 		for i, o := range list {
-			if lines[i], err = workspace.ChangedLines(ctx, o.work.ws.RepoRoot, o.work.ws.BaseBranch, o.work.head, o.file); err != nil {
+			if lines[i], err = workspace.ChangedLines(ctx, o.work.ws.RepoRoot, o.work.base, o.work.head, o.file); err != nil {
 				return nil, err
 			}
 		}
@@ -165,7 +167,7 @@ func overlaps(ctx context.Context, works []agentWork, multi bool) ([]model.FileO
 func crossLog(ctx context.Context, works []agentWork, multi bool, limit int) ([]model.AgentCommit, error) {
 	out := []model.AgentCommit{}
 	for _, w := range works {
-		commits, err := workspace.Log(ctx, w.ws.RepoRoot, w.ws.BaseBranch, w.head)
+		commits, err := workspace.Log(ctx, w.ws.RepoRoot, w.base, w.head)
 		if err != nil {
 			return nil, err
 		}

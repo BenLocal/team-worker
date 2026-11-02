@@ -268,3 +268,37 @@ func TestContextReadsTheAgentsCommittedWork(t *testing.T) {
 		t.Fatalf("no work is an empty diff: %+v %v", d, err)
 	}
 }
+
+func TestCurrentBaseFollowsAnUpstreamThatIsAhead(t *testing.T) {
+	ctx := context.Background()
+	root := newRepo(t, "app")
+	if got := CurrentBase(ctx, root, "main"); got != "main" {
+		t.Fatalf("without an upstream: %q", got)
+	}
+	// origin/main moves on, as after a fetch; the local main stays behind.
+	mustGit(t, root, "remote", "add", "origin", "/nonexistent")
+	mustGit(t, root, "config", "branch.main.remote", "origin")
+	mustGit(t, root, "config", "branch.main.merge", "refs/heads/main")
+	mustGit(t, root, "checkout", "-q", "-b", "upstream-work")
+	write(t, filepath.Join(root, "merged.txt"), "merged upstream\n")
+	mustGit(t, root, "add", "-A")
+	mustGit(t, root, "commit", "-q", "-m", "merged upstream")
+	mustGit(t, root, "update-ref", "refs/remotes/origin/main", "HEAD")
+	mustGit(t, root, "checkout", "-q", "main")
+	base := CurrentBase(ctx, root, "main")
+	if base != "refs/remotes/origin/main" {
+		t.Fatalf("a lagging main must give way to origin/main: %q", base)
+	}
+	// An agent reset to origin/main has done no work of its own.
+	head := mustGit(t, root, "rev-parse", "refs/remotes/origin/main")
+	if d, err := BranchDiff(ctx, root, base, head); err != nil || len(d.Files) != 0 {
+		t.Fatalf("upstream commits are not the agent's work: %+v %v", d, err)
+	}
+	// A local main with commits origin lacks stays the base.
+	write(t, filepath.Join(root, "local.txt"), "local\n")
+	mustGit(t, root, "add", "-A")
+	mustGit(t, root, "commit", "-q", "-m", "local")
+	if got := CurrentBase(ctx, root, "main"); got != "main" {
+		t.Fatalf("a diverged main stays the base: %q", got)
+	}
+}

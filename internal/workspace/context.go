@@ -40,6 +40,22 @@ func Head(ctx context.Context, root, worktree, branch string) string {
 	return head
 }
 
+// CurrentBase is the revision to compare an agent's work with: base, or
+// its upstream when base only lags behind it. Teams that fetch in their
+// worktrees and never pull in the main checkout leave the local base
+// branch behind origin; comparing with it would count everything merged
+// upstream since as every agent's work.
+func CurrentBase(ctx context.Context, root, base string) string {
+	upstream, _, code, err := run(ctx, root, "for-each-ref", "--format=%(upstream)", "refs/heads/"+base)
+	if err != nil || code != 0 || upstream == "" {
+		return base
+	}
+	if _, _, code, err := run(ctx, root, "merge-base", "--is-ancestor", "refs/heads/"+base, upstream); err != nil || code != 0 {
+		return base
+	}
+	return upstream
+}
+
 // BranchDiff compares head with base from their merge base. A missing
 // revision gives an empty diff, as in ClawTeam.
 func BranchDiff(ctx context.Context, root, base, head string) (Diff, error) {

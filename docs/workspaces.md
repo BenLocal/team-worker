@@ -85,7 +85,7 @@ team-worker context inject demo alice      # 给 alice 的上下文：重叠文�
 team-worker context inject demo alice --send   # 同时作为消息发给 alice
 ```
 
-- 只算已提交的改动，比较的是成员 worktree 当前检出的提交和基准分支的分叉点之后。成员在 worktree 里切到了别的分支时，按它实际所在的提交算（ClawTeam 按登记的分支名算）；worktree 已删除时按分支算。
+- 只算已提交的改动，比较的是成员 worktree 当前检出的提交和基准分支的分叉点之后。成员在 worktree 里切到了别的分支时，按它实际所在的提交算（ClawTeam 按登记的分支名算）；worktree 已删除时按分支算。基准分支落后于它的上游（比如主仓库从不 pull、本地 master 落后于 origin/master）时，按上游比较，否则上游合进来的提交会被算成每个成员的改动。
 - 涉及多个仓库时，文件写成 `<仓库目录名>/<路径>`，只有同一个仓库里的同一文件才算重叠；`--repo` 只看一个仓库。
 - spawn 时，有 worktree 的成员会把 `inject` 的内容放进第一条提示词的 `## Context`（没有内容时不放）。ClawTeam 也是这样做的，但它只在 spawn 时用；`--send` 可以随时补发。
 
