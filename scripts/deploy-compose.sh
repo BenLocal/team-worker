@@ -78,12 +78,14 @@ fi
 echo "building $image on $host and recreating the container"
 ah --timeout 600s connect "$host" "set -e
 cd '$build'
+# The host may only have the legacy builder: no COPY --chmod.
 cat > Dockerfile <<'DOCKERFILE'
 FROM $base
 USER root
 COPY team-worker team-workerd team-worker-ops /usr/local/bin/
-COPY --chmod=755 container-entrypoint.sh /usr/local/bin/container-entrypoint
-COPY --chmod=755 docker-entrypoint.sh /usr/local/bin/team-worker-docker-entrypoint
+COPY container-entrypoint.sh /usr/local/bin/container-entrypoint
+COPY docker-entrypoint.sh /usr/local/bin/team-worker-docker-entrypoint
+RUN chmod 755 /usr/local/bin/container-entrypoint /usr/local/bin/team-worker-docker-entrypoint
 ENV $daemon_env
 USER node
 DOCKERFILE
