@@ -56,7 +56,7 @@ TEAM_WORKER_SERVER_URL='' TEAM_WORKER_API_KEY='' team-worker team discover
 
 `team-worker config health` 检查 CLI 依赖的东西，配置不对时先跑它。本地模式检查数据目录能否写入、数据库能否被当前用户以读写方式打开、socket 的权限是否为 0600，以及 daemon 是否应答；远程模式检查服务地址、是否设置了 Key，以及服务端是否应答。它不会启动 daemon：socket 文件还在但 daemon 已经退出时，报告 socket 不应答。发现问题时退出码为 1，`--json` 输出的字段名与 ClawTeam 的 `config health` 一致（`data_dir`、`writable`、`latency_ms`、`teams_count` 等），另有 `problems` 列出发现的问题。服务部署在反向代理的子路径下时，`TEAM_WORKER_SERVER_URL` 要带上这个路径（比如 `http://server-host:28088/team-worker-api`），否则请求会落到代理的其他位置。
 
-team-workerd 是服务端，所有实际工作都由它完成；team-worker 只是客户端，走本地 socket 还是 HTTP 只是传输方式不同，命令的行为完全一样。启动成员（`spawn`、`launch`、`agent resume`、`harness conduct`）、停止成员（`agent stop`、`team cleanup`、`harness abort`）、看成员终端（`agent screen`）、读原生会话文件（`cost sync`、补抓 Codex 会话 ID）都在 daemon 所在的机器上进行。成员继承 **daemon 的环境变量**，再叠加适配器、profile、模板和请求里的 `--env`；profile 和按名字引用的模板也来自 daemon 那台机器的 `~/.team-worker`。命令里的路径（`--cwd` 等）指 daemon 那台机器上的路径；`--task-file`、`--team-prompt-file` 和 `launch` 的模板文件例外，由客户端读出内容发过去。看板的实时终端只在看板跑在 daemon 那台机器上时可用（`team-workerd --board`）。
+team-workerd 是服务端，所有实际工作都由它完成；team-worker 只是客户端，走本地 socket 还是 HTTP 只是传输方式不同，命令的行为完全一样。启动成员（`spawn`、`launch`、`agent resume`、`harness conduct`）、停止成员（`agent stop`、`team cleanup`、`harness abort`）、看成员终端（`agent screen`）、读原生会话文件（`cost sync`、补抓 Codex 和 dsh 的会话 ID）都在 daemon 所在的机器上进行。成员继承 **daemon 的环境变量**，再叠加适配器、profile、模板和请求里的 `--env`；profile 和按名字引用的模板也来自 daemon 那台机器的 `~/.team-worker`。命令里的路径（`--cwd` 等）指 daemon 那台机器上的路径；`--task-file`、`--team-prompt-file` 和 `launch` 的模板文件例外，由客户端读出内容发过去。看板的实时终端只在看板跑在 daemon 那台机器上时可用（`team-workerd --board`）。
 
 ### 操作员模式：`--remote`
 
@@ -101,9 +101,9 @@ python3 scripts/verify-http.py --bin-dir bin
 
 ## Web 看板访问
 
-Web 看板由 team-workerd 直接提供：`--board`（环境变量 `TEAM_WORKER_BOARD=1`）让它在 `--listen` 的同一个端口上提供看板，`/v1/` 仍是 API，其他路径是看板，看板的数据在进程内读取。不开 `--board` 时 daemon 不提供网页。`team-worker board serve` 仍然保留，用于在另一台机器上连远程 daemon（设置 `TEAM_WORKER_SERVER_URL`）查看：它是纯客户端，没有实时终端，各成员的画面由 daemon 读出后定时刷新显示。实时终端（接 tmux 窗口）只在 `team-workerd --board` 提供的看板上有。
+Web 看板由 team-workerd 直接提供：`--board`（环境变量 `TEAM_WORKER_BOARD=1`）让它在 `--listen` 的同一个端口上提供看板，`/v1/` 仍是 API，其他路径是看板，看板的数据在进程内读取。不开 `--board` 时 daemon 不提供网页。`team-worker board serve` 仍然保留，用于在另一台机器上连远程 daemon（设置 `TEAM_WORKER_SERVER_URL`，或用 `--remote <名字>`）查看：它是纯客户端，没有实时终端，各成员的画面由 daemon 读出后定时刷新显示。实时终端（接 tmux 窗口）只在 `team-workerd --board` 提供的看板上有。
 
-Web 看板访问需使用与 CLI HTTP 调用相同的 Key，`board serve` 默认只监听 127.0.0.1。默认 Key 自动生成并保存在 SQLite 中，重启复用；可在本机通过 `team-worker key show` 查看。页面登录后，`Service keys` 可查看 Magpie Web Key 和 OpenBao 登录 Token，默认遮挡并支持显示、复制。 `team-workerd --board-link NAME=URL` 或 `board serve --link NAME=URL`（可重复）在页面顶部显示到其他服务的链接按钮，例如 `--board-link Docs=https://example.com`；daemon 也可以用环境变量 `TEAM_WORKER_BOARD_LINKS`（逗号分隔）。反向代理把看板放在子路径下时，用 `TEAM_WORKER_WEB_BASE_PATH` 指定前缀，例如 `/team-worker`。
+Web 看板访问需使用与 CLI HTTP 调用相同的 Key，`board serve` 默认只监听 127.0.0.1；连远程 daemon 时，登录用的就是配置里这个远程的 API Key。默认 Key 自动生成并保存在 SQLite 中，重启复用；可在本机通过 `team-worker key show` 查看。页面登录后，`Service keys` 可查看 Magpie Web Key 和 OpenBao 登录 Token，默认遮挡并支持显示、复制。 `team-workerd --board-link NAME=URL` 或 `board serve --link NAME=URL`（可重复）在页面顶部显示到其他服务的链接按钮，例如 `--board-link Docs=https://example.com`；daemon 也可以用环境变量 `TEAM_WORKER_BOARD_LINKS`（逗号分隔）。反向代理把看板放在子路径下时，用 `TEAM_WORKER_WEB_BASE_PATH` 指定前缀，例如 `/team-worker`。
 
 团队标题旁的 `Team prompt` 按钮显示团队公共提示词。每个 Agent 终端卡片的 `Prompt` 按钮和侧栏成员菜单的 `Show prompt` 显示该成员的专属提示词，未启动或已退出的成员也能查看。内容从 store 按需读取，未设置时显示空状态；弹窗支持长文本滚动及 Escape 关闭。
 
