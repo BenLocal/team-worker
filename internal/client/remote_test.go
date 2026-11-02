@@ -49,3 +49,24 @@ func TestRemoteDoesNotForwardKeyOnRedirect(t *testing.T) {
 		t.Fatalf("redirect followed: error=%v called=%v", err, called)
 	}
 }
+
+func TestRemoteBoardKeyIsItsAPIKey(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("the board key must not be fetched over HTTP: %s", r.URL.Path)
+	}))
+	defer ts.Close()
+	c, err := NewRemote(ts.URL, "test-only-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if key, err := c.BoardKey(context.Background()); err != nil || key != "test-only-key" {
+		t.Fatalf("got %q, %v", key, err)
+	}
+	keyless, err := NewRemote(ts.URL, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := keyless.BoardKey(context.Background()); err == nil {
+		t.Fatal("a remote without a key has no board key")
+	}
+}

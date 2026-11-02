@@ -102,10 +102,11 @@ func (a *app) boardServeCmd() *cobra.Command {
 	var linkPairs []string
 	cmd := &cobra.Command{
 		Use:   "serve",
-		Short: "Serve the web board from this machine (read-only, with live agent terminals)",
+		Short: "Serve the web board from this machine (read-only)",
 		Long: "Serves the web board for the daemon this CLI reaches. team-workerd can serve the same\n" +
 			"board itself (--board); this command is for viewing a remote daemon from another\n" +
-			"machine, whose live terminals then show the agents running on that machine.",
+			"machine. It is a client: it has no live terminals and shows each agent's screen as\n" +
+			"the daemon reads it. Sign in with the daemon's API key.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			links, err := board.ParseLinks(linkPairs)
@@ -113,7 +114,7 @@ func (a *app) boardServeCmd() *cobra.Command {
 				return a.fail(err)
 			}
 			c := a.client()
-			key, err := c.AccessKey(cmd.Context())
+			key, err := c.BoardKey(cmd.Context())
 			if err != nil {
 				return a.fail(err)
 			}
