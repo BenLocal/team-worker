@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -348,5 +350,22 @@ func TestAgentActivityBelongsToTheCurrentRun(t *testing.T) {
 	s.SetAgentActivity(ctx, "demo", "alice", "r1", model.ActivityBlocked)
 	if a, _ := s.GetAgent(ctx, "demo", "alice"); a.Activity != "" {
 		t.Fatalf("stale run report applied: %+v", a)
+	}
+}
+
+func TestWriteCanceledMidTransactionReportsCancel(t *testing.T) {
+	s := newTestStore(t)
+	for range 20 {
+		ctx, cancel := context.WithCancel(context.Background())
+		err := s.write(ctx, func(tx *sql.Tx) error {
+			cancel()
+			// database/sql rolls the transaction back in the background once
+			// the context ends; give it the time a shutdown would.
+			time.Sleep(5 * time.Millisecond)
+			return nil
+		})
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("a write ended by its context must report the cancel, got %v", err)
+		}
 	}
 }

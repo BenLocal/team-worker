@@ -99,15 +99,26 @@ func (s *Store) write(ctx context.Context, fn func(tx *sql.Tx) error) error {
 	}
 	if err := fn(tx); err != nil {
 		tx.Rollback()
-		return err
+		return canceledTx(ctx, err)
 	}
 	if err := tx.Commit(); err != nil {
-		return err
+		return canceledTx(ctx, err)
 	}
 	if s.OnChange != nil {
 		s.OnChange()
 	}
 	return nil
+}
+
+// canceledTx reports a transaction that its context ended as the context's
+// error: database/sql rolls such a transaction back in the background, so the
+// next call on it fails with sql.ErrTxDone, which would read as a server error
+// instead of a shutdown the client should retry.
+func canceledTx(ctx context.Context, err error) error {
+	if errors.Is(err, sql.ErrTxDone) && ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return err
 }
 
 // queryer is satisfied by both *sql.DB and *sql.Tx.
