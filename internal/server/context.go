@@ -23,7 +23,10 @@ import (
 type agentWork struct {
 	ws   model.Workspace
 	head string
-	base string // ws.BaseBranch, or its upstream when that is ahead
+	// base is where the agent's own work starts: its base branch (or that
+	// branch's upstream when it is ahead), or the last commit it checked
+	// out rather than made.
+	base string
 }
 
 // teamWork returns the team's worktrees with the commits they are at,
@@ -45,8 +48,9 @@ func (s *Server) teamWork(ctx context.Context, team, repo string) ([]agentWork, 
 			continue
 		}
 		roots[ws.RepoRoot] = true
-		works = append(works, agentWork{ws: ws, head: workspace.Head(ctx, ws.RepoRoot, ws.WorktreePath, ws.BranchName),
-			base: workspace.CurrentBase(ctx, ws.RepoRoot, ws.BaseBranch)})
+		head := workspace.Head(ctx, ws.RepoRoot, ws.WorktreePath, ws.BranchName)
+		base := workspace.CurrentBase(ctx, ws.RepoRoot, ws.BaseBranch)
+		works = append(works, agentWork{ws: ws, head: head, base: workspace.OwnStart(ctx, ws.RepoRoot, ws.WorktreePath, base, head)})
 	}
 	return works, len(roots) > 1, nil
 }
@@ -76,6 +80,7 @@ func agentDiff(ctx context.Context, works []agentWork, agent string, multi bool)
 		d.Insertions += diff.Insertions
 		d.Deletions += diff.Deletions
 		d.CommitCount += diff.CommitCount
+		d.UncommittedFiles += workspace.Uncommitted(ctx, w.ws.WorktreePath)
 		if diff.Stat != "" {
 			if multi {
 				diff.Stat = repoLabel(w.ws) + ":\n" + diff.Stat

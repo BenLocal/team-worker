@@ -2,12 +2,14 @@ package cli
 
 import (
 	"context"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/benlocal/team-worker/internal/client"
 	"github.com/benlocal/team-worker/internal/model"
 )
 
@@ -346,5 +348,55 @@ func TestContextAcrossAgentWorktrees(t *testing.T) {
 	msgs, err := h.api.Peek(context.Background(), "demo", "alice", "")
 	if err != nil || len(msgs) == 0 || !strings.Contains(msgs[len(msgs)-1].Content, "# Git Context for alice") {
 		t.Fatalf("--send must deliver the block: %+v %v", msgs, err)
+	}
+}
+
+func TestContextLeavesReviewsOutOfConflicts(t *testing.T) {
+	h := newHarness(t)
+	t.Setenv("TEAM_WORKER_WORKSPACE", "auto")
+	repo := gitRepo(t, "app")
+	trees := map[string]string{}
+	for _, name := range []string{"developer", "reviewer"} {
+		var res model.SpawnResult
+		h.json(&res, "spawn", "subprocess", "--team", "demo", "-n", name, "--task", "work", "--repo", repo, "--", "sh", "-c", "sleep 30")
+		trees[name] = res.Workspace
+	}
+	t.Cleanup(func() { h.run("team", "cleanup", "demo", "--force") })
+	if err := os.WriteFile(filepath.Join(trees["developer"], "README.md"), []byte("fixed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var op model.WorkspaceOp
+	h.json(&op, "workspace", "checkpoint", "demo", "developer", "-m", "fix")
+	// The reviewer checks out the developer's branch, as for a PR review,
+	// and has a note it has not committed.
+	gitIn(t, trees["reviewer"], "reset", "-q", "--hard", "clawteam/demo/developer")
+	if err := os.WriteFile(filepath.Join(trees["reviewer"], "notes.txt"), []byte("looks good\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var conflicts []model.FileOverlap
+	h.json(&conflicts, "context", "conflicts", "demo")
+	if len(conflicts) != 0 {
+		t.Fatalf("a review is not a conflict: %+v", conflicts)
+	}
+	var files map[string][]string
+	h.json(&files, "context", "files", "demo")
+	if got := files["README.md"]; len(got) != 1 || got[0] != "developer" {
+		t.Fatalf("the change is the developer's alone: %v", files)
+	}
+	var diff model.AgentDiff
+	h.json(&diff, "context", "diff", "demo", "reviewer")
+	if diff.CommitCount != 0 || len(diff.FilesChanged) != 0 || diff.UncommittedFiles != 1 {
+		t.Fatalf("reviewer: %+v", diff)
+	}
+}
+
+func TestArgumentErrorsShowTheUsage(t *testing.T) {
+	root := NewRoot(func() *client.Client { return nil })
+	root.SetOut(io.Discard)
+	root.SetErr(io.Discard)
+	root.SetArgs([]string{"workspace", "status", "demo"})
+	err := root.Execute()
+	if err == nil || !strings.Contains(err.Error(), "Usage: team-worker workspace status TEAM AGENT") {
+		t.Fatalf("a missing argument must name the usage: %v", err)
 	}
 }

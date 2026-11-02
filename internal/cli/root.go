@@ -74,6 +74,7 @@ func NewRoot(newClient func() *client.Client) *cobra.Command {
 	root.AddCommand(a.harnessCmd())
 	root.AddCommand(a.configCmd())
 	root.AddCommand(a.workspaceCmd(), a.contextCmd())
+	argsWithUsage(root)
 	return root
 }
 
@@ -172,4 +173,21 @@ func (a *app) confirm(prompt string) bool {
 		return true
 	}
 	return false
+}
+
+// argsWithUsage makes a wrong number of arguments name the command's usage,
+// such as "team-worker workspace status TEAM AGENT", instead of only the
+// count cobra reports.
+func argsWithUsage(cmd *cobra.Command) {
+	if check := cmd.Args; check != nil {
+		cmd.Args = func(c *cobra.Command, args []string) error {
+			if err := check(c, args); err != nil {
+				return fmt.Errorf("%w\nUsage: %s", err, c.UseLine())
+			}
+			return nil
+		}
+	}
+	for _, sub := range cmd.Commands() {
+		argsWithUsage(sub)
+	}
 }

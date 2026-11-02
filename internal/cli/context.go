@@ -38,6 +38,10 @@ func (a *app) contextDiffCmd() *cobra.Command {
 				if d.DiffStat != "" {
 					fmt.Fprintln(w, d.DiffStat)
 				}
+				if d.UncommittedFiles > 0 {
+					fmt.Fprintf(w, "Not counted: %d uncommitted file(s) in the worktree (team-worker workspace status %s %s)\n",
+						d.UncommittedFiles, args[0], args[1])
+				}
 			})
 			return nil
 		},

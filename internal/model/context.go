@@ -9,6 +9,9 @@ type AgentDiff struct {
 	DiffStat     string   `json:"diff_stat"`
 	CommitCount  int      `json:"commit_count"`
 	Summary      string   `json:"summary"`
+	// UncommittedFiles counts the changed files in the agent's worktrees
+	// that are not committed yet, which the rest of the diff leaves out.
+	UncommittedFiles int `json:"uncommitted_files,omitempty"`
 }
 
 // FileOverlap is a file several agents changed. Severity is high when they

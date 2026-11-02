@@ -40,6 +40,56 @@ func Head(ctx context.Context, root, worktree, branch string) string {
 	return head
 }
 
+// OwnStart is where an agent's own work on head begins: the newest commit
+// in base..head that the agent did not make in its worktree, or base when
+// it made them all. Reviewers and testers reset their worktrees to another
+// agent's branch; those commits are the other agent's work, and counting
+// them for whoever checked them out reports every review as a conflict.
+// The worktree's HEAD reflog tells them apart, since every agent commits
+// under the same git identity. Without a reflog (the worktree is gone)
+// everything since base counts.
+func OwnStart(ctx context.Context, root, worktree, base, head string) string {
+	if head == "" {
+		return base
+	}
+	reflog, _, code, err := run(ctx, worktree, "reflog", "show", "--format=%H %gs", "HEAD")
+	if err != nil || code != 0 {
+		return base
+	}
+	made := map[string]bool{}
+	for _, line := range strings.Split(reflog, "\n") {
+		hash, subject, _ := strings.Cut(line, " ")
+		// Entries that create commits here; reset and checkout only move HEAD.
+		for _, action := range []string{"commit", "merge", "rebase", "cherry-pick", "revert", "pull"} {
+			if strings.HasPrefix(subject, action) {
+				made[hash] = true
+			}
+		}
+	}
+	commits, _, code, err := run(ctx, root, "rev-list", base+".."+head)
+	if err != nil || code != 0 {
+		return base
+	}
+	for _, c := range strings.Split(commits, "\n") {
+		if c != "" && !made[c] {
+			return c
+		}
+	}
+	return base
+}
+
+// Uncommitted counts the changed and untracked files in a worktree.
+func Uncommitted(ctx context.Context, worktree string) int {
+	if _, err := os.Stat(worktree); err != nil {
+		return 0
+	}
+	out, _, code, err := run(ctx, worktree, "status", "--porcelain")
+	if err != nil || code != 0 || out == "" {
+		return 0
+	}
+	return strings.Count(out, "\n") + 1
+}
+
 // CurrentBase is the revision to compare an agent's work with: base, or
 // its upstream when base only lags behind it. Teams that fetch in their
 // worktrees and never pull in the main checkout leave the local base

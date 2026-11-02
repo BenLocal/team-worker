@@ -302,3 +302,38 @@ func TestCurrentBaseFollowsAnUpstreamThatIsAhead(t *testing.T) {
 		t.Fatalf("a diverged main stays the base: %q", got)
 	}
 }
+
+func TestOwnStartLeavesCheckedOutWorkToItsAuthor(t *testing.T) {
+	ctx := context.Background()
+	root := newRepo(t, "app")
+	dev := agentWork(t, root, "feature.txt", "feature\n")
+	devHead := Head(ctx, root, dev, BranchName("demo", "alice"))
+	if got := OwnStart(ctx, root, dev, "main", devHead); got != "main" {
+		t.Fatalf("the author's own commits start at the base: %q", got)
+	}
+	// A reviewer resets its worktree to the author's branch, as for a PR.
+	review := filepath.Join(t.TempDir(), "reviewer")
+	if _, err := Create(ctx, root, review, BranchName("demo", "reviewer"), "main"); err != nil {
+		t.Fatal(err)
+	}
+	mustGit(t, review, "reset", "-q", "--hard", BranchName("demo", "alice"))
+	head := Head(ctx, root, review, BranchName("demo", "reviewer"))
+	start := OwnStart(ctx, root, review, "main", head)
+	if d, err := BranchDiff(ctx, root, start, head); err != nil || len(d.Files) != 0 {
+		t.Fatalf("checked-out commits are not the reviewer's work: start=%s %+v %v", start, d, err)
+	}
+	// What the reviewer then commits on top is its own.
+	write(t, filepath.Join(review, "fix.txt"), "fix\n")
+	if _, err := Checkpoint(ctx, review, "review fix"); err != nil {
+		t.Fatal(err)
+	}
+	head = Head(ctx, root, review, BranchName("demo", "reviewer"))
+	start = OwnStart(ctx, root, review, "main", head)
+	d, err := BranchDiff(ctx, root, start, head)
+	if err != nil || len(d.Files) != 1 || d.Files[0] != "fix.txt" || d.CommitCount != 1 {
+		t.Fatalf("only the reviewer's commit counts: %+v %v", d, err)
+	}
+	if log, _ := Log(ctx, root, start, head); len(log) != 1 || log[0].Message != "review fix" {
+		t.Fatalf("log: %+v", log)
+	}
+}

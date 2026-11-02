@@ -85,7 +85,7 @@ team-worker context inject demo alice      # 给 alice 的上下文：重叠文�
 team-worker context inject demo alice --send   # 同时作为消息发给 alice
 ```
 
-- 只算已提交的改动，比较的是成员 worktree 当前检出的提交和基准分支的分叉点之后。成员在 worktree 里切到了别的分支时，按它实际所在的提交算（ClawTeam 按登记的分支名算）；worktree 已删除时按分支算。基准分支落后于它的上游（比如主仓库从不 pull、本地 master 落后于 origin/master）时，按上游比较，否则上游合进来的提交会被算成每个成员的改动。
+- 只算成员自己提交的改动：比较的是成员 worktree 当前检出的提交和基准分支的分叉点之后，再去掉它检出而不是自己提交的部分（按 worktree 的 HEAD reflog 区分，成员共用同一个 git 身份时也成立）。所以 reviewer、tester 把 worktree 重置到 PR 分支审查或验证，不会被算成改了同样的文件，也不会报冲突；他们在上面追加的提交仍算自己的。未提交的改动不计入，`context diff` 会另报工作区里未提交的文件数（JSON 字段 `uncommitted_files`）。成员在 worktree 里切到了别的分支时，按它实际所在的提交算（ClawTeam 按登记的分支名算）；worktree 已删除时按分支算。基准分支落后于它的上游（比如主仓库从不 pull、本地 master 落后于 origin/master）时，按上游比较，否则上游合进来的提交会被算成每个成员的改动。
 - 涉及多个仓库时，文件写成 `<仓库目录名>/<路径>`，只有同一个仓库里的同一文件才算重叠；`--repo` 只看一个仓库。
 - spawn 时，有 worktree 的成员会把 `inject` 的内容放进第一条提示词的 `## Context`（没有内容时不放）。ClawTeam 也是这样做的，但它只在 spawn 时用；`--send` 可以随时补发。
 
@@ -95,4 +95,4 @@ team-worker context inject demo alice --send   # 同时作为消息发给 alice
 - 支持一个 Agent 关联多个仓库。
 - merge 先整体试合并，不切换主仓库的分支；cleanup 和删团队时保留未合并的分支；再次 spawn 时复用已有 worktree，不会删掉重建。
 - 显式 `--workspace` 但找不到仓库时报错（ClawTeam 会悄悄不建）。
-- `context` 按 worktree 实际检出的提交计算；`log` 用控制字符分隔字段，提交信息里有 `|` 也能正确解析；`inject` 可以用 `--send` 直接发给成员。
+- `context` 按 worktree 实际检出的提交计算，并且只算成员自己提交的部分，审查时检出别人的分支不算冲突；`log` 用控制字符分隔字段，提交信息里有 `|` 也能正确解析；`inject` 可以用 `--send` 直接发给成员。
