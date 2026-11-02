@@ -1,4 +1,7 @@
-package board
+// Package live serves the web board's live terminals: a browser attaches to
+// an agent's tmux pane through a WebSocket. It runs tmux on this machine, so
+// only the board team-workerd serves itself uses it.
+package live
 
 import (
 	"bytes"
@@ -23,7 +26,6 @@ import (
 	"github.com/creack/pty"
 
 	"github.com/benlocal/team-worker/internal/client"
-	"github.com/benlocal/team-worker/internal/proc"
 )
 
 const (
@@ -99,9 +101,6 @@ func daemonResolver(c *client.Client) resolver {
 		}
 		if a.Status != "running" || a.Target == "" {
 			return pane{}, userError("Agent terminal is offline")
-		}
-		if !proc.OnClient(a, c.Remote()) {
-			return pane{}, userError("Agent runs on " + proc.Where(a) + "; live terminals only reach agents on this machine")
 		}
 		return paneInfo(ctx, a.Target)
 	}
@@ -259,7 +258,9 @@ func (t *terminals) handleTicket(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, err)
 		return
 	}
-	reply(w, map[string]string{"ticket": token}, nil)
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	json.NewEncoder(w).Encode(map[string]string{"ticket": token})
 }
 
 func (t *terminals) handleWS(w http.ResponseWriter, r *http.Request) {
@@ -609,4 +610,16 @@ func relay(ctx context.Context, conn *websocket.Conn, v *viewer, p pane, control
 	v.detach()
 	conn.CloseNow()
 	wg.Wait()
+}
+
+// Handler serves POST /api/terminal/ticket and GET /api/terminal/ws for the
+// agents c knows, attaching to their panes on this machine.
+func Handler(c *client.Client) http.Handler { return newHandler(daemonResolver(c)) }
+
+func newHandler(resolve resolver) http.Handler {
+	terms := newTerminals(resolve)
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/terminal/ticket", terms.handleTicket)
+	mux.HandleFunc("GET /api/terminal/ws", terms.handleWS)
+	return mux
 }

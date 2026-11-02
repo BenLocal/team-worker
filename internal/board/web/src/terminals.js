@@ -37,24 +37,23 @@ document.addEventListener("pointerdown", (event) => {
   if (!event.target.closest?.(".term-card")) selectCard(null);
 }, { capture: true });
 
-// The board's own machine: only agents started there have terminals it can
-// attach to. Agents a remote CLI started over HTTP run on that client.
-let boardHost = { host: "", remote: false };
+// Live terminals attach to tmux where the agents run, so only the board
+// team-workerd serves itself has them; any other board shows each agent's
+// screen, which the daemon reads.
+let boardHost = { terminals: true };
 export function setBoardHost(h) { boardHost = h || boardHost; }
-export function onBoardHost(a) { return a.host ? a.host === boardHost.host : !boardHost.remote; }
-export function hostLabel(a) { return a.host ? "host " + a.host : "the server's machine"; }
 
 // describe tells whether a member has a live terminal and, if not, why.
 export function describe(member) {
   const a = member.agent;
   if (!a) return { live: false, log: false, reason: "Not started yet" };
-  if (!onBoardHost(a)) {
-    return { live: false, log: false, reason: `Runs on ${hostLabel(a)}; open the board there to watch its terminal` };
-  }
   if (a.backend !== "tmux") {
     return { live: false, log: a.backend === "subprocess", reason: "Runs as a background process; showing its log" };
   }
   if (a.status === "exited" || a.alive === false) return { live: false, log: false, reason: "Agent terminal is offline" };
+  if (!boardHost.terminals) {
+    return { live: false, log: true, reason: "Live terminals are on the board team-workerd serves; showing the agent's screen" };
+  }
   return { live: true, log: false, reason: "" };
 }
 

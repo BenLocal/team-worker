@@ -6,14 +6,12 @@ import (
 	"embed"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io/fs"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/benlocal/team-worker/internal/client"
-	"github.com/benlocal/team-worker/internal/proc"
 )
 
 // dist holds the Vite build of the page (`make web`, not committed); all:
@@ -24,11 +22,14 @@ var dist embed.FS
 
 // Handler serves the board page, a small JSON API backed by the daemon and
 // the live terminal endpoints.
-func Handler(c *client.Client) http.Handler {
-	return newHandler(c, daemonResolver(c))
+// Handler serves the board page and its API from c. terminals serves the
+// live terminal endpoints, or is nil on a board that does not run where the
+// agents run: the page then shows each agent's screen from the daemon.
+func Handler(c *client.Client, terminals http.Handler) http.Handler {
+	return newHandler(c, terminals)
 }
 
-func newHandler(c *client.Client, resolve resolver) http.Handler {
+func newHandler(c *client.Client, terminals http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	files, _ := fs.Sub(dist, "dist")
 	fileServer := http.FileServerFS(files)
@@ -50,10 +51,18 @@ func newHandler(c *client.Client, resolve resolver) http.Handler {
 		}
 		fileServer.ServeHTTP(w, r)
 	})
-	terms := newTerminals(resolve)
 	mux.HandleFunc("GET /api/service-keys", serviceKeys)
-	mux.HandleFunc("POST /api/terminal/ticket", terms.handleTicket)
-	mux.HandleFunc("GET /api/terminal/ws", terms.handleWS)
+	if terminals != nil {
+		mux.Handle("POST /api/terminal/ticket", terminals)
+		mux.Handle("GET /api/terminal/ws", terminals)
+	} else {
+		noTerminals := func(w http.ResponseWriter, r *http.Request) {
+			reply(w, nil, &client.APIError{Status: http.StatusNotFound,
+				Msg: "Live terminals are only on the board team-workerd serves (team-workerd --board)"})
+		}
+		mux.HandleFunc("POST /api/terminal/ticket", noTerminals)
+		mux.HandleFunc("GET /api/terminal/ws", noTerminals)
+	}
 	mux.HandleFunc("GET /api/teams", func(w http.ResponseWriter, r *http.Request) {
 		teams, err := c.ListTeams(r.Context())
 		reply(w, teams, err)
@@ -73,10 +82,9 @@ func newHandler(c *client.Client, resolve resolver) http.Handler {
 		prompt, err := c.AgentPrompt(r.Context(), r.PathValue("team"), r.PathValue("name"), r.URL.Query().Get("user"))
 		reply(w, map[string]string{"prompt": prompt}, err)
 	})
-	// Host tells the page which agents run on this machine, so their
-	// terminals can connect and the others say where they run.
+	// Host tells the page whether this board has live terminals.
 	mux.HandleFunc("GET /api/host", func(w http.ResponseWriter, r *http.Request) {
-		reply(w, map[string]any{"host": proc.Host(), "remote": c.Remote()}, nil)
+		reply(w, map[string]any{"terminals": terminals != nil}, nil)
 	})
 	// Oversight is what waits on the leader or limits the team: plans, join
 	// requests and spending. It is polled separately from the snapshot.
@@ -84,18 +92,10 @@ func newHandler(c *client.Client, resolve resolver) http.Handler {
 		v, err := oversight(r.Context(), c, r.PathValue("team"))
 		reply(w, v, err)
 	})
+	// The daemon reads the screen on its machine, wherever this board runs.
 	mux.HandleFunc("GET /api/teams/{team}/agents/{name}/screen", func(w http.ResponseWriter, r *http.Request) {
-		a, err := c.GetAgent(r.Context(), r.PathValue("team"), r.PathValue("name"))
-		if err != nil {
-			reply(w, nil, err)
-			return
-		}
-		if !proc.OnClient(a, c.Remote()) {
-			reply(w, nil, fmt.Errorf("Agent runs on %s; its log is only readable there", proc.Where(a)))
-			return
-		}
 		history, _ := strconv.Atoi(r.URL.Query().Get("history"))
-		text, err := proc.Screen(a, history)
+		text, err := c.AgentScreen(r.Context(), r.PathValue("team"), r.PathValue("name"), history)
 		reply(w, map[string]string{"screen": text}, err)
 	})
 	return mux

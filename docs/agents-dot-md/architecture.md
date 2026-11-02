@@ -15,8 +15,8 @@ team-worker (CLI, cobra)
 
 team-worker spawn / launch ──> internal/spawn ──> tmux 窗口 或 后台子进程（agent CLI）
                                                    └─ agent 退出时执行 `team-worker lifecycle on-exit` 回报服务
-team-workerd --board ──> internal/board (只读 Web 看板，挂在 daemon 的 HTTP 端口，经进程内 client 读数据，经 proc/tmux 看终端)
-team-worker board serve ──> internal/board (同一看板的独立进程，用于在另一台机器上查看远程 daemon)
+team-workerd --board ──> internal/board (只读 Web 看板，挂在 daemon 的 HTTP 端口，经进程内 client 读数据；实时终端由 internal/board/live 接本机 tmux)
+team-worker board serve ──> internal/board (同一看板的独立进程，用于在另一台机器上查看远程 daemon；纯客户端，没有实时终端，画面经 daemon 的 screen 接口读取)
 ```
 
 - 部署形态：单机两进程，外加按需启动的 agent 进程（tmux 窗口或后台子进程）。`cmd/team-workerd` 是常驻服务，`cmd/team-worker` 是 CLI，二进制放在同一目录或都在 `PATH`。
@@ -39,7 +39,8 @@ team-worker board serve ──> internal/board (同一看板的独立进程，�
 | `internal/agent/builtin` | 内置适配器，每个 CLI 一个文件（claude、codex、pi 等），pi 扩展脚本也在这里；`Registry()` / `Load()` 是取适配器的入口 | `agent` | 其他 internal 包 |
 | `internal/spawn` | 准备环境、按 CLI 适配器启动 agent，处理启动界面与 prompt 粘贴 | `tmux`、`agent`、`agent/builtin` | `store`、`server`、`client` |
 | `internal/templates` | 读取 `~/.team-worker/templates` 下的 TOML 团队模板 | 标准库 + `BurntSushi/toml` | 其他 internal 包 |
-| `internal/board` | 只读 Web 看板（页面 `embed` 进二进制） | `client`、`proc` | `store`、`server` |
+| `internal/board` | 只读 Web 看板（页面 `embed` 进二进制），成员画面经 daemon 的 screen 接口读取 | `client`、`model`、`config` | `store`、`server`、`proc`、`tmux` |
+| `internal/board/live` | 看板的实时终端：WebSocket 接本机 tmux 窗口，只由 daemon 的看板使用 | `client` | `cli` |
 | `internal/cli` | cobra 命令、人类可读输出与 `--json`；纯客户端，`supervise.go`、`hook.go` 是成员窗口里运行的部分 | `client`、`model`、`config`、`board`、`profile`、`templates`、`agent`、`agent/builtin`、`store`（仅复用 `*Input` 类型）；`spawn`、`proc`、`tmux` 只许 `supervise.go`、`hook.go` 用（`imports_test.go` 检查） | `store` 的读写方法、`server`、`runner`（测试除外） |
 
 - 依赖方向硬规则：`cli → client → (HTTP/socket) → server → store → model`，单向。team-workerd 是服务端，所有实际工作都由它做：启动、续接、停止成员，看终端，读原生会话文件，调度 harness，都在 `server` / `runner` 里用 `spawn` / `proc` / `tmux` 完成；team-worker 只是客户端，CLI 里不碰进程和本机文件（客户端读出 `--task-file` 这类文件内容再发过去除外），本地和远程只差传输方式。业务规则只写在 `store`，`server` 只做参数解析和错误码映射，`cli` 只做展示。

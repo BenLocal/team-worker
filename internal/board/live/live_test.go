@@ -1,10 +1,9 @@
-package board
+package live
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -152,7 +151,7 @@ func postTicket(t *testing.T, base string, body any, origin string) (*http.Respo
 }
 
 func TestTicketEndpointBoundaries(t *testing.T) {
-	srv := httptest.NewServer(newHandler(nil, stubResolver(pane{id: "%1"}, nil)))
+	srv := httptest.NewServer(newHandler(stubResolver(pane{id: "%1"}, nil)))
 	defer srv.Close()
 
 	ok := map[string]any{"team": "demo", "agent": "alice", "cols": 80, "rows": 24}
@@ -175,7 +174,7 @@ func TestTicketEndpointBoundaries(t *testing.T) {
 		t.Fatalf("issue: %d %v", resp.StatusCode, out)
 	}
 
-	offline := httptest.NewServer(newHandler(nil, stubResolver(pane{}, userError("Agent terminal is offline"))))
+	offline := httptest.NewServer(newHandler(stubResolver(pane{}, userError("Agent terminal is offline"))))
 	defer offline.Close()
 	if resp, out := postTicket(t, offline.URL, ok, offline.URL); resp.StatusCode != http.StatusBadRequest || out["error"] != "Agent terminal is offline" {
 		t.Fatalf("offline: %d %v", resp.StatusCode, out)
@@ -183,7 +182,7 @@ func TestTicketEndpointBoundaries(t *testing.T) {
 }
 
 func TestWebSocketRejectsMissingOrReusedTicket(t *testing.T) {
-	srv := httptest.NewServer(newHandler(nil, stubResolver(pane{id: "%1"}, nil)))
+	srv := httptest.NewServer(newHandler(stubResolver(pane{id: "%1"}, nil)))
 	defer srv.Close()
 	ctx := context.Background()
 	opts := &websocket.DialOptions{HTTPHeader: http.Header{"Origin": {srv.URL}}}
@@ -294,7 +293,7 @@ func sessions(t *testing.T) []string {
 
 func TestLiveTerminalRelaysOutputHistoryAndControlledInput(t *testing.T) {
 	p := tmuxServer(t)
-	srv := httptest.NewServer(newHandler(nil, func(ctx context.Context, _, _ string) (pane, error) {
+	srv := httptest.NewServer(newHandler(func(ctx context.Context, _, _ string) (pane, error) {
 		return paneInfo(ctx, p.id)
 	}))
 	defer srv.Close()
@@ -372,7 +371,7 @@ func TestLiveTerminalRelaysOutputHistoryAndControlledInput(t *testing.T) {
 
 func TestLiveTerminalRejectsBinaryMessages(t *testing.T) {
 	p := tmuxServer(t)
-	srv := httptest.NewServer(newHandler(nil, func(ctx context.Context, _, _ string) (pane, error) {
+	srv := httptest.NewServer(newHandler(func(ctx context.Context, _, _ string) (pane, error) {
 		return paneInfo(ctx, p.id)
 	}))
 	defer srv.Close()
@@ -391,22 +390,5 @@ func TestLiveTerminalRejectsBinaryMessages(t *testing.T) {
 			}
 			return
 		}
-	}
-}
-
-func TestPageIsServedFromTheEmbeddedBuild(t *testing.T) {
-	if _, err := fs.Stat(dist, "dist/index.html"); err != nil {
-		t.Skip("board page not built; run `make web`")
-	}
-	srv := httptest.NewServer(newHandler(nil, nil))
-	defer srv.Close()
-	resp, err := http.Get(srv.URL + "/")
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK || !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/html") ||
-		resp.Header.Get("Cache-Control") != "no-cache" {
-		t.Fatalf("GET / = %d %q %q", resp.StatusCode, resp.Header.Get("Content-Type"), resp.Header.Get("Cache-Control"))
 	}
 }

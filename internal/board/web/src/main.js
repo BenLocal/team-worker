@@ -1,7 +1,7 @@
 import "@fontsource-variable/jetbrains-mono";
 import "@fontsource-variable/fraunces/opsz-italic.css";
 import "./style.css";
-import { AgentTerminal, selectCard, setBoardHost, onBoardHost, hostLabel } from "./terminals.js";
+import { AgentTerminal, selectCard, setBoardHost } from "./terminals.js";
 import { openMemberPrompt, openTeamPrompt } from "./prompt-dialog.js";
 import { openServiceKeys } from "./service-keys.js";
 
@@ -63,8 +63,6 @@ function agentState(m) {
   const a = m.agent;
   if (!a) return ["", "not started"];
   if (a.status === "exited") return ["dead", "exited"];
-  // The server cannot probe another machine's process; trust its record.
-  if (!onBoardHost(a)) return ["remote", "running on " + hostLabel(a)];
   // Hooks report what a running agent does; without them only liveness is known.
   if (a.alive === true && a.activity === "blocked") return ["attention", "asking the user"];
   if (a.alive === true && a.activity === "waiting") return ["alive", "waiting for messages"];

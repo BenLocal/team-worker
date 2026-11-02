@@ -2,6 +2,7 @@ package board
 
 import (
 	"encoding/json"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -86,7 +87,7 @@ func (s *promptStub) fail(w http.ResponseWriter, message string) {
 func promptBoard(t *testing.T, stub *promptStub) *httptest.Server {
 	t.Helper()
 	proxy := client.NewHTTP(stub.URL, &http.Client{Timeout: 5 * time.Second})
-	srv := httptest.NewServer(newHandler(proxy, stubResolver(pane{}, nil)))
+	srv := httptest.NewServer(newHandler(proxy, nil))
 	t.Cleanup(srv.Close)
 	return srv
 }
@@ -168,5 +169,22 @@ func TestAgentPromptProxyReportsMissingMember(t *testing.T) {
 	code, body := getPrompt(t, srv.URL, "/api/teams/demo/members/bob/prompt?user=")
 	if code != http.StatusNotFound || !strings.Contains(body["error"], "bob") {
 		t.Fatalf("missing member = %d %q", code, body["error"])
+	}
+}
+
+func TestPageIsServedFromTheEmbeddedBuild(t *testing.T) {
+	if _, err := fs.Stat(dist, "dist/index.html"); err != nil {
+		t.Skip("board page not built; run `make web`")
+	}
+	srv := httptest.NewServer(newHandler(nil, nil))
+	defer srv.Close()
+	resp, err := http.Get(srv.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/html") ||
+		resp.Header.Get("Cache-Control") != "no-cache" {
+		t.Fatalf("GET / = %d %q %q", resp.StatusCode, resp.Header.Get("Content-Type"), resp.Header.Get("Cache-Control"))
 	}
 }

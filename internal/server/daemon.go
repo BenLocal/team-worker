@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/benlocal/team-worker/internal/board"
+	"github.com/benlocal/team-worker/internal/board/live"
 	"github.com/benlocal/team-worker/internal/config"
 	"github.com/benlocal/team-worker/internal/model"
 	"github.com/benlocal/team-worker/internal/proc"
@@ -106,7 +107,9 @@ func Run(ctx context.Context, opts Options) error {
 	if tcp != nil {
 		var web http.Handler = Authenticate(handler, accessKey)
 		if opts.Board {
-			site, err := board.Site(LocalClient(handler), accessKey, opts.WebBasePath, opts.BoardLinks)
+			// The daemon's board runs where the agents run, so it has live terminals.
+			local := LocalClient(handler)
+			site, err := board.Site(local, accessKey, opts.WebBasePath, opts.BoardLinks, live.Handler(local))
 			if err != nil {
 				return err
 			}

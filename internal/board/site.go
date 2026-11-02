@@ -29,14 +29,14 @@ func ParseLinks(pairs []string) ([]Link, error) {
 }
 
 // Site is the whole web board behind the access key: the page, its API,
-// live terminals and the header links. basePath is the public path prefix a
-// reverse proxy serves it under, or "" at the root.
-func Site(c *client.Client, key, basePath string, links []Link) (http.Handler, error) {
+// live terminals when terminals is not nil, and the header links. basePath
+// is the public path prefix a reverse proxy serves it under, or "" at the root.
+func Site(c *client.Client, key, basePath string, links []Link, terminals http.Handler) (http.Handler, error) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/links", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(links)
 	})
-	mux.Handle("/", Handler(c))
+	mux.Handle("/", Handler(c, terminals))
 	return Protect(mux, key, basePath)
 }

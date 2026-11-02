@@ -101,7 +101,7 @@ python3 scripts/verify-http.py --bin-dir bin
 
 ## Web 看板访问
 
-Web 看板由 team-workerd 直接提供：`--board`（环境变量 `TEAM_WORKER_BOARD=1`）让它在 `--listen` 的同一个端口上提供看板，`/v1/` 仍是 API，其他路径是看板，看板的数据在进程内读取。不开 `--board` 时 daemon 不提供网页。`team-worker board serve` 仍然保留，用于在另一台机器上连远程 daemon（设置 `TEAM_WORKER_SERVER_URL`）查看：这时看板里的实时终端显示的是那台机器上运行的 Agent。
+Web 看板由 team-workerd 直接提供：`--board`（环境变量 `TEAM_WORKER_BOARD=1`）让它在 `--listen` 的同一个端口上提供看板，`/v1/` 仍是 API，其他路径是看板，看板的数据在进程内读取。不开 `--board` 时 daemon 不提供网页。`team-worker board serve` 仍然保留，用于在另一台机器上连远程 daemon（设置 `TEAM_WORKER_SERVER_URL`）查看：它是纯客户端，没有实时终端，各成员的画面由 daemon 读出后定时刷新显示。实时终端（接 tmux 窗口）只在 `team-workerd --board` 提供的看板上有。
 
 Web 看板访问需使用与 CLI HTTP 调用相同的 Key，`board serve` 默认只监听 127.0.0.1。默认 Key 自动生成并保存在 SQLite 中，重启复用；可在本机通过 `team-worker key show` 查看。页面登录后，`Service keys` 可查看 Magpie Web Key 和 OpenBao 登录 Token，默认遮挡并支持显示、复制。 `team-workerd --board-link NAME=URL` 或 `board serve --link NAME=URL`（可重复）在页面顶部显示到其他服务的链接按钮，例如 `--board-link Docs=https://example.com`；daemon 也可以用环境变量 `TEAM_WORKER_BOARD_LINKS`（逗号分隔）。反向代理把看板放在子路径下时，用 `TEAM_WORKER_WEB_BASE_PATH` 指定前缀，例如 `/team-worker`。
 

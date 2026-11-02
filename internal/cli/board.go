@@ -127,7 +127,9 @@ func (a *app) boardServeCmd() *cobra.Command {
 			}
 			ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
 			defer stop()
-			protected, err := board.Site(c, key, config.WebBasePath(), links)
+			// A board started by the CLI is a client: it has no live terminals
+			// and shows each agent's screen from the daemon.
+			protected, err := board.Site(c, key, config.WebBasePath(), links, nil)
 			if err != nil {
 				ln.Close()
 				return a.fail(err)
