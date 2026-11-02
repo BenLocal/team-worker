@@ -33,12 +33,13 @@ func (s *Server) memberUser(ctx context.Context, team, name string) string {
 	return ""
 }
 
-// captureSession fills in a Codex session id that Codex did not report,
-// matching its transcripts by workspace and agent identity; other CLIs know
-// their id from the start.
+// captureSession fills in a session id the CLI could not be given before
+// it started: Codex's, matched in its transcripts by workspace and agent
+// identity, and dsh's, matched in its session logs the same way. Other
+// CLIs know their id from the start.
 func (s *Server) captureSession(ctx context.Context, team, name string) (model.Session, error) {
 	session, err := s.store.GetSession(ctx, team, name, s.memberUser(ctx, team, name))
-	if err != nil || session.SessionID != "" || session.Client != "codex" {
+	if err != nil || session.SessionID != "" || (session.Client != "codex" && session.Client != "dsh") {
 		return session, err
 	}
 	rec, err := s.store.GetAgent(ctx, team, name)
@@ -49,20 +50,44 @@ func (s *Server) captureSession(ctx context.Context, team, name string) (model.S
 	if err != nil {
 		return session, nil
 	}
-	root := os.Getenv("CODEX_HOME")
-	if root == "" {
-		home, err := os.UserHomeDir()
+	var id string
+	if session.Client == "codex" {
+		root, err := cliHome("CODEX_HOME", ".codex")
 		if err != nil {
 			return session, err
 		}
-		root = filepath.Join(home, ".codex")
+		id, err = agent.CaptureCodexSession(filepath.Join(root, "sessions"), session.Cwd, rec.AgentID, started)
+		if err != nil {
+			return session, err
+		}
+	} else {
+		root, err := cliHome("DSH_HOME", ".dsh")
+		if err != nil {
+			return session, err
+		}
+		id, err = agent.CaptureDshSession(filepath.Join(root, "sessions"), session.Cwd, rec.AgentID, started)
+		if err != nil {
+			return session, err
+		}
 	}
-	id, err := agent.CaptureCodexSession(filepath.Join(root, "sessions"), session.Cwd, rec.AgentID, started)
-	if err != nil || id == "" {
-		return session, err
+	if id == "" {
+		return session, nil
 	}
 	session.SessionID, session.Source = id, "transcript"
 	return s.store.SaveSession(ctx, session)
+}
+
+// cliHome is where a CLI keeps its state: the directory env names, or dir in
+// the daemon's home.
+func cliHome(env, dir string) (string, error) {
+	if root := os.Getenv(env); root != "" {
+		return root, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, dir), nil
 }
 
 // terminate stops an agent: it saves the session id, records the stop as

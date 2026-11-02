@@ -86,7 +86,7 @@ tw agent resume <team> <成员> --keepalive           # 服务器停掉当前进
 
 - 由服务器续接，上下文续上，Run ID 换新。
 - 成员退出时手上的 `in_progress` 任务会退回 `pending`，续接后它会重新领取；向用户报告时说明这一点。
-- `sessionId` 为空（比如 `dsh tui` 成员）时返回 409，只能在服务器上重新 spawn，上下文会丢。`--task`、`--env`、`--profile` 这时不可用。
+- `sessionId` 为空时续接会失败，只能重新 spawn，上下文会丢。Codex 和 `dsh tui` 成员的会话 ID 由服务器从它们的会话文件里补出来，查一次 `session show` 就会补上。
 
 ## 注意事项
 

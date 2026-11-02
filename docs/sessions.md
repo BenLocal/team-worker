@@ -4,7 +4,7 @@
 
 Agent 退出时，退出钩子会通知服务。如果 tmux 窗口是被直接关掉的，退出钩子来不及执行，服务每 10 秒检查一次进程，同样能发现。两种情况下，这个 Agent 手上 `in_progress` 的任务都会退回 `pending`，并通知 leader。
 
-`spawn` 会保存原生 CLI 的会话信息，进程退出不删除这些信息。Claude 和 pi 在启动前分配明确的会话 ID；Codex 优先从启用的会话钩子获取 ID，未启用钩子时，在退出、查看或恢复时按工作目录和 Agent 身份匹配本地记录。匹配不唯一时会报错，不自动选择最近会话。其他 CLI 可用 `session save` 提供准确 ID。
+`spawn` 会保存原生 CLI 的会话信息，进程退出不删除这些信息。Claude 和 pi 在启动前分配明确的会话 ID；Codex 优先从启用的会话钩子获取 ID，未启用钩子时，由 daemon 在退出、查看或恢复时按工作目录和 Agent 身份匹配 `~/.codex/sessions` 里的记录。dsh（包括 `dsh tui`）不接受新会话的 ID，daemon 在同样的时机从 `~/.dsh/sessions/<编码后的工作目录>/`（设了 `DSH_HOME` 时以它为准）里找出 Agent 启动后新建、且含有该 Agent 身份行的会话：每个会话目录下的 `session.v4.jsonl.zstd` 首行记着会话 ID、工作目录和创建时间；dsh 在处理完第一条提示词后才建这个会话。匹配不唯一时会报错，不自动选择最近会话。其他 CLI 可用 `session save` 提供准确 ID。
 
 ```bash
 team-worker session show my-team --agent alice
@@ -19,7 +19,7 @@ team-worker spawn tmux --team my-team -n alice --keepalive --max-restarts 3 --re
 
 恢复复用原 CLI 命令、工作目录和权限设置，并重新读取团队说明、成员提示词和当前任务。已有运行中的同名 Agent 时拒绝恢复，可用 `--replace` 明确替换。`agent resume` 支持 `--task`（或 `--task-file`）、`--keepalive`、`--max-restarts`、`--restart-delay` 覆盖保存的设置。
 
-续接由 daemon 在它所在的机器上执行，所以在本机用 `team-worker --remote <名字> agent resume <团队> <成员>` 续接服务器上的成员，和在服务器上执行完全一样。会话 ID 为空的成员（比如目前的 `dsh tui`）续接不了。
+续接由 daemon 在它所在的机器上执行，所以在本机用 `team-worker --remote <名字> agent resume <团队> <成员>` 续接服务器上的成员，和在服务器上执行完全一样。会话 ID 仍为空的成员（比如刚启动、还没处理完第一条提示词就退出的 dsh）续接不了。
 
 keepalive 适用于 tmux 和 subprocess，正常退出和异常退出均受重试上限约束；默认最多连续重启 3 次，等待时间逐次加倍、最长 1 分钟，一次运行达到 1 分钟后重置连续次数。原生会话 ID 缺失时停止恢复并报错。每轮进程使用独立 `run_id`，旧进程的退出回报不会修改新一轮的状态。退出时任务仍退回 pending，恢复后需重新检查任务归属并领取。
 

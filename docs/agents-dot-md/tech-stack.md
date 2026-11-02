@@ -24,6 +24,7 @@
 | 数据库 | SQLite，WAL 模式 | — | |
 | 数据库迁移 | `github.com/pressly/goose/v3` | v3.29.0 | SQL 文件用 `go:embed` 内置，启动时执行 |
 | 日志 | 标准库 `log/slog` | — | 仅服务端 |
+| zstd 解压 | `github.com/klauspost/compress/zstd` | v1.20.3 | 仅 `internal/agent` 读 dsh 会话日志 |
 | Web 看板 | Vite + 原生 JS，终端用 `ghostty-web`；服务端 `net/http` + `embed` + `coder/websocket` + `creack/pty` | — | 源码在 `internal/board/web`，构建产物嵌入二进制、不入库 |
 | 构建工具 | `make` + `go` | — | |
 
