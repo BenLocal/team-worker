@@ -17,7 +17,7 @@ import (
 func (a *app) teamCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "team", Short: "Team management"}
 	cmd.AddCommand(a.teamSpawnCmd(), a.teamAddMemberCmd(), a.teamDiscoverCmd(), a.teamStatusCmd(),
-		a.teamCleanupCmd(), a.teamPromptCmd())
+		a.teamCleanupCmd(), a.teamPromptCmd(), a.teamReposCmd())
 	cmd.AddCommand(a.joinCmds()...)
 	return cmd
 }
@@ -133,6 +133,7 @@ func (a *app) teamAddMemberCmd() *cobra.Command {
 
 func (a *app) teamSpawnCmd() *cobra.Command {
 	var description, agentName, agentType string
+	var repos []string
 	cmd := &cobra.Command{
 		Use:   "spawn-team NAME",
 		Short: "Create a new team and register the leader",
@@ -150,6 +151,7 @@ func (a *app) teamSpawnCmd() *cobra.Command {
 				LeaderID:        leaderID,
 				User:            id.User,
 				LeaderAgentType: agentType,
+				Repos:           repos,
 			})
 			if err != nil {
 				return a.fail(err)
@@ -173,6 +175,51 @@ func (a *app) teamSpawnCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&description, "description", "d", "", "Team description")
 	cmd.Flags().StringVarP(&agentName, "agent-name", "n", "leader", "Leader agent name")
 	cmd.Flags().StringVar(&agentType, "agent-type", "leader", "Leader agent type")
+	cmd.Flags().StringArrayVar(&repos, "repo", nil,
+		"Default git repository for the agents' worktrees, a path on the daemon's machine (repeatable)")
+	return cmd
+}
+
+func (a *app) teamReposCmd() *cobra.Command {
+	var clear bool
+	cmd := &cobra.Command{
+		Use:   "repos TEAM [PATH...]",
+		Short: "Show or set the repositories spawn gives agents worktrees of by default",
+		Long: "Without paths, shows the team's default repositories; with paths, replaces them; --clear\n" +
+			"removes them. Paths are on the daemon's machine. spawn uses them when it gets no --repo,\n" +
+			"and an agent's own --repo takes precedence.",
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c := a.client()
+			var team model.Team
+			var err error
+			if len(args) > 1 || clear {
+				if clear && len(args) > 1 {
+					return a.fail(fmt.Errorf("give paths or --clear, not both"))
+				}
+				team, err = c.SetTeamRepos(cmd.Context(), args[0], args[1:])
+			} else {
+				team, err = c.GetTeam(cmd.Context(), args[0])
+			}
+			if err != nil {
+				return a.fail(err)
+			}
+			repos := team.Repos
+			if repos == nil {
+				repos = []string{}
+			}
+			a.emit(map[string]any{"team": team.Name, "repos": repos}, func(w io.Writer) {
+				if len(repos) == 0 {
+					fmt.Fprintf(w, "Team '%s' has no default repositories.\n", team.Name)
+				}
+				for _, r := range repos {
+					fmt.Fprintln(w, r)
+				}
+			})
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&clear, "clear", false, "Remove the default repositories")
 	return cmd
 }
 
@@ -223,7 +270,11 @@ func printTeam(w io.Writer, t model.Team) {
 	if t.Description != "" {
 		fmt.Fprintf(w, "  %s\n", t.Description)
 	}
-	fmt.Fprintf(w, "  Created: %s\n\n", formatTimestamp(t.CreatedAt))
+	fmt.Fprintf(w, "  Created: %s\n", formatTimestamp(t.CreatedAt))
+	if len(t.Repos) > 0 {
+		fmt.Fprintf(w, "  Repos:   %s\n", strings.Join(t.Repos, ", "))
+	}
+	fmt.Fprintln(w)
 	hasUser := false
 	for _, m := range t.Members {
 		hasUser = hasUser || m.User != ""

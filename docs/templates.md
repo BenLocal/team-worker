@@ -24,6 +24,7 @@ name = "my-team"              # 可省略，默认取文件名
 description = "一句话说明"
 command = ["claude"]          # 所有 Agent 默认使用的 CLI，默认 ["claude"]
 backend = "tmux"              # tmux 或 subprocess，默认 tmux
+repos = ["/srv/app"]          # 可选，git 仓库（daemon 机器上的路径）：每个 Agent 一个 worktree，也作为团队的默认仓库
 
 [template.env]                # 可选，所有 Agent 共用的环境变量，值里可以用 ${NAME}
 GIT_AUTHOR_NAME = "team-bot"
@@ -34,6 +35,7 @@ type = "lead"                 # 角色名，写入成员信息和身份变量，
 task = """leader 的任务说明"""
 command = ["codex"]           # 可选，单独为这个 Agent 指定 CLI
 env = { OPENAI_API_KEY = "${LEAD_KEY}" }   # 可选，只给这个 Agent 的环境变量
+repos = ["/srv/app", "/srv/web"]          # 可选，替换 template 的 repos
 
 [[template.agents]]           # 可写多个，每个对应一个 worker
 name = "dev"
@@ -50,6 +52,8 @@ blocked_by = ["design"]       # 依赖的任务，填其他任务的 key
 ```
 
 `${NAME}` 取自执行 `launch` 时所在的环境，所以模板里不必写明文密钥。完整的环境变量合成规则，以及怎样给某种 CLI 统一配置环境变量，见 [agents.md](agents.md)。
+
+写了 `repos`，或 `launch` 加了 `-w` / `--repo` 时，每个 Agent 都有自己的 git worktree，分支为 `clawteam/<team>/<agent>`；仓库优先取 Agent 的 `repos`，其次是 `launch --repo`，最后是模板的 `repos`。详见 [workspaces.md](workspaces.md)。
 
 `launch` 会校验 `blocked_by`：其中每个 key 都必须在模板里的某个任务上定义过，否则直接报错，不会创建任何东西。
 

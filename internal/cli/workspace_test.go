@@ -189,3 +189,84 @@ func TestWorkspaceImportTakesOverClawTeamWorktrees(t *testing.T) {
 		t.Fatalf("spawn from a worktree: %+v", res)
 	}
 }
+
+func TestTeamDefaultRepositories(t *testing.T) {
+	h := newHarness(t)
+	t.Setenv("TEAM_WORKER_WORKSPACE", "auto")
+	app, web := gitRepo(t, "app"), gitRepo(t, "web")
+	h.run("team", "spawn-team", "demo", "--repo", app)
+	var repos struct{ Repos []string }
+	h.json(&repos, "team", "repos", "demo")
+	if len(repos.Repos) != 1 || repos.Repos[0] != app {
+		t.Fatalf("repos: %+v", repos)
+	}
+	// spawn without --repo uses the team's repositories; --repo wins.
+	var res model.SpawnResult
+	h.json(&res, "spawn", "subprocess", "--team", "demo", "-n", "alice", "--dry-run", "--", "true")
+	if len(res.Workspaces) != 1 || res.Workspaces[0].RepoRoot != app {
+		t.Fatalf("team default: %+v", res)
+	}
+	res = model.SpawnResult{}
+	h.json(&res, "spawn", "subprocess", "--team", "demo", "-n", "alice", "--repo", web, "--dry-run", "--", "true")
+	if len(res.Workspaces) != 1 || res.Workspaces[0].RepoRoot != web {
+		t.Fatalf("--repo over the default: %+v", res)
+	}
+	res = model.SpawnResult{}
+	h.json(&res, "spawn", "subprocess", "--team", "demo", "-n", "alice", "--no-workspace", "--dry-run", "--", "true")
+	if len(res.Workspaces) != 0 {
+		t.Fatalf("--no-workspace ignores the default: %+v", res)
+	}
+	h.json(&repos, "team", "repos", "demo", app, web)
+	if len(repos.Repos) != 2 {
+		t.Fatalf("set: %+v", repos)
+	}
+	if out, ok := h.run("--json", "team", "repos", "demo", t.TempDir()); ok || !strings.Contains(out, "not a git repository") {
+		t.Fatalf("a non-repository must be refused: ok=%v %s", ok, out)
+	}
+	repos.Repos = nil
+	h.json(&repos, "team", "repos", "demo", "--clear")
+	if len(repos.Repos) != 0 {
+		t.Fatalf("clear: %+v", repos)
+	}
+}
+
+func TestLaunchGivesTemplateAgentsWorktrees(t *testing.T) {
+	h := newHarness(t)
+	t.Setenv("TEAM_WORKER_WORKSPACE", "auto")
+	app, web := gitRepo(t, "app"), gitRepo(t, "web")
+	tmpl := filepath.Join(t.TempDir(), "squad.toml")
+	body := `[template]
+name = "squad"
+backend = "subprocess"
+command = ["sh", "-c", "sleep 30"]
+repos = ["` + app + `"]
+[template.leader]
+name = "lead"
+[[template.agents]]
+name = "front"
+repos = ["` + web + `"]
+`
+	if err := os.WriteFile(tmpl, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out model.LaunchResult
+	h.json(&out, "launch", tmpl, "--team", "squad")
+	if out.Status != "launched" {
+		t.Fatalf("launch: %+v", out)
+	}
+	var list struct{ Workspaces []model.Workspace }
+	h.json(&list, "workspace", "list", "squad")
+	got := map[string]string{}
+	for _, ws := range list.Workspaces {
+		got[ws.AgentName] = ws.RepoRoot
+	}
+	if got["lead"] != app || got["front"] != web {
+		t.Fatalf("worktrees: %+v", list.Workspaces)
+	}
+	var team model.Team
+	h.json(&team, "team", "status", "squad")
+	if len(team.Repos) != 1 || team.Repos[0] != app {
+		t.Fatalf("the template's repos become the team's: %+v", team.Repos)
+	}
+	h.run("team", "cleanup", "squad", "--force")
+}

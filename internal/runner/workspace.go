@@ -23,9 +23,9 @@ type plannedWorkspace struct {
 // as ClawTeam does: with the workspace mode auto (the default), a known
 // repository gets a worktree on branch clawteam/<team>/<agent>; always
 // requires one, never and --no-workspace turn it off. A repository is
-// known from --repo, or from a local client's working directory. An
-// explicit --cwd is used as it is.
-func planWorkspaces(ctx context.Context, c *client.Client, dataDir string, req Request) ([]plannedWorkspace, string, error) {
+// known from --repo, then the team's default repositories, then a local
+// client's working directory. An explicit --cwd is used as it is.
+func planWorkspaces(ctx context.Context, c *client.Client, dataDir string, req Request, teamRepos []string) ([]plannedWorkspace, string, error) {
 	dir := config.WorkspaceDir(dataDir, req.Team, req.Name)
 	if req.Cwd != "" {
 		if len(req.Repos) > 0 {
@@ -53,9 +53,13 @@ func planWorkspaces(ctx context.Context, c *client.Client, dataDir string, req R
 		return nil, "", fmt.Errorf("without a workspace, give at most one --repo")
 	}
 	required := (req.Workspace != nil && *req.Workspace) || mode == "always"
+	repos := req.Repos
+	if len(repos) == 0 {
+		repos = teamRepos
+	}
 	var roots []string
 	seen := map[string]bool{}
-	for _, repo := range req.Repos {
+	for _, repo := range repos {
 		root, err := workspace.MainRoot(ctx, repo)
 		if err != nil {
 			return nil, "", err

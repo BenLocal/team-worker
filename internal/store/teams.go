@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 
 	"github.com/benlocal/team-worker/internal/model"
@@ -29,6 +30,8 @@ type CreateTeamInput struct {
 	LeaderID        string `json:"leaderId"`
 	User            string `json:"user"`
 	LeaderAgentType string `json:"leaderAgentType"`
+	// Repos are the team's default repositories for worktrees.
+	Repos []string `json:"repos,omitempty"`
 }
 
 func (s *Store) CreateTeam(ctx context.Context, in CreateTeamInput) (model.Team, error) {
@@ -57,9 +60,13 @@ func (s *Store) CreateTeam(ctx context.Context, in CreateTeamInput) (model.Team,
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
+		repos, err := json.Marshal(nonNil(in.Repos))
+		if err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx,
-			"INSERT INTO teams (name, description, lead_agent_id, created_at) VALUES (?, ?, ?, ?)",
-			in.Name, in.Description, in.LeaderID, now); err != nil {
+			"INSERT INTO teams (name, description, lead_agent_id, created_at, repos) VALUES (?, ?, ?, ?, ?)",
+			in.Name, in.Description, in.LeaderID, now, string(repos)); err != nil {
 			return err
 		}
 		_, err = tx.ExecContext(ctx,
@@ -83,17 +90,47 @@ func getTeam(ctx context.Context, q queryer, name string) (model.Team, error) {
 		return model.Team{}, err
 	}
 	t := model.Team{Name: name}
+	var repos string
 	err := q.QueryRowContext(ctx,
-		"SELECT description, lead_agent_id, created_at FROM teams WHERE name = ?", name,
-	).Scan(&t.Description, &t.LeadAgentID, &t.CreatedAt)
+		"SELECT description, lead_agent_id, created_at, repos FROM teams WHERE name = ?", name,
+	).Scan(&t.Description, &t.LeadAgentID, &t.CreatedAt, &repos)
 	if errors.Is(err, sql.ErrNoRows) {
 		return model.Team{}, notFoundf("Team '%s' not found", name)
 	}
 	if err != nil {
 		return model.Team{}, err
 	}
+	if err := json.Unmarshal([]byte(repos), &t.Repos); err != nil {
+		return model.Team{}, err
+	}
 	t.Members, err = listMembers(ctx, q, name)
 	return t, err
+}
+
+// SetTeamRepos replaces the team's default repositories for worktrees.
+func (s *Store) SetTeamRepos(ctx context.Context, team string, repos []string) (model.Team, error) {
+	data, err := json.Marshal(nonNil(repos))
+	if err != nil {
+		return model.Team{}, err
+	}
+	err = s.write(ctx, func(tx *sql.Tx) error {
+		if err := requireTeam(ctx, tx, team); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, "UPDATE teams SET repos = ? WHERE name = ?", string(data), team)
+		return err
+	})
+	if err != nil {
+		return model.Team{}, err
+	}
+	return s.GetTeam(ctx, team)
+}
+
+func nonNil(list []string) []string {
+	if list == nil {
+		return []string{}
+	}
+	return list
 }
 
 func listMembers(ctx context.Context, q queryer, team string) ([]model.Member, error) {

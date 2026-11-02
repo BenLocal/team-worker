@@ -27,6 +27,19 @@ worktree 的约定：
 - spawn 失败时撤销本次新建的 worktree 和分支，复用的不受影响。
 - 第一条提示词里写明 worktree、分支和基准分支，并要求完成任务前提交。
 
+## 团队的默认仓库
+
+不想每次 spawn 都写 `--repo` 时，给团队设默认仓库：
+
+```bash
+team-worker team spawn-team demo --repo /srv/app     # 建团队时设置
+team-worker team repos demo /srv/app /srv/web        # 替换
+team-worker team repos demo                          # 查看
+team-worker team repos demo --clear                  # 清除
+```
+
+spawn 取仓库的顺序：`--repo`，团队的默认仓库，最后才是本地执行时当前目录所在的仓库。`--no-workspace` 和 `never` 模式下不使用默认仓库。模板的 `repos` 会成为 `launch` 建出的团队的默认仓库（见 [templates.md](templates.md)）。
+
 ## 多个仓库
 
 `--repo` 可以重复。只有一个仓库时，Agent 的工作目录本身就是 worktree（与 ClawTeam 相同）；多个仓库时工作目录是普通目录，每个仓库一个以仓库目录名命名的 worktree 子目录（重名时加 `-2`、`-3`），各仓库的分支同名：

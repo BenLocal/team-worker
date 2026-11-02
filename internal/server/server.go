@@ -146,6 +146,7 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /v1/teams", s.createTeam)
 	m.HandleFunc("GET /v1/teams/{team}", s.getTeam)
 	m.HandleFunc("DELETE /v1/teams/{team}", s.deleteTeam)
+	m.HandleFunc("PUT /v1/teams/{team}/repos", s.setTeamRepos)
 	m.HandleFunc("POST /v1/teams/{team}/members", s.addMember)
 	m.HandleFunc("GET /v1/teams/{team}/leader", s.leader)
 
@@ -247,6 +248,12 @@ func (s *Server) createTeam(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &in) {
 		return
 	}
+	repos, err := repoRoots(r.Context(), in.Repos)
+	if err != nil {
+		respond(w, nil, err)
+		return
+	}
+	in.Repos = repos
 	team, err := s.store.CreateTeam(r.Context(), in)
 	if err == nil {
 		s.log.Info("team created", "team", team.Name, "leader", in.LeaderName)

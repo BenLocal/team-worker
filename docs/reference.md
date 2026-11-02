@@ -173,6 +173,7 @@ team-workerd 记录这些事件：
 | `POST/DELETE /v1/teams/{team}/harness/conduct` | 让 daemon 开始 / 停止调度团队正在进行的 harness 运行，停止不影响这一轮本身 |
 | `POST /v1/teams/{team}/agents/stop` | 批量保存团队的停止意图并返回进程记录 |
 | `GET/PUT /v1/teams/{team}/sessions/{name}?user=...` | 读取 / 保存原生会话；保存时校验运行标识 |
+| `PUT /v1/teams/{team}/repos` | 替换团队的默认仓库（请求体 `repos`，空数组清除）；路径必须是 daemon 机器上的 git 仓库，保存为主仓库根目录 |
 | `GET/PUT /v1/teams/{team}/workspaces?agent=...` | 列出团队（或一个 Agent）的 git worktree / 保存一条记录（daemon 的 spawn 用） |
 | `DELETE /v1/teams/{team}/workspaces/{agent}?repo=...` | 删除一条 worktree 记录，不动磁盘 |
 | `GET /v1/teams/{team}/workspaces/{agent}/status?repo=...` | 各 worktree 未提交改动的 diff 统计 |

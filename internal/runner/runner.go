@@ -119,7 +119,7 @@ func Spawn(ctx context.Context, e Env, req Request) (_ Result, err error) {
 	}
 
 	dataDir := e.DataDir
-	planned, cwd, err := planWorkspaces(ctx, c, dataDir, req)
+	planned, cwd, err := planWorkspaces(ctx, c, dataDir, req, team.Repos)
 	if err != nil {
 		return Result{}, err
 	}

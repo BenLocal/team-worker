@@ -289,3 +289,39 @@ func (s *Server) importWorkspaces(w http.ResponseWriter, r *http.Request) {
 	}
 	respond(w, op, nil)
 }
+
+// repoRoots checks that each path is in a git repository on this machine
+// and returns the repositories' main worktrees, without duplicates.
+func repoRoots(ctx context.Context, paths []string) ([]string, error) {
+	var roots []string
+	seen := map[string]bool{}
+	for _, p := range paths {
+		root, err := workspace.MainRoot(ctx, p)
+		if err != nil {
+			return nil, &store.Error{Kind: store.KindInvalid, Msg: err.Error()}
+		}
+		if !seen[root] {
+			seen[root] = true
+			roots = append(roots, root)
+		}
+	}
+	return roots, nil
+}
+
+// setTeamRepos replaces the repositories spawn gives the team's agents
+// worktrees of when it is given none; an empty list clears them.
+func (s *Server) setTeamRepos(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Repos []string `json:"repos"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	roots, err := repoRoots(r.Context(), in.Repos)
+	if err != nil {
+		respond(w, nil, err)
+		return
+	}
+	team, err := s.store.SetTeamRepos(r.Context(), r.PathValue("team"), roots)
+	respond(w, team, err)
+}

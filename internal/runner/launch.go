@@ -68,9 +68,17 @@ func Launch(ctx context.Context, e Env, in LaunchRequest) (LaunchResult, error) 
 			TaskSet: true, User: in.User,
 			Cwd: in.Cwd, EnvLayers: append(layers, in.EnvLayers...), SkipPerms: !in.NoSkip,
 		}
-		if in.Workspace || len(in.Repos) > 0 {
+		// Repositories come from the agent, then launch --repo, then the template.
+		repos := ag.Repos
+		if len(repos) == 0 {
+			repos = in.Repos
+		}
+		if len(repos) == 0 {
+			repos = tmpl.Repos
+		}
+		if in.Workspace || len(repos) > 0 {
 			on := true
-			req.Workspace, req.Repos, req.CallerDir = &on, in.Repos, in.CallerDir
+			req.Workspace, req.Repos, req.CallerDir = &on, repos, in.CallerDir
 		}
 		// The profile layer goes under the template's own environment.
 		if err := ApplyProfile(&req, in.Profile); err != nil {
@@ -85,8 +93,12 @@ func Launch(ctx context.Context, e Env, in LaunchRequest) (LaunchResult, error) 
 		}
 	}
 
+	teamRepos := in.Repos
+	if len(teamRepos) == 0 {
+		teamRepos = tmpl.Repos
+	}
 	if _, err := c.CreateTeam(ctx, store.CreateTeamInput{Name: teamName, Description: tmpl.Description,
-		LeaderName: leader.Name, User: in.User, LeaderAgentType: agentType(leader)}); err != nil {
+		LeaderName: leader.Name, User: in.User, LeaderAgentType: agentType(leader), Repos: teamRepos}); err != nil {
 		return LaunchResult{}, err
 	}
 	if in.TeamPrompt != "" {

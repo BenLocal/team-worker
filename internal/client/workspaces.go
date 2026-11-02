@@ -58,3 +58,13 @@ func (c *Client) ImportWorkspaces(ctx context.Context, team string, in model.Wor
 	var out model.WorkspaceOp
 	return out, c.do(ctx, http.MethodPost, teamPath(team, "workspaces", "import"), nil, in, &out)
 }
+
+// SetTeamRepos replaces the team's default repositories for worktrees.
+func (c *Client) SetTeamRepos(ctx context.Context, team string, repos []string) (model.Team, error) {
+	var out model.Team
+	body := map[string][]string{"repos": repos}
+	if repos == nil {
+		body["repos"] = []string{}
+	}
+	return out, c.do(ctx, http.MethodPut, teamPath(team, "repos"), nil, body, &out)
+}

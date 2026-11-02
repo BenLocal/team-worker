@@ -18,6 +18,8 @@ type Agent struct {
 	Command []string `toml:"command" json:"command,omitempty"`
 	// Env applies to this agent on top of the template's env.
 	Env map[string]string `toml:"env" json:"env,omitempty"`
+	// Repos replaces the template's repos for this agent.
+	Repos []string `toml:"repos" json:"repos,omitempty"`
 }
 
 // Task is created when the team launches. Key names the task so others can
@@ -37,11 +39,14 @@ type Template struct {
 	Command     []string `toml:"command" json:"command"`
 	Backend     string   `toml:"backend" json:"backend"`
 	// Env applies to every agent; values may use ${NAME} from the caller's environment.
-	Env    map[string]string `toml:"env" json:"env,omitempty"`
-	Leader Agent             `toml:"leader" json:"leader"`
-	Agents []Agent           `toml:"agents" json:"agents"`
-	Tasks  []Task            `toml:"tasks" json:"tasks"`
-	Source string            `toml:"-" json:"source"`
+	Env map[string]string `toml:"env" json:"env,omitempty"`
+	// Repos are git repositories on the daemon's machine: the team's
+	// default repositories, and every agent gets worktrees of them.
+	Repos  []string `toml:"repos" json:"repos,omitempty"`
+	Leader Agent    `toml:"leader" json:"leader"`
+	Agents []Agent  `toml:"agents" json:"agents"`
+	Tasks  []Task   `toml:"tasks" json:"tasks"`
+	Source string   `toml:"-" json:"source"`
 }
 
 type file struct {

@@ -94,6 +94,9 @@ type Team struct {
 	LeadAgentID string   `json:"leadAgentId"`
 	CreatedAt   string   `json:"createdAt"`
 	Members     []Member `json:"members"`
+	// Repos are the repositories spawn gives agents worktrees of when it
+	// is given none.
+	Repos []string `json:"repos,omitempty"`
 }
 
 type TeamSummary struct {
