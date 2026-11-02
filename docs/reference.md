@@ -174,6 +174,11 @@ team-workerd 记录这些事件：
 | `POST /v1/teams/{team}/agents/stop` | 批量保存团队的停止意图并返回进程记录 |
 | `GET/PUT /v1/teams/{team}/sessions/{name}?user=...` | 读取 / 保存原生会话；保存时校验运行标识 |
 | `PUT /v1/teams/{team}/repos` | 替换团队的默认仓库（请求体 `repos`，空数组清除）；路径必须是 daemon 机器上的 git 仓库，保存为主仓库根目录 |
+| `GET /v1/teams/{team}/context/diff/{agent}?repo=...` | 成员相对基准分支的改动（`files_changed`、`insertions`、`deletions`、`diff_stat`、`commit_count`、`summary`） |
+| `GET /v1/teams/{team}/context/files?repo=...` | 文件到修改过它的成员列表的映射 |
+| `GET /v1/teams/{team}/context/conflicts?repo=...` | 被多个成员改过的文件（`file`、`agents`、`severity`） |
+| `GET /v1/teams/{team}/context/log?repo=...&limit=50` | 各成员分支上的提交（`agent`、`hash`、`message`、`timestamp`、`files`），按时间倒序 |
+| `GET /v1/teams/{team}/context/inject/{agent}?repo=...` | 给成员的上下文 Markdown，`{"context": "..."}` |
 | `GET/PUT /v1/teams/{team}/workspaces?agent=...` | 列出团队（或一个 Agent）的 git worktree / 保存一条记录（daemon 的 spawn 用） |
 | `DELETE /v1/teams/{team}/workspaces/{agent}?repo=...` | 删除一条 worktree 记录，不动磁盘 |
 | `GET /v1/teams/{team}/workspaces/{agent}/status?repo=...` | 各 worktree 未提交改动的 diff 统计 |

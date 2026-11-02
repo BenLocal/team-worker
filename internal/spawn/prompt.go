@@ -18,6 +18,9 @@ type PromptParams struct {
 	Worktrees  []Worktree
 	TeamPrompt string
 	Task       string
+	// Context is what the agent should know about the other agents' git
+	// work, from the context inject command.
+	Context string
 	// PlanRequired adds how to get a plan approved before starting work.
 	PlanRequired bool
 }

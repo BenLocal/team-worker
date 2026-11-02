@@ -82,9 +82,9 @@ ClawTeam 为每个 Agent 建独立分支（worktree），team-worker 的 spawn �
 
 依赖 `workspace`。算法和 JSON 字段照搬 ClawTeam。
 
-- [ ] 实现 `context diff/files/log`：各 Agent 分支相对基准的 diff 统计、文件归属（哪个 Agent 改了哪些文件）、提交记录。多仓库时文件写成“仓库名/路径”；`log` 用 NUL 分隔，避免提交信息含 `|` 时解析错误。
-- [ ] 实现 `context conflicts`：多个分支改动同一仓库的同一文件；改动行有交集为 `high`，否则 `medium`。
-- [ ] 实现 `context inject`：生成上述上下文的 Markdown，spawn 时放进初始 prompt（与 ClawTeam 一致）；另加 `--send` 作为消息发给该 Agent。
+- [x] 实现 `context diff/files/log`：各 Agent 分支相对基准的 diff 统计、文件归属（哪个 Agent 改了哪些文件）、提交记录。多仓库时文件写成“仓库名/路径”；`log` 用 NUL 分隔，避免提交信息含 `|` 时解析错误。
+- [x] 实现 `context conflicts`：多个分支改动同一仓库的同一文件；改动行有交集为 `high`，否则 `medium`。
+- [x] 实现 `context inject`：生成上述上下文的 Markdown，spawn 时放进初始 prompt（与 ClawTeam 一致）；另加 `--send` 作为消息发给该 Agent。
 
 ### 9. 团队快照
 

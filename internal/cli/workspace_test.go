@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -269,4 +270,81 @@ repos = ["` + web + `"]
 		t.Fatalf("the template's repos become the team's: %+v", team.Repos)
 	}
 	h.run("team", "cleanup", "squad", "--force")
+}
+
+func TestContextAcrossAgentWorktrees(t *testing.T) {
+	h := newHarness(t)
+	t.Setenv("TEAM_WORKER_WORKSPACE", "auto")
+	repo := gitRepo(t, "app")
+	if err := os.WriteFile(filepath.Join(repo, "shared.txt"), []byte("1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, repo, "add", "-A")
+	gitIn(t, repo, "commit", "-q", "-m", "shared")
+	trees := map[string]string{}
+	for _, name := range []string{"alice", "bob"} {
+		var res model.SpawnResult
+		h.json(&res, "spawn", "subprocess", "--team", "demo", "-n", name, "--task", "work", "--repo", repo, "--", "sh", "-c", "sleep 30")
+		trees[name] = res.Workspace
+	}
+	t.Cleanup(func() { h.run("team", "cleanup", "demo", "--force") })
+	edit := func(name, file, text string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(trees[name], file), []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Both change README's only line (high); shared.txt on different lines (medium).
+	edit("alice", "README.md", "alice\n")
+	edit("alice", "shared.txt", "1\ntwo\n3\n4\n5\n6\n7\n8\n9\n10\n")
+	edit("bob", "README.md", "bob\n")
+	edit("bob", "shared.txt", "1\n2\n3\n4\n5\n6\n7\n8\nnine\n10\n")
+	edit("bob", "bob.txt", "bob\n")
+	var op model.WorkspaceOp
+	h.json(&op, "workspace", "checkpoint", "demo", "alice", "-m", "alice | readme")
+	h.json(&op, "workspace", "checkpoint", "demo", "bob", "-m", "bob work")
+
+	var diff model.AgentDiff
+	h.json(&diff, "context", "diff", "demo", "alice")
+	if len(diff.FilesChanged) != 2 || diff.CommitCount != 1 || !strings.HasPrefix(diff.Summary, "alice: 2 file(s)") {
+		t.Fatalf("diff: %+v", diff)
+	}
+	var files map[string][]string
+	h.json(&files, "context", "files", "demo")
+	if len(files["README.md"]) != 2 || len(files["bob.txt"]) != 1 {
+		t.Fatalf("files: %v", files)
+	}
+	var conflicts []model.FileOverlap
+	h.json(&conflicts, "context", "conflicts", "demo")
+	if len(conflicts) != 2 || conflicts[0].File != "README.md" || conflicts[0].Severity != "high" ||
+		conflicts[1].File != "shared.txt" || conflicts[1].Severity != "medium" {
+		t.Fatalf("conflicts: %+v", conflicts)
+	}
+	var log []model.AgentCommit
+	h.json(&log, "context", "log", "demo")
+	if len(log) != 2 {
+		t.Fatalf("log: %+v", log)
+	}
+	messages := log[0].Message + " / " + log[1].Message
+	if !strings.Contains(messages, "alice | readme") {
+		t.Fatalf("a subject with | must survive: %s", messages)
+	}
+
+	// alice's task waits for bob's, so bob's work is upstream for her.
+	var bobTask, aliceTask model.Task
+	h.json(&bobTask, "task", "create", "demo", "api", "-o", "bob")
+	h.json(&aliceTask, "task", "create", "demo", "ui", "-o", "alice", "--blocked-by", bobTask.ID)
+	var injected map[string]string
+	h.json(&injected, "context", "inject", "demo", "alice", "--send")
+	text := injected["context"]
+	for _, want := range []string{"# Git Context for alice", "## File Overlap Warnings", "`README.md` also modified by: bob",
+		"## Recent Related Changes", "[bob]", "## Upstream Dependency Changes", "- bob: bob: 3 file(s)"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("inject lacks %q:\n%s", want, text)
+		}
+	}
+	msgs, err := h.api.Peek(context.Background(), "demo", "alice", "")
+	if err != nil || len(msgs) == 0 || !strings.Contains(msgs[len(msgs)-1].Content, "# Git Context for alice") {
+		t.Fatalf("--send must deliver the block: %+v %v", msgs, err)
+	}
 }

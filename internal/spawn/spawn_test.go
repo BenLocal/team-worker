@@ -253,3 +253,11 @@ func TestBuildPromptNamesTheAgentsWorktrees(t *testing.T) {
 		t.Fatal("an agent without worktrees must not be told about them")
 	}
 }
+
+func TestBuildPromptCarriesTheGitContext(t *testing.T) {
+	p := BuildPrompt(PromptParams{AgentName: "alice", Team: "demo", Leader: "leader", Task: "build",
+		Context: "# Git Context for alice\n## File Overlap Warnings\n- `a.go` also modified by: bob"})
+	if !strings.Contains(p, "## Task\n\nbuild\n\n## Context\n\n# Git Context for alice") {
+		t.Fatalf("the context must follow the task:\n%s", p)
+	}
+}

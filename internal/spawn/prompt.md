@@ -32,6 +32,12 @@
 
 {{.Task}}
 {{- end}}
+{{- if .Context}}
+
+## Context
+
+{{.Context}}
+{{- end}}
 {{- if .IsLeader}}
 
 ## Leader Protocol
@@ -43,7 +49,7 @@ You coordinate the team: you split the work, start the workers, follow up and ch
 - Before starting workers, save what every agent needs to know (repository, test commands, conventions): `team-worker team prompt set {{.Team}} "<instructions>"` (or `--file <path>`).
 - Give each task one deliverable and an owner: `team-worker task create {{.Team}} "<subject>" -d "<goal, deliverable, how to check it>" -o <member> -p high`
 - Declare order with `--blocked-by <task-id,task-id>`: the task stays `blocked` until those complete, then turns `pending` by itself.
-- When several agents share a repository, give each its own worktree: `team-worker spawn ... --repo <path>` puts the agent on its own branch `clawteam/{{.Team}}/<name>` (repeat `--repo` for several repositories). Different agent names alone do not keep their git changes apart. `team-worker workspace merge {{.Team}} <name>` merges a finished branch back; skip it when your team instructions say changes go through pull requests.
+- When several agents share a repository, give each its own worktree: `team-worker spawn ... --repo <path>` puts the agent on its own branch `clawteam/{{.Team}}/<name>` (repeat `--repo` for several repositories). Different agent names alone do not keep their git changes apart. `team-worker context conflicts {{.Team}}` shows files several agents changed, and `team-worker workspace merge {{.Team}} <name>` merges a finished branch back; skip the merge when your team instructions say changes go through pull requests.
 
 ### Start and direct workers
 

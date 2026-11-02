@@ -72,9 +72,27 @@ team-worker workspace import demo                  # 接管从 ClawTeam 迁来�
 
 团队通过 PR 合并代码时（比如由用户在代码平台上审核），不用 `workspace merge`，让 Agent 推送自己的分支即可。
 
+## 跨 Agent 的改动上下文：`context`
+
+依赖上面的 worktree，看各成员的工作都改了什么。算法和 `--json` 字段与 ClawTeam 的 `context` 一致：
+
+```bash
+team-worker context diff demo alice        # alice 相对基准分支的改动：文件、增删行数、提交数
+team-worker context files demo             # 每个文件被哪些成员改过
+team-worker context conflicts demo         # 被多个成员改过的文件：改动行有交集为 high，否则 medium
+team-worker context log demo -n 20         # 各成员分支上的提交，按时间倒序
+team-worker context inject demo alice      # 给 alice 的上下文：重叠文件、别人在这些文件上的提交、她的任务所等待的上游成员的改动
+team-worker context inject demo alice --send   # 同时作为消息发给 alice
+```
+
+- 只算已提交的改动，比较的是成员 worktree 当前检出的提交和基准分支的分叉点之后。成员在 worktree 里切到了别的分支时，按它实际所在的提交算（ClawTeam 按登记的分支名算）；worktree 已删除时按分支算。
+- 涉及多个仓库时，文件写成 `<仓库目录名>/<路径>`，只有同一个仓库里的同一文件才算重叠；`--repo` 只看一个仓库。
+- spawn 时，有 worktree 的成员会把 `inject` 的内容放进第一条提示词的 `## Context`（没有内容时不放）。ClawTeam 也是这样做的，但它只在 spawn 时用；`--send` 可以随时补发。
+
 ## 与 ClawTeam 的不同
 
 - 记录存在 SQLite 的 `workspaces` 表，按 Agent 和仓库各一行；ClawTeam 用每个团队一个 JSON 文件，并发 spawn 时可能丢记录。
 - 支持一个 Agent 关联多个仓库。
 - merge 先整体试合并，不切换主仓库的分支；cleanup 和删团队时保留未合并的分支；再次 spawn 时复用已有 worktree，不会删掉重建。
 - 显式 `--workspace` 但找不到仓库时报错（ClawTeam 会悄悄不建）。
+- `context` 按 worktree 实际检出的提交计算；`log` 用控制字符分隔字段，提交信息里有 `|` 也能正确解析；`inject` 可以用 `--send` 直接发给成员。

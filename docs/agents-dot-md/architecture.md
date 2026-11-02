@@ -40,7 +40,7 @@ team-worker board serve ──> internal/board (同一看板的独立进程，�
 | `internal/spawn` | 准备环境、按 CLI 适配器启动 agent，处理启动界面与 prompt 粘贴 | `tmux`、`agent`、`agent/builtin` | `store`、`server`、`client` |
 | `internal/templates` | 读取 `~/.team-worker/templates` 下的 TOML 团队模板 | 标准库 + `BurntSushi/toml` | 其他 internal 包 |
 | `internal/board` | 只读 Web 看板（页面 `embed` 进二进制），成员画面经 daemon 的 screen 接口读取 | `client`、`model`、`config` | `store`、`server`、`proc`、`tmux` |
-| `internal/workspace` | Agent 的 git worktree：创建、checkpoint、全部或全不的合并、清理；只由 daemon（runner、server）使用 | 标准库与 git 命令 | `cli`、`client` |
+| `internal/workspace` | Agent 的 git worktree：创建、checkpoint、全部或全不的合并、清理，以及 context 用到的 diff、改动行和提交记录；只由 daemon（runner、server）使用 | 标准库与 git 命令 | `cli`、`client` |
 | `internal/board/live` | 看板的实时终端：WebSocket 接本机 tmux 窗口，只由 daemon 的看板使用 | `client` | `cli` |
 | `internal/cli` | cobra 命令、人类可读输出与 `--json`；纯客户端，`supervise.go`、`hook.go` 是成员窗口里运行的部分 | `client`、`model`、`config`、`board`、`profile`、`templates`、`agent`、`agent/builtin`、`store`（仅复用 `*Input` 类型）；`spawn`、`proc`、`tmux` 只许 `supervise.go`、`hook.go` 用（`imports_test.go` 检查） | `store` 的读写方法、`server`、`runner`（测试除外） |
 

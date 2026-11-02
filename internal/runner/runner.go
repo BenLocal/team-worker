@@ -127,10 +127,18 @@ func Spawn(ctx context.Context, e Env, req Request) (_ Result, err error) {
 	for _, p := range planned {
 		worktrees = append(worktrees, spawn.Worktree{Path: p.WorktreePath, Repo: p.RepoRoot, Branch: p.BranchName, Base: p.BaseBranch})
 	}
+	// As in ClawTeam, an agent with worktrees starts knowing what the
+	// others' work touches; the context is a courtesy, so it never fails a spawn.
+	gitContext := ""
+	if teamExists && len(planned) > 0 {
+		if text, err := c.ContextInject(ctx, req.Team, req.Name, ""); err == nil && !strings.HasPrefix(text, "No cross-agent context") {
+			gitContext = text
+		}
+	}
 	prompt := spawn.BuildPrompt(spawn.PromptParams{
 		AgentName: req.Name, AgentID: req.AgentID, AgentType: req.AgentType, Team: req.Team,
 		Leader: leader, User: req.User, Workspace: cwd, Worktrees: worktrees, TeamPrompt: teamPrompt, Task: req.Task,
-		PlanRequired: req.PlanRequired,
+		Context: gitContext, PlanRequired: req.PlanRequired,
 	})
 	identity := map[string]string{
 		"TEAM_WORKER_AGENT_ID":      req.AgentID,

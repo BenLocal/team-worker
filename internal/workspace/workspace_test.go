@@ -226,3 +226,45 @@ func TestMainRootLeavesLinkedWorktrees(t *testing.T) {
 		t.Fatal("a plain directory has no repository")
 	}
 }
+
+func TestContextReadsTheAgentsCommittedWork(t *testing.T) {
+	ctx := context.Background()
+	root := newRepo(t, "app")
+	write(t, filepath.Join(root, "shared.txt"), "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n")
+	mustGit(t, root, "add", "-A")
+	mustGit(t, root, "commit", "-q", "-m", "shared")
+	path := filepath.Join(t.TempDir(), "alice")
+	if _, err := Create(ctx, root, path, BranchName("demo", "alice"), "main"); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(path, "shared.txt"), "1\ntwo\n3\n4\n5\n6\n7\n8\nnine\n10\n")
+	write(t, filepath.Join(path, "new.txt"), "a\nb\n")
+	if _, err := Checkpoint(ctx, path, "alice | first pass"); err != nil {
+		t.Fatal(err)
+	}
+	head := Head(ctx, root, path, BranchName("demo", "alice"))
+	d, err := BranchDiff(ctx, root, "main", head)
+	if err != nil || len(d.Files) != 2 || d.Insertions != 4 || d.Deletions != 2 || d.CommitCount != 1 || d.Stat == "" {
+		t.Fatalf("diff: %+v %v", d, err)
+	}
+	lines, err := ChangedLines(ctx, root, "main", head, "shared.txt")
+	if err != nil || len(lines) != 2 || !lines[2] || !lines[9] {
+		t.Fatalf("changed lines: %v %v", lines, err)
+	}
+	log, err := Log(ctx, root, "main", head)
+	if err != nil || len(log) != 1 || log[0].Message != "alice | first pass" || len(log[0].Files) != 2 || log[0].Timestamp == "" {
+		t.Fatalf("log: %+v %v", log, err)
+	}
+	// Work on another branch inside the worktree still counts.
+	mustGit(t, path, "checkout", "-q", "-b", "task-1")
+	write(t, filepath.Join(path, "task.txt"), "t\n")
+	if _, err := Checkpoint(ctx, path, "task"); err != nil {
+		t.Fatal(err)
+	}
+	if d, _ := BranchDiff(ctx, root, "main", Head(ctx, root, path, BranchName("demo", "alice"))); d.CommitCount != 2 {
+		t.Fatalf("the worktree's own branch must be read: %+v", d)
+	}
+	if d, err := BranchDiff(ctx, root, "main", ""); err != nil || len(d.Files) != 0 {
+		t.Fatalf("no work is an empty diff: %+v %v", d, err)
+	}
+}

@@ -73,7 +73,7 @@ tmux attach -t team-worker-my-team        # 直接进入各 Agent 的窗口
 - 每种 CLI 怎样启动由适配器决定，内置 claude、codex、gemini、kimi、qwen、opencode、dsh、pi；自定义适配器、环境变量合成顺序、hook、消息粘贴和卡住提醒见 [docs/agents.md](docs/agents.md)。
 - 运行配置（profile）和端点预设（preset）见 [docs/profiles.md](docs/profiles.md)。
 - 会话恢复与 keepalive 见 [docs/sessions.md](docs/sessions.md)。
-- git worktree 隔离（`--repo`、`workspace list/status/checkpoint/merge/cleanup`、多仓库）见 [docs/workspaces.md](docs/workspaces.md)。
+- git worktree 隔离（`--repo`、`workspace list/status/checkpoint/merge/cleanup`、多仓库）和跨成员的改动上下文（`context diff/files/conflicts/log/inject`）见 [docs/workspaces.md](docs/workspaces.md)。
 - 团队结构固定时，可以用 TOML 模板一条命令建好团队、任务和所有 Agent：`team-worker launch my-template -g "..."`。项目不内置模板，格式见 [docs/templates.md](docs/templates.md)。
 
 ## 看板
