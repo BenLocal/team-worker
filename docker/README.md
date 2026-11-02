@@ -23,7 +23,7 @@ TEAM_WORKER_ENV_FILE=/绝对路径/team-worker.env \
 
 ## 启动流程与任务通知
 
-容器启动时依次：导入 Magpie 配置（providers、插件、技能、MCP、Instructions）→ 启动 `team-workerd` → 启动只读看板和 Nginx → 注册团队 `team-worker-docker`（`TEAM_WORKER_TEAM_NAME` 可改）和 Leader → 在 tmux 中启动 Leader → 启动 `team-worker-ops leader watch`。已有团队会复用；Worker 在 Leader 分配任务时才创建。
+容器启动时依次：导入 Magpie 配置（providers、插件、技能、MCP、Instructions）→ 第一条 CLI 命令自动拉起 `team-workerd`（看板、HTTP 监听和页头链接都由镜像的环境变量配置，不管哪个进程先拉起，配置都一样）→ 启动 Nginx → 注册团队 `team-worker-docker`（`TEAM_WORKER_TEAM_NAME` 可改）和 Leader → 在 tmux 中启动 Leader → 启动 `team-worker-ops leader watch`。已有团队会复用；Worker 在 Leader 分配任务时才创建。
 
 消息由 team-worker 自己送到 Agent 面前，规则和容器外完全一样（见仓库的 [docs/agents.md](../docs/agents.md)）：
 
@@ -66,7 +66,7 @@ Nginx 在同一地址、同一端口下按路径分发：
 | `/magpie/` | Magpie 管理界面 | `127.0.0.1:3430` |
 | `/ui/`、`/v1/` | OpenBao 界面与 API（启用时） | `127.0.0.1:8200` |
 
-根路径跳转到 `/team-worker/`。看板标题栏右侧有 Magpie 链接，启用 OpenBao 时还有 OpenBao 链接（入口脚本通过 `team-workerd --board-link` 传入）。Magpie 链接不带登录密钥：浏览器先用 `web` 打印的完整链接登录一次，之后从看板点 Magpie 就能直接进入。用 `./docker/team-worker.sh web` 获取完整地址和带登录密钥的 Magpie 链接；密钥保存在 home 卷，重启不变。Nginx 关闭了访问日志，避免记录链接密钥。看板和 Magpie 页面使用根路径 API，由 `subpath.js` 给页面请求加上各自前缀。
+根路径跳转到 `/team-worker/`。看板标题栏右侧有 Magpie 链接，启用 OpenBao 时还有 OpenBao 链接（镜像环境变量 `TEAM_WORKER_BOARD_LINKS`，关闭 OpenBao 时入口脚本去掉 OpenBao 那项）。Magpie 链接不带登录密钥：浏览器先用 `web` 打印的完整链接登录一次，之后从看板点 Magpie 就能直接进入。用 `./docker/team-worker.sh web` 获取完整地址和带登录密钥的 Magpie 链接；密钥保存在 home 卷，重启不变。Nginx 关闭了访问日志，避免记录链接密钥。看板和 Magpie 页面使用根路径 API，由 `subpath.js` 给页面请求加上各自前缀。
 
 默认绑定本机 `127.0.0.1:8080`。用服务器 IP 访问时指定监听地址和对外 URL：
 
@@ -80,7 +80,7 @@ TEAM_WORKER_WEB_BIND=0.0.0.0 TEAM_WORKER_WEB_PORT=18080 \
 
 ## 日志
 
-team-workerd 在容器里以前台方式运行，日志写到 stderr，和其他服务的输出一起用 `docker logs <容器名>` 查看。想单独保存到 home 卷，在 env-file 里设置 `TEAM_WORKER_LOG_FILE=/home/node/.team-worker/team-workerd.log`（按大小轮转）。级别和格式用 `TEAM_WORKER_LOG_LEVEL`、`TEAM_WORKER_LOG_FORMAT` 设置，例如排查问题时设 `TEAM_WORKER_LOG_LEVEL=debug`，接入日志系统时设 `TEAM_WORKER_LOG_FORMAT=json`。记录的内容见仓库根目录 README 的"日志"一节。
+team-workerd 由第一条 CLI 命令自动拉起，日志写到 home 卷里的 `/home/node/.team-worker/team-workerd.log`（按大小轮转），启动失败或崩溃时的输出写在同目录的 `team-workerd.out`。daemon 意外退出后，下一条 CLI 命令会把它重新拉起，不需要重启容器。级别和格式用 `TEAM_WORKER_LOG_LEVEL`、`TEAM_WORKER_LOG_FORMAT` 设置，例如排查问题时设 `TEAM_WORKER_LOG_LEVEL=debug`，接入日志系统时设 `TEAM_WORKER_LOG_FORMAT=json`。记录的内容见仓库根目录 README 的"日志"一节。
 
 ## 远程 CLI API
 
@@ -97,7 +97,7 @@ team-workerd 在容器里以前台方式运行，日志写到 stderr，和其他
 | `LLM_API_BASE` | 默认 `providers.yaml` 的 OpenAI 兼容网关地址 |
 | `TEAM_WORKER_TEAM_NAME` | 容器团队名，默认 `team-worker-docker` |
 | `TEAM_WORKER_API_KEY` | 覆盖并保存到 SQLite 的共享 Web / CLI HTTP Key；默认自动生成 |
-| `TEAM_WORKER_HTTP_ADDR` | HTTP 监听地址；内置 Nginx 路由使用 `127.0.0.1:8082` |
+| `TEAM_WORKER_HTTP_ADDR` | daemon 的 HTTP 监听地址，镜像默认 `127.0.0.1:8082`，内置 Nginx 路由依赖它；`TEAM_WORKER_BOARD`、`TEAM_WORKER_BOARD_LINKS`、`TEAM_WORKER_WEB_BASE_PATH` 同样由镜像设好，一般不用改 |
 | `TEAM_WORKER_MODEL` | Magpie 模型路由，优先于 `providers.yaml` 的 `claude.model` |
 | `TEAM_WORKER_LEADER_RESTART_DELAY` | Leader 续接的初始等待秒数，默认 10，最大 60 |
 | `TEAM_WORKER_LEADER_MAX_RESTARTS` | Leader 连续快速退出后的最大续接次数，默认 3 |

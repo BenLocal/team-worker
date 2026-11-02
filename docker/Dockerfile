@@ -86,8 +86,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # /opt/team-worker/bin comes first: team-worker.sh mounts freshly built
 # team-worker binaries there, so updates need no image rebuild. The copies
 # in /usr/local/bin are the fallback when nothing is mounted.
+# The TEAM_WORKER_HTTP_ADDR, _BOARD, _BOARD_LINKS and _WEB_BASE_PATH settings
+# configure team-workerd, which the first CLI call starts: whichever process
+# starts it, it serves the API and the board that Nginx publishes.
 ENV PATH="/opt/team-worker/bin:/opt/venv/bin:${PATH}" HOME=/home/node TERM=xterm-256color \
     TEAM_WORKER_DATA_DIR=/home/node/.team-worker MAGPIE_ADDR=127.0.0.1:3425 \
+    TEAM_WORKER_HTTP_ADDR=127.0.0.1:8082 TEAM_WORKER_BOARD=1 TEAM_WORKER_WEB_BASE_PATH=/team-worker \
+    TEAM_WORKER_BOARD_LINKS="Magpie=/magpie/,OpenBao=/ui/" \
     TEAM_WORKER_OPENBAO=1 TEAM_WORKER_OPENBAO_AUTO_UNSEAL=1 \
     TEAM_WORKER_PROVIDERS_FILE=/etc/team-worker/providers.yaml \
     DISABLE_AUTOUPDATER=1 MAGPIE_BUN=/usr/local/bin/bun \
