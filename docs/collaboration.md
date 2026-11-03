@@ -1,6 +1,6 @@
 # 团队协作流程
 
-> 加入审批、计划审批、团队说明与成员提示词、用量与预算、阶段编排（harness）的命令和规则。
+> 加入审批、计划审批、团队说明与成员提示词、用量与预算、阶段编排（harness）、团队快照的命令和规则。
 
 ## 加入审批
 
@@ -98,6 +98,7 @@ team-worker harness abort my-team -r "目标有变"
 # Agent 登记交付物、拆分任务时用
 team-worker harness artifact my-team spec.md --file spec.md
 team-worker harness artifacts my-team --show spec.md
+team-worker harness contracts my-team        # 只列出名为 sprint-contract-* 的交付物
 team-worker harness task my-team "实现标签接口" -d "按 spec.md 第 2 节"
 ```
 
@@ -114,3 +115,24 @@ team-worker harness task my-team "实现标签接口" -d "按 spec.md 第 2 节"
 评审结论为 `fail` 时，推进会把这一轮退回 execute：尝试次数加一，历史记为 `rolled_back`，自动建一个带评审反馈的返工任务，并把反馈发给本轮的执行者。尝试次数达到 `--max-attempts`（默认 2）后再失败，这一轮记为 failed。
 
 `harness conduct` 每次轮询都从数据库重新读取状态，所以中途可以在别处手动 approve、advance 或 abort。它为当前阶段补齐需要的角色 Agent（名字如 `executor-3fa9c1`，用 `spawn tmux --keepalive` 启动，并记录在这一轮里，重新运行 conduct 不会重复启动），停掉已结束阶段的 Agent，在这一轮完成、失败或中止后退出。`harness abort` 会停掉这一轮仍在运行的 Agent。`harness status --json` 的字段沿用 ClawTeam 的下划线写法（`harness_id`、`can_advance`、`gate_reason` 等）。
+
+## 团队快照
+
+```bash
+team-worker team snapshot my-team --tag before-refactor   # 保存一份快照
+team-worker team snapshots my-team                        # 列出快照，新的在前
+team-worker team restore my-team 20261103T081500-before-refactor --dry-run   # 只看会恢复多少条
+team-worker agent stop my-team alice                      # 恢复前先停掉团队里运行中的 Agent
+team-worker team restore my-team 20261103T081500-before-refactor            # 确认后恢复；-f 跳过确认
+team-worker team snapshot-delete my-team 20261103T081500-before-refactor
+```
+
+快照保存团队的配置和团队说明、预算、成员及其专属提示词、任务及依赖、未读消息、事件、原生会话记录、计划和用量明细，存在 daemon 的数据库里。快照 ID 是 UTC 时间加标签，例如 `20261103T081500-before-refactor`（标签里的特殊字符换成 `-`），同一秒内重复时加 `-2`、`-3`。命令、参数和 `--json` 字段与 ClawTeam 一致，`--json` 另外多出 `messageCount`、`planCount` 和恢复时的 `plans`、`members`。
+
+和 ClawTeam 的不同：
+
+- **一致性**：保存在一个事务里读取全部数据，Agent 在工作时保存也不会拿到一半的状态；恢复也在一个事务里先删后写，出错时什么都不改。
+- **运行中拒绝恢复**：团队有运行中的 Agent 时，`restore` 返回错误并列出这些 Agent，先用 `agent stop` 停掉它们。正在工作的 Agent 会继续改任务、收消息，覆盖到一半会让它们的状态和数据库对不上。ClawTeam 不检查。
+- **不保存**：Agent 进程记录、git worktree 和 harness 运行。它们对应的是进程和 git 里的状态，靠恢复数据库找不回来。
+- **团队删除后仍可恢复**：快照不随 `team cleanup` 删除，恢复时会重建团队。不再需要时用 `snapshot-delete` 删掉。
+- 由旧版本保存的快照可以在新版本恢复：只写回当前表结构里有的列，缺的列取默认值。

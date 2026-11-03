@@ -20,4 +20,12 @@ team-worker agent resume my-team alice --profile claude-deepseek   # 续接时�
 
 凭据只记环境变量名：`api_key_env` 和 `env_map` 的来源变量在启动时从调用 `spawn` 的环境读取，配置文件里不保存密钥本身。来源变量没有设置或为空时，对应的变量不会注入。
 
-命令一览：`preset list|show|set|set-client|copy|remove|remove-client|generate-profile|bootstrap`，`profile list|show|set|remove|test`。`set` 只修改给出的参数，`--env`、`--env-map`、`--arg` 会整体替换原有值。ClawTeam 的交互式 `profile wizard` 和 `profile doctor` 没有实现。
+命令一览：`preset list|show|set|set-client|copy|remove|remove-client|generate-profile|bootstrap`，`profile list|show|set|remove|test|wizard|doctor`。`set` 只修改给出的参数，`--env`、`--env-map`、`--arg` 会整体替换原有值。
+
+## 交互式创建与修复
+
+`team-worker profile wizard` 一步步问着生成运行配置，流程与 ClawTeam 相同：选快速或高级模式，选 CLI（内置适配器），选一个支持该 CLI 的预设或自定义端点，起名字；快速模式下沿用预设的推荐值，可以选择再改模型、端点和 Key 变量；高级模式还能改命令、额外参数、`env` 和 `env_map`。保存前显示预览，同名配置已存在时先确认是否覆盖。保存后，CLI 是 claude 时会问要不要运行 `profile doctor claude`，最后问要不要跑一次 `profile test`。
+
+问答逐行进行：菜单输入编号（直接回车选第一项），方括号里是默认值，回车沿用，列表类的问题输入 `-` 清空。提问写到 stderr，`--json` 时 stdout 只输出结果。输入结束（比如 Ctrl+D）时放弃，不保存。
+
+`team-worker profile doctor claude` 在 daemon 那台机器的 `~/.claude.json` 里设置 `hasCompletedOnboarding: true`，让接到其他端点的 Claude Code 启动时不再停在首次运行的登录和引导界面。文件里的其他内容和文件权限保持不变；文件不是合法的 JSON 时报错，不覆盖（ClawTeam 会把它换成只有这一项的新文件）。目前只支持 claude。

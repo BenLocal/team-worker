@@ -37,7 +37,7 @@
 
 - [x] 明确运行配置、端点预设与现有配置的关系及覆盖顺序：调用方环境 < 适配器 < profile < 模板与成员配置 < `spawn --env`；`spawn --dry-run` 列出每个变量来自哪一层。`spawn`、`launch` 和 `agent resume` 支持 `--profile`。
 - [x] 确定凭据引用方式：只记录环境变量名（`api_key_env`、`env_map`），启动时从调用方环境读取，配置文件和输出中不出现密钥值。
-- [x] 实现独立的运行配置与端点预设管理：`preset list/show/set/set-client/copy/remove/remove-client/generate-profile/bootstrap` 与 `profile list/show/set/remove/test`。交互式的 `profile wizard`、`profile doctor` 未实现。
+- [x] 实现独立的运行配置与端点预设管理：`preset list/show/set/set-client/copy/remove/remove-client/generate-profile/bootstrap` 与 `profile list/show/set/remove/test`；交互式 `profile wizard` 和 `profile doctor` 见第 12 项。
 
 ### 4. `cost`
 
@@ -88,7 +88,7 @@ ClawTeam 为每个 Agent 建独立分支（worktree），team-worker 的 spawn �
 
 ### 9. 团队快照
 
-- [ ] 实现 `team snapshot/snapshots/restore/snapshot-delete`：保存与恢复团队配置、任务、消息、会话、计划和费用；明确与在线 daemon 并发时的一致性。
+- [x] 实现 `team snapshot/snapshots/restore/snapshot-delete`：快照存在数据库的 `snapshots` 表（迁移 00015），保存团队配置与说明、预算、成员与提示词、任务与依赖、未读消息、事件、会话、计划和费用；不含进程记录、worktree 和 harness。保存和恢复各在一个事务里完成，daemon 在线时也一致；团队有运行中的 Agent 时拒绝恢复（409）。快照不随团队删除，可用来重建团队。用法见 `docs/collaboration.md`。
 
 ### 10. 事件 hook 与插件
 
@@ -104,13 +104,14 @@ team-worker 现有的 `hook` 子命令是给 Agent CLI 回调的，与 ClawTeam 
 ### 12. 配置与诊断
 
 - [x] 实现 `config health`：本地模式检查数据目录能否写入、数据库能否以读写方式打开、socket 权限是否为 0600、daemon 是否应答；远程模式检查服务地址、Key 和服务端是否应答。不会启动 daemon，发现问题时退出码为 1，`--json` 字段名与 ClawTeam 一致。
-- [ ] 实现 `config show/set/get`。
-- [ ] 实现交互式 `profile wizard` 和 `profile doctor`。
+- [x] 实现 `config show/set/get`：读写本机 `config.json` 的 `data_dir`、`user`、`server_url`、`workspace`、`default_profile`，来源标为 `env` / `file` / `default`，保留文件里的其他键。
+- [x] 实现交互式 `profile wizard`（标准库逐行问答，不新增依赖）和 `profile doctor claude`（经 API 在 daemon 机器上改 `~/.claude.json`，文件不是合法 JSON 时拒绝而不是覆盖）。
 
 ### 13. 其余命令
 
-- [ ] `run`：包装任意 CLI 并接入生命周期管理。
-- [ ] `board overview`（所有团队总览）、`board live`（终端内实时刷新的看板）、`board attach`（tmux 平铺查看全部 Agent）；`board update`、`board gource` 视需要再定。
+- [x] `run CLI [GOAL]`：spawn 的简写，团队（默认 `default`）不存在时以该 Agent 为 leader 创建；`--resume` 续接已有团队 leader 的会话。
+- [x] `board overview`（所有团队总览，一次查询）、`board live`（终端内定时重绘，`--json` 每次输出一行）、`board update`（兼容别名）。
+- [ ] 不做：`board attach`（只能在 daemon 机器上操作 tmux，与「CLI 不碰 tmux」冲突；Web 看板的 All terminals 已能同时看全部成员）、`board gource`（依赖本机 gource，需求不明确）。
 - [x] `session clear`：命令和 JSON 输出与 ClawTeam 一致，不带 `--agent` 时清除整个团队的会话；另有 `DELETE /v1/teams/{team}/sessions[/{name}]`。
-- [ ] `identity set`、`harness contracts`、`lifecycle check-zombies`（长时间运行的 Agent 告警）。带着 `in_progress` 任务停在输入框的成员已由 daemon 的卡住检测处理（提醒两次后报告 leader，见 `docs/agents.md`），`check-zombies` 只需覆盖一直在跑却不出活的情况。
+- [x] `identity set`（输出可直接 `eval` 的 export 语句）、`harness contracts`（列出名为 `sprint-contract-*` 的交付物）、`lifecycle check-zombies`（这一轮已运行超过 `--max-hours` 且进程存活的 Agent，附带 hook 上报的 activity；有则退出码为 1）。带着 `in_progress` 任务停在输入框的成员仍由 daemon 的卡住检测处理。
 - [ ] 不做或另行评估：ClawTeam 的 file / p2p transport 与 wsh 后端。team-worker 采用单 daemon + HTTP 远程，跨机器场景由远程 API 覆盖。

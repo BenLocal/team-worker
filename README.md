@@ -47,11 +47,19 @@ team-worker inbox watch my-team --agent leader   # 阻塞监听，服务重启�
 
 # Leader 等待全部任务完成
 team-worker task wait my-team --timeout 3600
+
+# 在当前 shell 里以某个身份操作（身份来自 TEAM_WORKER_* 变量）
+eval "$(team-worker identity set --agent-name alice --team my-team)"
+team-worker identity show
+
+# 本机配置：查看来源、读写 ~/.team-worker/config.json
+team-worker config show
+team-worker config set user ann
 ```
 
 所有命令都支持 `--json`。`task update` 把任务改为 `in_progress` 时，会以调用者身份加锁；其他 Agent 再领取同一任务会报锁冲突，加 `--force` 可强制接管。
 
-加入审批、计划审批、团队说明与成员提示词、用量与预算、阶段编排（harness）见 [docs/collaboration.md](docs/collaboration.md)。
+加入审批、计划审批、团队说明与成员提示词、用量与预算、阶段编排（harness）和团队快照（`team snapshot/snapshots/restore/snapshot-delete`）见 [docs/collaboration.md](docs/collaboration.md)。
 
 ## 启动 Agent
 
@@ -65,6 +73,8 @@ team-worker spawn tmux --team my-team -n dave --task-file task.md        # 较�
 team-worker agent list my-team            # 进程是否存活
 team-worker agent screen my-team alice    # 查看终端当前内容
 team-worker agent stop my-team alice      # 停止，手上的任务退回 pending
+team-worker lifecycle check-zombies my-team --max-hours 2   # 这一轮已运行超过 2 小时的 Agent，有则退出码为 1
+team-worker run claude "修复登录 bug"     # spawn 的简写：启动一个 Agent，团队（默认 default）不存在时以它为 leader 创建
 tmux attach -t team-worker-my-team        # 直接进入各 Agent 的窗口
 ```
 
@@ -80,6 +90,9 @@ tmux attach -t team-worker-my-team        # 直接进入各 Agent 的窗口
 
 ```bash
 team-worker board show my-team     # 终端里查看成员状态、任务和最近消息
+team-worker board live my-team     # 终端里每 2 秒刷新一次，Ctrl+C 退出（-i 改间隔）
+team-worker board overview         # 所有团队的 leader、成员数、任务数和未读消息数
+# board update 只为兼容 ClawTeam 保留：看板总是由任务和消息直接生成，不需要更新
 team-workerd --listen 127.0.0.1:8080 --board   # daemon 同时提供 Web 看板，浏览器打开 http://127.0.0.1:8080
 team-worker board serve -p 8080    # 另起一个看板进程，用于在别的机器上查看远程 daemon
 ```

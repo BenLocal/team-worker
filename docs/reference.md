@@ -17,10 +17,13 @@
 | `TEAM_WORKER_USER` | 多用户场景下的用户名，收件箱按 `<user>_<name>` 区分 | 配置文件中的 `user` |
 | `TEAM_WORKER_WORKSPACE_DIR` | spawn 为 Agent 设置的工作目录 | 由 spawn 设置 |
 | `TEAM_WORKER_WORKSPACE` | daemon 的工作区模式：`auto`、`always` 或 `never`，决定 spawn 是否给 Agent 建 git worktree（见 [workspaces.md](workspaces.md)） | 配置文件中的 `workspace`，否则 `auto` |
+| `TEAM_WORKER_DEFAULT_PROFILE` | daemon 在 spawn 没指定 `--profile` 时用的运行配置（见 [profiles.md](profiles.md)） | 配置文件中的 `default_profile` |
 | `TEAM_WORKER_NO_AUTOSTART` | 设为任意值时不自动拉起服务 | 未设置 |
 | `TEAM_WORKER_START_BLOCKED_FILE` | keepalive 在该文件移除后才启动子进程；Docker 用于等待 provider Key 配置 | 未设置 |
 
-配置文件固定为 `~/.team-worker/config.json`，可设置 `data_dir`、`user`、`server_url`、`workspace` 和 `remotes`（见下文「HTTP 远程调用」里的操作员模式）。`server_url` 会让本机所有命令都走远程，此时 API Key 由环境变量提供；服务端默认值保存在 SQLite。Unix socket 路径不能超过约 100 个字符；数据目录路径较长时，用 `TEAM_WORKER_SOCKET` 把 socket 放到短路径下。
+配置文件固定为 `~/.team-worker/config.json`，可设置 `data_dir`、`user`、`server_url`、`workspace`、`default_profile` 和 `remotes`（见下文「HTTP 远程调用」里的操作员模式）。`server_url` 会让本机所有命令都走远程，此时 API Key 由环境变量提供；服务端默认值保存在 SQLite。Unix socket 路径不能超过约 100 个字符；数据目录路径较长时，用 `TEAM_WORKER_SOCKET` 把 socket 放到短路径下。
+
+`team-worker config show|get|set` 读写本机这份配置文件里的 `data_dir`、`user`、`server_url`、`workspace` 和 `default_profile`，与 ClawTeam 的同名命令一致：`show` 列出每项的值和来源（`env` 表示来自环境变量、`file` 表示来自配置文件、`default` 表示默认值），`get KEY` 读一项，`set KEY VALUE` 写一项，`VALUE` 为空字符串时删除该项、恢复默认。环境变量优先于配置文件，所以设置了对应环境变量时，`set` 写入的值不生效。`set` 保留文件里的其他内容（`remotes`、`profiles`、`presets` 等），文件权限写为 600；`workspace` 只接受 `auto`、`always`、`never`。`workspace` 和 `default_profile` 由 daemon 读取，连远程服务时要在服务器上设置。
 
 ## 数据目录
 
@@ -135,6 +138,7 @@ team-workerd 记录这些事件：
 | `GET /v1/health` | 健康检查 |
 | `GET /v1/access-key` | 读取 CLI HTTP 与 Web 共用的 Key，仅限本地 socket |
 | `GET/POST /v1/teams` | 列出 / 创建团队 |
+| `GET /v1/overview` | 所有团队的概况：leader、成员数、任务数、未读消息数（`board overview` 用它） |
 | `GET/DELETE /v1/teams/{team}` | 团队详情 / 删除团队及其全部数据 |
 | `POST /v1/teams/{team}/members` | 添加成员 |
 | `GET/POST /v1/teams/{team}/join-requests` | 列出（`status`）/ 提交加入申请 |
@@ -169,6 +173,7 @@ team-workerd 记录这些事件：
 | `POST /v1/teams/{team}/costs/sync?agent=...` | 从 daemon 那台机器上的原生会话文件记录 token 用量 |
 | `POST /v1/launch` | 按模板建团队并启动全部成员（`model.LaunchRequest`；`templateText` 是客户端读出的模板文件内容） |
 | `GET/PUT /v1/profiles` | 读取 / 整体保存 daemon `config.json` 里的运行配置和端点预设（`profile`、`preset` 命令用它） |
+| `POST /v1/profile-doctor/{client}` | 在 daemon 机器上修复客户端的本地状态，目前只支持 `claude`：在 `~/.claude.json` 里设置 `hasCompletedOnboarding`，保留其他内容 |
 | `POST /v1/profiles/{name}/test` | 在 daemon 上用一句短提示运行一次该 profile（请求体 `prompt`、`cwd`），返回命令、退出码和输出 |
 | `POST/DELETE /v1/teams/{team}/harness/conduct` | 让 daemon 开始 / 停止调度团队正在进行的 harness 运行，停止不影响这一轮本身 |
 | `POST /v1/teams/{team}/agents/stop` | 批量保存团队的停止意图并返回进程记录 |
@@ -186,6 +191,9 @@ team-workerd 记录这些事件：
 | `POST /v1/teams/{team}/workspaces/{agent}/merge` | 全部试合并通过后合并回基准分支（`repo`、`target`、`noCleanup`）；拒绝时返回 `status: merge_failed` |
 | `POST /v1/teams/{team}/workspaces/import` | 登记 ClawTeam workspace registry（请求体 `file`，默认 daemon 机器上该团队的）里仍然存在的 worktree |
 | `POST /v1/teams/{team}/workspaces/cleanup` | 删除一个 Agent（`agent`）或整个团队的 worktree，保留有未合并提交的分支 |
+| `GET/POST /v1/teams/{team}/snapshots` | 列出团队的快照（新的在前）/ 保存一份快照（请求体可带 `tag`） |
+| `POST /v1/teams/{team}/snapshots/{id}/restore` | 用快照替换团队的状态（请求体 `dryRun` 为真时只返回数量）；团队有运行中的 Agent 时返回 409 |
+| `DELETE /v1/teams/{team}/snapshots/{id}` | 删除快照 |
 | `DELETE /v1/teams/{team}/sessions[/{name}]?user=...` | 删除一个 Agent 的会话，不带名字时删除整个团队的会话；返回 `{"cleared": N}` |
 | `GET/POST /v1/teams/{team}/costs` | 用量汇总和明细（`agent` 只筛选明细）/ 上报一次用量 |
 | `PUT /v1/teams/{team}/costs/sessions` | 记录一个原生会话的累计 token，按会话覆盖 |
