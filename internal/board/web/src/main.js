@@ -332,12 +332,7 @@ function teamRow({ t, b, at }) {
           ...(current ? [[open ? "Fold members" : "Unfold members", fold]] : []),
           ["Copy team name", () => copyText(t.name)],
         ]) }, icon(ICONS.more))),
-    open && b ? el("ul", { class: "people", id: "people-" + t.name, "aria-label": t.name + " members" },
-      // The team's shared instructions come first, as Magpie's library puts
-      // its instructions above the rest.
-      el("li", { class: "person-row" }, el("button", { type: "button", class: "person prompt-row", title: "Show the team's shared instructions",
-        onclick: (e) => openTeamPrompt(t.name, e.currentTarget) }, icon(ICONS.doc), el("span", { class: "pname" }, "Team prompt"))),
-      memberRows(t, b)) : null);
+    open && b && members.length ? el("ul", { class: "people", id: "people-" + t.name, "aria-label": t.name + " members" }, memberRows(t, b)) : null);
   // Dragging a team reorders it and switches to manual sorting, as in dsh.
   li.addEventListener("dragstart", (e) => { rail.drag = t.name; e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", t.name); });
   li.addEventListener("dragend", () => { rail.drag = null; state.keys.rail = ""; renderRail(); });
@@ -427,7 +422,8 @@ function renderLinks() {
 function renderHead(board) {
   if (!changed("head", board.team)) return;
   const name = board.team.name;
-  // The description is the name's tooltip; the team prompt is in the sidebar.
+  // The description is the name's tooltip; icons after the name copy it and
+  // open the team prompt.
   const copy = el("button", { type: "button", class: "icon-btn copy-name", title: "Copy team name", "aria-label": `Copy ${name}`,
     onclick: (e) => {
       const button = e.currentTarget;
@@ -435,7 +431,9 @@ function renderHead(board) {
       button.replaceChildren(icon(ICONS.check));
       setTimeout(() => button.replaceChildren(icon(ICONS.copy)), 1200);
     } }, icon(ICONS.copy));
-  $("head").replaceChildren(el("div", { class: "title-line" }, el("h1", { title: board.team.description || "" }, name), copy));
+  const prompt = el("button", { type: "button", class: "icon-btn copy-name", title: "Show the team prompt (shared instructions)",
+    "aria-label": `Show ${name}'s team prompt`, onclick: (e) => openTeamPrompt(name, e.currentTarget) }, icon(ICONS.doc));
+  $("head").replaceChildren(el("div", { class: "title-line" }, el("h1", { title: board.team.description || "" }, name), copy, prompt));
 }
 function renderStats(board) {
   const s = board.taskSummary;

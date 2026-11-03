@@ -107,7 +107,6 @@ button, input, select { font: inherit; color: inherit; }
   background: none; color: var(--ctl-fg); font-size: 12.5px; text-align: left; white-space: nowrap; cursor: pointer; }
 .person:hover { color: var(--fg); background: var(--pill); }
 .person .dot { width: 6px; height: 6px; }
-.person.prompt-row > svg { flex: none; width: 13px; height: 13px; margin-left: -3px; color: var(--muted); }
 .person .pname { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .person .lead { flex: none; font-size: 11px; color: var(--muted); }
 .person em { margin-left: auto; font-style: normal; font-size: 11px; color: var(--muted); }
