@@ -107,6 +107,7 @@ button, input, select { font: inherit; color: inherit; }
   background: none; color: var(--ctl-fg); font-size: 12.5px; text-align: left; white-space: nowrap; cursor: pointer; }
 .person:hover { color: var(--fg); background: var(--pill); }
 .person .dot { width: 6px; height: 6px; }
+.person.prompt-row > svg { flex: none; width: 13px; height: 13px; margin-left: -3px; color: var(--muted); }
 .person .pname { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .person .lead { flex: none; font-size: 11px; color: var(--muted); }
 .person em { margin-left: auto; font-style: normal; font-size: 11px; color: var(--muted); }
@@ -136,13 +137,13 @@ body.rail-collapsed .rail-toggle { margin: 0; }
 
 /* ---- main: header, view tabs, then one view ---- */
 main { height: 100vh; display: flex; flex-direction: column; min-width: 0; padding: 0 24px 16px; gap: 14px; }
-.head-row { display: flex; align-items: flex-end; gap: 18px; flex-wrap: wrap; }
+.head-row { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
 .head-row .head { flex: 1; min-width: 0; }
 .head { display: flex; align-items: flex-end; gap: 16px; flex-wrap: wrap; }
-.head h1 { font-size: 22px; font-weight: 600; line-height: 1.2; letter-spacing: -.015em; margin: 0; overflow-wrap: anywhere; }
-.head .desc { margin: 4px 0 0; color: var(--fg-2); max-width: 72ch; }
+.head h1 { font-size: 22px; font-weight: 600; line-height: 1.2; letter-spacing: -.015em; margin: 0; overflow-wrap: anywhere; cursor: default; }
+.title-line { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.copy-name { width: 24px; height: 24px; }
 .head .progress-text { margin-left: auto; text-align: right; color: var(--muted); }
-.head-prompt { flex: none; margin-bottom: 2px; }
 .head .progress-text strong { font-size: 20px; font-weight: 600; letter-spacing: -.02em; color: var(--fg); }
 /* the view switch: only the open view gets a thumb, as Magpie's header does */
 .views { display: inline-flex; gap: 2px; padding: 2px; border-radius: 8px; background: var(--pill); align-self: center; }
@@ -246,10 +247,10 @@ main { height: 100vh; display: flex; flex-direction: column; min-width: 0; paddi
 .term-tabs .dot { width: 6px; height: 6px; }
 .term-tabs .lead { font-size: 11px; color: var(--muted); font-weight: 400; }
 .term-tabs em { font-style: normal; font-size: 11px; font-weight: 600; color: var(--accent); }
-.terms { flex: 1; min-height: 0; overflow-y: auto; display: grid; gap: 14px; align-content: start;
+.terms { flex: 1; min-height: 0; overflow-y: auto; display: grid; gap: 14px; align-content: start; align-items: start;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 540px), 1fr)); grid-auto-rows: max-content; padding: 2px; }
 /* one terminal: the card fills the view and the terminal fills the card */
-.terms.solo { display: flex; flex-direction: column; overflow: hidden; }
+.terms.solo { display: flex; flex-direction: column; align-items: stretch; overflow: hidden; }
 .terms.solo .term-card { flex: 1; min-height: 0; }
 .term-card.solo .term-host { flex: 1; height: auto; min-height: 160px; }
 /* the only card is always the selected one; it needs no ring */

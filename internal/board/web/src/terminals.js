@@ -263,13 +263,31 @@ export class AgentTerminal {
     this.send({ type: "resize", cols, rows });
   }
 
+  // refit sizes the agent window to the card again, as when it connected:
+  // a card that changed layout (one terminal or the grid) would otherwise
+  // keep the window sized for the other.
+  refit() {
+    if (!this.terminal || this.historyTerminal) return;
+    clearTimeout(this.echoTimer);
+    this.paneSize = null;
+    this.host.style.height = "";
+    this.element.classList.remove("wide");
+    this.terminal.options.fontSize = 13;
+    this.fit();
+  }
+
   // setPaneSize adopts the agent window's size, so the whole window shows
   // even when a larger tmux client attached elsewhere decides that size.
   setPaneSize(cols, rows) {
     this.paneSize = { cols, rows };
     if (this.terminal.cols !== cols || this.terminal.rows !== rows) this.terminal.resize(cols, rows);
-    // Keep the viewer's client the window's size so tmux draws all of it.
-    this.send({ type: "resize", cols: Math.max(20, Math.min(400, cols)), rows: Math.max(5, Math.min(150, rows)) });
+    // Keep the viewer's client the window's size so tmux draws all of it,
+    // once that size holds: the daemon checks it every second, so just after
+    // this viewer asked for another size it may still report the old one,
+    // and echoing that would pin the window at it.
+    clearTimeout(this.echoTimer);
+    this.echoTimer = setTimeout(() => this.send({ type: "resize",
+      cols: Math.max(20, Math.min(400, cols)), rows: Math.max(5, Math.min(150, rows)) }), 1500);
     this.layout();
   }
 
@@ -367,6 +385,7 @@ export class AgentTerminal {
 
   disconnect() {
     this.generation++;
+    clearTimeout(this.echoTimer);
     this.closeHistory(false);
     clearTimeout(this.retryTimer);
     if (this.socket) { this.socket.onclose = null; this.socket.close(); this.socket = null; }

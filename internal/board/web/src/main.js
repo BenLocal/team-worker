@@ -109,6 +109,9 @@ const ICONS = {
   team: ["M6 7.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z", "M1.5 13.5c0-2.5 2-4 4.5-4s4.5 1.5 4.5 4", "M10.5 2.7a2.5 2.5 0 0 1 0 4.6", "M12 9.8c1.5.5 2.5 1.8 2.5 3.7"],
   view: ["M2 4h12", "M4.5 8h7", "M6.5 12h3"],
   more: ["M3.5 8h.01", "M8 8h.01", "M12.5 8h.01"],
+  copy: ["M5.5 5.5V3.5a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-2", "M2.5 6.5a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-6a1 1 0 0 1-1-1Z"],
+  check: ["m3 8.5 3 3 7-7"],
+  doc: ["M9 2H4.5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V5.5Z", "M9 2v3.5h3.5", "M5.5 8.5h5", "M5.5 11h3"],
   pin: ["M9.5 2.5 13.5 6.5", "M11.5 4.5 8 8l-3 .5 2.5 2.5L8 14l3.5-3.5", "m5.5 10.5-3 3"],
   external: ["M9 2.5h4.5V7", "M13.5 2.5 7.5 8.5", "M12 9.5V13a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V5.5a1 1 0 0 1 1-1H7"],
   key: ["M5 13.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z", "M6.8 9.2 13.5 2.5", "m11.5 4.5 1.5 1.5", "m9.5 6.5 1.5 1.5"],
@@ -310,8 +313,8 @@ function teamRow({ t, b, at }) {
     "data-team": t.name },
     el("div", { class: "team-row" },
       el("button", { type: "button", class: "team-tab", "aria-current": current ? "page" : null,
-        "aria-expanded": current && members.length ? String(open) : null, "aria-controls": open ? "people-" + t.name : null,
-        onclick: () => current ? (members.length && fold()) : selectTeam(t.name),
+        "aria-expanded": current ? String(open) : null, "aria-controls": open ? "people-" + t.name : null,
+        onclick: () => current ? fold() : selectTeam(t.name),
         title: [t.description, s && s.total ? `${s.completed} of ${s.total} tasks done${s.blocked ? `, ${s.blocked} blocked` : ""}` : "No tasks",
           running ? `${running} of ${members.length} members running` : `${t.memberCount} members`,
           at ? "Updated " + new Date(at).toLocaleString() : ""].filter(Boolean).join("\n") },
@@ -326,10 +329,15 @@ function teamRow({ t, b, at }) {
           ["Open board", () => { selectTeam(t.name); setView("board"); }],
           ["Open messages", () => { selectTeam(t.name); setView("messages"); }],
           ["Open terminals", () => { selectTeam(t.name); setView("terminals"); }],
-          ...(current && members.length ? [[open ? "Fold members" : "Unfold members", fold]] : []),
+          ...(current ? [[open ? "Fold members" : "Unfold members", fold]] : []),
           ["Copy team name", () => copyText(t.name)],
         ]) }, icon(ICONS.more))),
-    open && b && members.length ? el("ul", { class: "people", id: "people-" + t.name, "aria-label": t.name + " members" }, memberRows(t, b)) : null);
+    open && b ? el("ul", { class: "people", id: "people-" + t.name, "aria-label": t.name + " members" },
+      // The team's shared instructions come first, as Magpie's library puts
+      // its instructions above the rest.
+      el("li", { class: "person-row" }, el("button", { type: "button", class: "person prompt-row", title: "Show the team's shared instructions",
+        onclick: (e) => openTeamPrompt(t.name, e.currentTarget) }, icon(ICONS.doc), el("span", { class: "pname" }, "Team prompt"))),
+      memberRows(t, b)) : null);
   // Dragging a team reorders it and switches to manual sorting, as in dsh.
   li.addEventListener("dragstart", (e) => { rail.drag = t.name; e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", t.name); });
   li.addEventListener("dragend", () => { rail.drag = null; state.keys.rail = ""; renderRail(); });
@@ -418,10 +426,16 @@ function renderLinks() {
 /* ---------------- header + tasks ---------------- */
 function renderHead(board) {
   if (!changed("head", board.team)) return;
-  $("head").replaceChildren(
-    el("div", {}, el("h1", {}, board.team.name), board.team.description ? el("p", { class: "desc" }, board.team.description) : null),
-    el("button", { type: "button", class: "quiet-btn head-prompt", title: "Show the team's shared instructions",
-      onclick: (e) => openTeamPrompt(board.team.name, e.currentTarget) }, "Team prompt"));
+  const name = board.team.name;
+  // The description is the name's tooltip; the team prompt is in the sidebar.
+  const copy = el("button", { type: "button", class: "icon-btn copy-name", title: "Copy team name", "aria-label": `Copy ${name}`,
+    onclick: (e) => {
+      const button = e.currentTarget;
+      copyText(name);
+      button.replaceChildren(icon(ICONS.check));
+      setTimeout(() => button.replaceChildren(icon(ICONS.copy)), 1200);
+    } }, icon(ICONS.copy));
+  $("head").replaceChildren(el("div", { class: "title-line" }, el("h1", { title: board.team.description || "" }, name), copy));
 }
 function renderStats(board) {
   const s = board.taskSummary;
@@ -887,7 +901,13 @@ function setTermLayout(layout) {
   state.termLayout = layout;
   store(TERM_LAYOUT_KEY, layout);
   const board = state.boards[state.team];
-  if (board) renderTerminals(board);
+  if (!board) return;
+  const kept = [...terms.values()];
+  renderTerminals(board);
+  $("terms").scrollTop = 0;
+  // Terminals that stay connected are sized for the old layout; size them
+  // for their new cards once the layout has applied.
+  requestAnimationFrame(() => { for (const card of kept) if (terms.get(card.member.name) === card) card.refit(); });
 }
 function disposeTerminals() {
   for (const card of terms.values()) card.dispose();
