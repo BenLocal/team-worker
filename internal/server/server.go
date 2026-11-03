@@ -199,6 +199,10 @@ func (s *Server) routes() {
 	m.HandleFunc("PUT /v1/teams/{team}/sessions/{name}", s.saveSession)
 	m.HandleFunc("DELETE /v1/teams/{team}/sessions/{name}", s.clearSessions)
 	m.HandleFunc("DELETE /v1/teams/{team}/sessions", s.clearSessions)
+	m.HandleFunc("POST /v1/teams/{team}/snapshots", s.createSnapshot)
+	m.HandleFunc("GET /v1/teams/{team}/snapshots", s.listSnapshots)
+	m.HandleFunc("POST /v1/teams/{team}/snapshots/{id}/restore", s.restoreSnapshot)
+	m.HandleFunc("DELETE /v1/teams/{team}/snapshots/{id}", s.deleteSnapshot)
 
 	m.HandleFunc("POST /v1/teams/{team}/messages", s.send)
 	m.HandleFunc("POST /v1/teams/{team}/broadcast", s.broadcast)

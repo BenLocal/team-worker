@@ -19,6 +19,7 @@ func (a *app) teamCmd() *cobra.Command {
 	cmd.AddCommand(a.teamSpawnCmd(), a.teamAddMemberCmd(), a.teamDiscoverCmd(), a.teamStatusCmd(),
 		a.teamCleanupCmd(), a.teamPromptCmd(), a.teamReposCmd())
 	cmd.AddCommand(a.joinCmds()...)
+	cmd.AddCommand(a.snapshotCmds()...)
 	return cmd
 }
 
