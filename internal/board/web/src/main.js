@@ -1,5 +1,4 @@
 import "@fontsource-variable/jetbrains-mono";
-import "@fontsource-variable/fraunces/opsz-italic.css";
 import "./style.css";
 import { AgentTerminal, selectCard, setBoardHost } from "./terminals.js";
 import { openMemberPrompt, openTeamPrompt } from "./prompt-dialog.js";

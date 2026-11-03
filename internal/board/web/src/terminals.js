@@ -6,7 +6,8 @@ import { openMemberPrompt } from "./prompt-dialog.js";
 
 let Terminal, FitAddon;
 
-const THEME = { background: "#0b0f15", foreground: "#e8e0cc", cursor: "#e8c47e" };
+// Magpie's dark surface and accent; the terminal is dark in either page theme.
+const THEME = { background: "#1a1a1e", foreground: "#ededf1", cursor: "#a5b4fc" };
 const FONT = '"JetBrains Mono Variable", "JetBrains Mono", ui-monospace, Menlo, monospace';
 let ready = null;
 export const initTerminals = () => (ready ??= import("ghostty-web").then(async (mod) => {
