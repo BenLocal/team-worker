@@ -419,8 +419,7 @@ func (a *app) profileCmd() *cobra.Command {
 		Long: "A profile names an agent command, model, endpoint and credential variables. spawn and\n" +
 			"launch use --profile NAME, else default_profile (or TEAM_WORKER_DEFAULT_PROFILE), else the\n" +
 			"only profile; an explicit agent command after -- means no implicit profile. Credentials\n" +
-			"are environment variable names read from the caller at spawn time, never stored values.\n" +
-			"ClawTeam's interactive `profile wizard` and `profile doctor` are not provided."}
+			"are environment variable names read from the caller at spawn time, never stored values."}
 	cmd.AddCommand(&cobra.Command{
 		Use: "list", Short: "List profiles", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -541,7 +540,27 @@ func (a *app) profileCmd() *cobra.Command {
 			})
 			return nil
 		},
-	}, test)
+	}, test, a.profileWizardCmd(), &cobra.Command{
+		Use: "doctor CLIENT", Short: "Repair a client's local state on the daemon's machine (supported: claude)",
+		Long: "doctor claude sets hasCompletedOnboarding in ~/.claude.json on the daemon's machine, so\n" +
+			"Claude Code pointed at another endpoint starts without its first-run screens. Other keys\n" +
+			"of the file are kept; a file that is not valid JSON is left alone and reported.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			res, err := a.client().ProfileDoctor(cmd.Context(), args[0])
+			if err != nil {
+				return a.fail(err)
+			}
+			a.emit(res, func(w io.Writer) {
+				action := "Updated"
+				if res.Created {
+					action = "Created"
+				}
+				fmt.Fprintf(w, "OK %s Claude state at '%s' with hasCompletedOnboarding=true\n", action, res.Path)
+			})
+			return nil
+		},
+	})
 	return cmd
 }
 

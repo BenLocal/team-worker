@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"os"
 
 	"github.com/benlocal/team-worker/internal/config"
 	"github.com/benlocal/team-worker/internal/profile"
@@ -37,5 +38,20 @@ func (s *Server) testProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res, err := runner.TestProfile(r.Context(), r.PathValue("name"), in.Prompt, in.Cwd)
+	respondRun(w, res, err)
+}
+
+// profileDoctor repairs a client's state on the daemon's machine, where the
+// agents run.
+func (s *Server) profileDoctor(w http.ResponseWriter, r *http.Request) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		respondRun(w, nil, err)
+		return
+	}
+	res, err := profile.Doctor(home, r.PathValue("client"))
+	if err == nil {
+		s.log.Info("profile doctor", "client", res.Client, "path", res.Path, "created", res.Created)
+	}
 	respondRun(w, res, err)
 }

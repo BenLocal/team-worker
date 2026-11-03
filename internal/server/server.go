@@ -177,6 +177,7 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /v1/profiles", s.getProfiles)
 	m.HandleFunc("PUT /v1/profiles", s.saveProfiles)
 	m.HandleFunc("POST /v1/profiles/{name}/test", s.testProfile)
+	m.HandleFunc("POST /v1/profile-doctor/{client}", s.profileDoctor)
 	m.HandleFunc("POST /v1/teams/{team}/harness/conduct", s.startConducting)
 	m.HandleFunc("DELETE /v1/teams/{team}/harness/conduct", s.stopConducting)
 	m.HandleFunc("POST /v1/teams/{team}/agents/{name}/activity", s.agentActivity)

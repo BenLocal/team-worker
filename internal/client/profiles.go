@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"net/http"
+	"net/url"
 
 	"github.com/benlocal/team-worker/internal/model"
 	"github.com/benlocal/team-worker/internal/profile"
@@ -25,4 +26,11 @@ func (c *Client) TestProfile(ctx context.Context, name, prompt, cwd string) (mod
 	var out model.ProfileTest
 	body := map[string]string{"prompt": prompt, "cwd": cwd}
 	return out, c.do(ctx, http.MethodPost, "/v1/profiles/"+name+"/test", nil, body, &out)
+}
+
+// ProfileDoctor has the daemon repair a client's local state, e.g. mark
+// Claude Code's onboarding complete.
+func (c *Client) ProfileDoctor(ctx context.Context, client string) (profile.DoctorResult, error) {
+	var out profile.DoctorResult
+	return out, c.do(ctx, http.MethodPost, "/v1/profile-doctor/"+url.PathEscape(client), nil, nil, &out)
 }
