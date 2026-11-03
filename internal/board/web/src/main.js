@@ -1,6 +1,6 @@
 import "@fontsource-variable/jetbrains-mono";
 import "./style.css";
-import { AgentTerminal, selectCard, setBoardHost } from "./terminals.js";
+import { AgentTerminal, describe, selectCard, setBoardHost } from "./terminals.js";
 import { openMemberPrompt, openTeamPrompt } from "./prompt-dialog.js";
 import { openServiceKeys } from "./service-keys.js";
 
@@ -11,6 +11,7 @@ const PRIORITY = { urgent: 0, high: 1, medium: 2, low: 3 };
 const DONE_PAGE = 15, MSG_PAGE = 60, GAP_MS = 10 * 60 * 1000, LANE_H = 14;
 const VIEWS = [["board", "Board"], ["messages", "Messages"], ["approvals", "Approvals"], ["terminals", "Terminals"]];
 const RAIL_KEY = "team-worker.rail";
+const TERM_LAYOUT_KEY = "team-worker.terminals";
 
 // Storage can be unavailable (private windows, blocked site data); the rail then just starts open.
 function stored(key) { try { return localStorage.getItem(key); } catch { return null; } }
@@ -23,6 +24,9 @@ const state = {
   doneShown: DONE_PAGE, open: new Set(), oversight: {}, openPlans: new Set(),
   msgShown: MSG_PAGE, range: null, selected: null, follow: true,
   keys: {}, links: [],
+  // Terminals show one member at a time unless the grid was chosen; the
+  // member shown is remembered per team.
+  termLayout: stored(TERM_LAYOUT_KEY) === "grid" ? "grid" : "single", termAgent: {},
 };
 const terms = new Map();
 
@@ -264,7 +268,7 @@ function memberRows(t, b) {
         title: [`${m.name}: ${leader ? "leader, " : ""}${label}`, m.agent ? "Show the terminal" : "", when].filter(Boolean).join("\n") },
         el("span", { class: "dot " + cls, "aria-hidden": "true" }),
         el("span", { class: "pname" }, m.name),
-        leader ? el("span", { class: "lead" }, "leader") : null,
+        leader && m.name !== "leader" ? el("span", { class: "lead" }, "leader") : null,
         m.inboxCount ? el("em", { class: "up", title: `${m.inboxCount} unread messages` }, String(m.inboxCount))
           : el("em", {}, ago(at))),
       el("button", { type: "button", class: "row-more menu-trigger", "aria-label": `${m.name} actions`, "aria-haspopup": "menu",
@@ -393,10 +397,8 @@ function buildMain() {
     el("div", { class: "view", id: "view-approvals", role: "tabpanel", "aria-labelledby": "tab-approvals", hidden: state.view !== "approvals" },
       el("div", { class: "approvals", id: "approvals" })),
     el("div", { class: "view", id: "view-terminals", role: "tabpanel", "aria-labelledby": "tab-terminals", hidden: state.view !== "terminals" },
-      el("div", { class: "terms", id: "terms" },
-        el("p", { class: "intro" }, "Click a terminal to select it: the mouse wheel then scrolls that terminal, otherwise it scrolls this list. "
-          + "Scroll up or choose History to read earlier output, and Back to live to return. Take control to type, paste or press Ctrl+C. "
-          + "Closing this page leaves the agents running."))));
+      el("div", { class: "term-bar", id: "term-bar" }),
+      el("div", { class: "terms", id: "terms" })));
   bindOverview();
   renderLinks();
 }
@@ -825,10 +827,22 @@ function setView(view) {
   writeURL();
   update();
 }
+// currentTermAgent is the member the single view shows: the one chosen for
+// this team, else the first with a live terminal, else the first.
+function currentTermAgent(board) {
+  const chosen = state.termAgent[state.team];
+  if (board.members.some((m) => m.name === chosen)) return chosen;
+  return (board.members.find((m) => describe(m).live) || board.members[0])?.name || "";
+}
 function renderTerminals(board) {
-  const names = new Set(board.members.map((m) => m.name));
-  for (const [name, card] of terms) if (!names.has(name)) { card.dispose(); terms.delete(name); }
+  const single = state.termLayout === "single";
+  const current = currentTermAgent(board);
+  // The single view keeps only the shown member's terminal: the others
+  // would hold WebSockets and tmux viewers nobody sees.
+  const wanted = new Set(board.members.filter((m) => !single || m.name === current).map((m) => m.name));
+  for (const [name, card] of terms) if (!wanted.has(name)) { card.dispose(); terms.delete(name); }
   for (const m of board.members) {
+    if (!wanted.has(m.name)) continue;
     const member = { ...m, leader: m.agentId === board.team.leadAgentId };
     const tasks = board.tasks.filter((t) => t.status === "in_progress" && t.owner === m.name).map((t) => t.subject);
     if (terms.has(m.name)) terms.get(m.name).update(member, tasks);
@@ -837,7 +851,43 @@ function renderTerminals(board) {
       terms.set(m.name, card);
       $("terms").append(card.element);
     }
+    const card = terms.get(m.name);
+    card.element.classList.toggle("solo", single);
+    if (single) selectCard(card);
   }
+  // Cards keep the members' order when the grid fills in around the one shown.
+  const order = board.members.filter((m) => terms.has(m.name)).map((m) => terms.get(m.name).element);
+  if (order.some((node, i) => $("terms").children[i] !== node)) $("terms").append(...order);
+  $("terms").classList.toggle("solo", single);
+  renderTermBar(board, current);
+}
+function renderTermBar(board, current) {
+  const single = state.termLayout === "single";
+  if (!changed("term-bar", [single, current, board.members.map((m) => [m.name, agentState(m)[0], m.inboxCount])])) return;
+  const layout = el("div", { class: "views term-layout", role: "tablist", "aria-label": "Terminal layout" },
+    [["single", "Single"], ["grid", "All"]].map(([v, label]) => el("button", { type: "button", role: "tab",
+      "aria-selected": String(state.termLayout === v), onclick: () => setTermLayout(v) }, label)));
+  const lead = board.team.leadAgentId;
+  $("term-bar").replaceChildren(single
+    ? el("div", { class: "term-tabs", role: "tablist", "aria-label": "Members" }, board.members.map((m) => {
+      const [cls, label] = agentState(m);
+      return el("button", { type: "button", role: "tab", "aria-selected": String(m.name === current),
+        title: `${m.name}: ${label}`, onclick: () => showTerminal(state.team, m.name) },
+      el("span", { class: "dot " + cls, "aria-hidden": "true" }), el("span", {}, m.name),
+      m.agentId === lead && m.name !== "leader" ? el("span", { class: "lead" }, "leader") : null,
+      m.inboxCount ? el("em", { title: `${m.inboxCount} unread messages` }, String(m.inboxCount)) : null);
+    }))
+    : el("p", { class: "intro" }, "Click a terminal to select it: the mouse wheel then scrolls that terminal, otherwise it scrolls this list. "
+      + "Scroll up or choose History to read earlier output, and Back to live to return. Take control to type, paste or press Ctrl+C. "
+      + "Closing this page leaves the agents running."),
+    layout);
+}
+function setTermLayout(layout) {
+  if (state.termLayout === layout) return;
+  state.termLayout = layout;
+  store(TERM_LAYOUT_KEY, layout);
+  const board = state.boards[state.team];
+  if (board) renderTerminals(board);
 }
 function disposeTerminals() {
   for (const card of terms.values()) card.dispose();
@@ -845,7 +895,10 @@ function disposeTerminals() {
 }
 function showTerminal(team, name) {
   selectTeam(team);
+  state.termAgent[team] = name;
   setView("terminals");
+  const board = state.boards[team];
+  if (board) renderTerminals(board);
   const card = terms.get(name);
   if (card) { selectCard(card); card.element.scrollIntoView({ block: "nearest" }); }
 }

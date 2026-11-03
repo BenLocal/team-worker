@@ -232,9 +232,29 @@ main { height: 100vh; display: flex; flex-direction: column; min-width: 0; paddi
 .notice.error { border-color: color-mix(in srgb, var(--red) 40%, var(--line)); background: var(--red-soft); color: var(--red); }
 
 /* ---- live terminals ---- */
+/* the bar: the members as tabs (one terminal shown) or a note (all shown),
+   then the layout switch */
+.term-bar { display: flex; align-items: center; gap: 12px; min-width: 0; flex: none; }
+.term-bar .intro { flex: 1; margin: 0; color: var(--muted); font-size: 12px; max-width: 110ch; }
+.term-layout { margin-left: auto; flex: none; }
+.term-tabs { display: flex; gap: 2px; padding: 2px; border-radius: 8px; background: var(--pill); min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.term-tabs::-webkit-scrollbar { display: none; }
+.term-tabs button { flex: none; display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 11px; border: 0;
+  border-radius: 6px; background: none; color: var(--ctl-fg); font-size: 12.5px; white-space: nowrap; cursor: pointer; }
+.term-tabs button:hover:not([aria-selected="true"]) { color: var(--fg); }
+.term-tabs button[aria-selected="true"] { background: var(--seg-thumb); box-shadow: var(--seg-edge); color: var(--fg); font-weight: 500; }
+.term-tabs .dot { width: 6px; height: 6px; }
+.term-tabs .lead { font-size: 11px; color: var(--muted); font-weight: 400; }
+.term-tabs em { font-style: normal; font-size: 11px; font-weight: 600; color: var(--accent); }
 .terms { flex: 1; min-height: 0; overflow-y: auto; display: grid; gap: 14px; align-content: start;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 540px), 1fr)); grid-auto-rows: max-content; padding: 2px; }
-.terms .intro { grid-column: 1 / -1; margin: 0; color: var(--muted); max-width: 90ch; }
+/* one terminal: the card fills the view and the terminal fills the card */
+.terms.solo { display: flex; flex-direction: column; overflow: hidden; }
+.terms.solo .term-card { flex: 1; min-height: 0; }
+.term-card.solo .term-host { flex: 1; height: auto; min-height: 160px; }
+/* the only card is always the selected one; it needs no ring */
+.term-card.solo.selected { box-shadow: none; }
+.term-card.solo.offline .term-host { flex: 1; }
 /* the card is the page's; the terminal inside it stays dark */
 .term-card { display: flex; flex-direction: column; min-width: 0; background: var(--card); color: var(--fg);
   border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }

@@ -274,11 +274,13 @@ export class AgentTerminal {
   }
 
   // layout picks the largest font that fits the window's columns into the
-  // card, and lets the card grow to the window's rows; full screen fits both.
+  // card, and lets the card grow to the window's rows; full screen and the
+  // single-terminal view fit both.
   layout() {
     const canvas = this.liveHost?.querySelector("canvas");
-    if (!canvas || !this.paneSize || this.historyTerminal) return;
-    const full = document.fullscreenElement === this.element;
+    if (!canvas || !this.paneSize || this.historyTerminal || !this.host.clientWidth) return;
+    const screen = document.fullscreenElement === this.element;
+    const full = screen || this.element.classList.contains("solo");
     // A window too wide to read in the card at 9px takes the whole grid row;
     // it returns to one column once the window fits again.
     const readable = this.paneSize.cols * 0.6 * 9;
