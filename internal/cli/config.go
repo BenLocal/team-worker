@@ -16,7 +16,53 @@ import (
 )
 
 func (a *app) configCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "config", Short: "Inspect the team-worker configuration"}
+	cmd := &cobra.Command{Use: "config", Short: "Inspect the team-worker configuration",
+		Long: "show, get and set read and write ~/.team-worker/config.json on this machine. An environment\n" +
+			"variable overrides the file. workspace and default_profile are read by the daemon, so with a\n" +
+			"remote server they must be set on the server's machine."}
+	cmd.AddCommand(&cobra.Command{Use: "show", Short: "Show every setting, its value and where it comes from", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			keys := config.Keys()
+			out := map[string]configValue{}
+			for _, k := range keys {
+				v, src, err := config.Effective(k.Name)
+				if err != nil {
+					return a.fail(err)
+				}
+				out[k.Name] = configValue{Value: v, Source: src}
+			}
+			a.emit(out, func(w io.Writer) {
+				tw := newTable(w, "KEY", "VALUE", "SOURCE")
+				for _, k := range keys {
+					v := out[k.Name]
+					row(tw, k.Name, orEmpty(v.Value), v.Source)
+				}
+				tw.Flush()
+			})
+			return nil
+		}},
+		&cobra.Command{Use: "get KEY", Short: "Print the effective value of a setting", Args: cobra.ExactArgs(1),
+			RunE: func(cmd *cobra.Command, args []string) error {
+				v, src, err := config.Effective(args[0])
+				if err != nil {
+					return a.fail(err)
+				}
+				a.emit(map[string]string{"key": args[0], "value": v, "source": src}, func(w io.Writer) {
+					fmt.Fprintf(w, "%s = %s  (%s)\n", args[0], orEmpty(v), src)
+				})
+				return nil
+			}},
+		&cobra.Command{Use: "set KEY VALUE", Short: "Save a setting to config.json; an empty VALUE removes it",
+			Args: cobra.ExactArgs(2),
+			RunE: func(cmd *cobra.Command, args []string) error {
+				if err := config.Set(args[0], args[1]); err != nil {
+					return a.fail(err)
+				}
+				a.emit(map[string]string{"status": "saved", "key": args[0], "value": args[1]}, func(w io.Writer) {
+					fmt.Fprintf(w, "OK %s = %s\n", args[0], orEmpty(args[1]))
+				})
+				return nil
+			}})
 	cmd.AddCommand(&cobra.Command{Use: "health", Short: "Check the data directory, socket, daemon or remote server",
 		Long: "Checks what the CLI depends on: in local mode the data directory, database and socket and\n" +
 			"whether the daemon answers; in remote mode the server URL, API key and whether the server\n" +
@@ -30,6 +76,19 @@ func (a *app) configCmd() *cobra.Command {
 			return nil
 		}})
 	return cmd
+}
+
+// configValue is one setting in `config show --json`, as in ClawTeam.
+type configValue struct {
+	Value  string `json:"value"`
+	Source string `json:"source"`
+}
+
+func orEmpty(v string) string {
+	if v == "" {
+		return "(empty)"
+	}
+	return v
 }
 
 // health is the result of config health. Field names follow ClawTeam's

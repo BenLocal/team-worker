@@ -15,6 +15,8 @@ import (
 	"slices"
 	"sort"
 	"strings"
+
+	"github.com/benlocal/team-worker/internal/config"
 )
 
 // Profile is one way to start an agent CLI.
@@ -103,7 +105,7 @@ func (p Preset) Clone() Preset {
 
 // Load reads the profile keys of the config file; a missing file is empty.
 func Load(path string) (Config, error) {
-	raw, err := readRaw(path)
+	raw, err := config.ReadRaw(path)
 	if err != nil {
 		return Config{}, err
 	}
@@ -141,7 +143,7 @@ func Load(path string) (Config, error) {
 // Save writes the profile keys back atomically, keeping every other key of
 // the config file (data_dir, user, server_url, …) as it was.
 func Save(path string, c Config) error {
-	raw, err := readRaw(path)
+	raw, err := config.ReadRaw(path)
 	if err != nil {
 		return err
 	}
@@ -170,50 +172,7 @@ func Save(path string, c Config) error {
 	if err := set("default_profile", c.DefaultProfile); err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(raw, "", "  ")
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".config-*.json")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmp.Name())
-	if _, err := tmp.Write(append(data, '\n')); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Chmod(tmp.Name(), 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp.Name(), path)
-}
-
-func readRaw(path string) (map[string]json.RawMessage, error) {
-	raw := map[string]json.RawMessage{}
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return raw, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	if len(strings.TrimSpace(string(data))) == 0 {
-		return raw, nil
-	}
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil, fmt.Errorf("%s is not a JSON object: %w", path, err)
-	}
-	if raw == nil {
-		raw = map[string]json.RawMessage{}
-	}
-	return raw, nil
+	return config.WriteRaw(path, raw)
 }
 
 // Resolve picks the profile a spawn uses: an explicit name; none when an

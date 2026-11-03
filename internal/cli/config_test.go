@@ -117,3 +117,69 @@ func TestHealthRemoteNeedsAPIKey(t *testing.T) {
 		t.Fatalf("health printed the API key: %s", out)
 	}
 }
+
+func TestConfigSetGetShow(t *testing.T) {
+	h := newHarness(t)
+	path := filepath.Join(os.Getenv("HOME"), ".team-worker", "config.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"remotes":{"prod":{"server_url":"http://x","api_key":"k"}},"profiles":{"p":{"agent":"claude"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var got map[string]string
+	h.json(&got, "config", "get", "user")
+	if got["value"] != "" || got["source"] != "default" {
+		t.Fatalf("unset user: %v", got)
+	}
+	if out, ok := h.run("config", "set", "user", "ann"); !ok || !strings.Contains(out, "user = ann") {
+		t.Fatalf("set: %v %s", ok, out)
+	}
+	h.json(&got, "config", "get", "user")
+	if got["value"] != "ann" || got["source"] != "file" {
+		t.Fatalf("saved user: %v", got)
+	}
+
+	var show map[string]configValue
+	h.json(&show, "config", "show")
+	if show["user"] != (configValue{"ann", "file"}) || show["workspace"] != (configValue{"never", "env"}) ||
+		show["data_dir"].Source != "env" || show["server_url"] != (configValue{"", "default"}) {
+		t.Fatalf("show: %+v", show)
+	}
+
+	// Other keys of the file survive, and an empty value removes the key.
+	if _, ok := h.run("config", "set", "user", ""); !ok {
+		t.Fatal("clearing user failed")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := raw["user"]; ok || raw["remotes"] == nil || raw["profiles"] == nil {
+		t.Fatalf("file after clearing user: %s", data)
+	}
+	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("config.json mode: %v %v", info, err)
+	}
+}
+
+func TestConfigRejectsUnknownKeyAndBadValue(t *testing.T) {
+	h := newHarness(t)
+	for _, args := range [][]string{
+		{"config", "get", "nope"},
+		{"config", "set", "nope", "x"},
+		{"config", "set", "workspace", "sometimes"},
+	} {
+		if out, ok := h.run(args...); ok {
+			t.Fatalf("%v succeeded: %s", args, out)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(os.Getenv("HOME"), ".team-worker", "config.json")); !os.IsNotExist(err) {
+		t.Fatalf("a rejected set must not write the file: %v", err)
+	}
+}
