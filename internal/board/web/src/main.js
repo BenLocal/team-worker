@@ -79,7 +79,7 @@ function changed(region, value) {
 }
 
 /* ---------------- rail: teams and members, operated like dsh's Workspaces ---------------- */
-const MEMBER_PAGE = 5;
+const MEMBER_PAGE = 12;
 const RAIL_PREFS = "team-worker.rail.prefs";
 const rail = (() => {
   let saved = {};
@@ -95,8 +95,6 @@ const rail = (() => {
 function saveRail() {
   store(RAIL_PREFS, JSON.stringify({ sort: rail.sort, order: rail.order, pins: [...rail.pins], folded: [...rail.folded] }));
 }
-const chevron = () => { const s = svg("svg", { width: 10, height: 10, viewBox: "0 0 10 10", "aria-hidden": "true" });
-  s.append(svg("path", { d: "M3 1.5 6.5 5 3 8.5", fill: "none", stroke: "currentColor", "stroke-width": 1.6 })); return s; };
 function icon(paths) {
   const s = svg("svg", { width: 14, height: 14, viewBox: "0 0 16 16", "aria-hidden": "true", fill: "none", stroke: "currentColor", "stroke-width": 1.4 });
   for (const d of paths) s.append(svg("path", { d }));
@@ -104,6 +102,7 @@ function icon(paths) {
 }
 const ICONS = {
   search: ["M7 12.5a5.5 5.5 0 1 0 0-11 5.5 5.5 0 0 0 0 11Z", "m11 11 3.5 3.5"],
+  team: ["M6 7.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z", "M1.5 13.5c0-2.5 2-4 4.5-4s4.5 1.5 4.5 4", "M10.5 2.7a2.5 2.5 0 0 1 0 4.6", "M12 9.8c1.5.5 2.5 1.8 2.5 3.7"],
   view: ["M2 4h12", "M4.5 8h7", "M6.5 12h3"],
   more: ["M3.5 8h.01", "M8 8h.01", "M12.5 8h.01"],
   pin: ["M9.5 2.5 13.5 6.5", "M11.5 4.5 8 8l-3 .5 2.5 2.5L8 14l3.5-3.5", "m5.5 10.5-3 3"],
@@ -257,13 +256,17 @@ function memberRows(t, b) {
     const [cls, label] = agentState(m);
     const leader = m.agentId === b.team.leadAgentId;
     const at = memberActivity(b, m.name);
+    const when = at ? "Last message " + new Date(at).toLocaleString() : "";
+    // One line per member, as the sub-rows under Magpie's open page: the
+    // state as a dot, unread messages or the last activity at the end.
     return el("li", { class: "person-row" },
-      el("button", { type: "button", class: "person", title: m.agent ? `Show ${m.name}'s terminal` : `${m.name} has not been started`,
-        onclick: () => showTerminal(t.name, m.name) },
+      el("button", { type: "button", class: "person", onclick: () => showTerminal(t.name, m.name),
+        title: [`${m.name}: ${leader ? "leader, " : ""}${label}`, m.agent ? "Show the terminal" : "", when].filter(Boolean).join("\n") },
         el("span", { class: "dot " + cls, "aria-hidden": "true" }),
-        el("span", { class: "who" }, el("span", { class: "pname" }, m.name), el("span", { class: "role" }, (leader ? "Leader, " : "") + label)),
-        m.inboxCount ? el("span", { class: "unread", title: `${m.inboxCount} unread messages` }, String(m.inboxCount))
-          : el("span", { class: "when", title: at ? "Last message " + new Date(at).toLocaleString() : "" }, ago(at))),
+        el("span", { class: "pname" }, m.name),
+        leader ? el("span", { class: "lead" }, "leader") : null,
+        m.inboxCount ? el("em", { class: "up", title: `${m.inboxCount} unread messages` }, String(m.inboxCount))
+          : el("em", {}, ago(at))),
       el("button", { type: "button", class: "row-more menu-trigger", "aria-label": `${m.name} actions`, "aria-haspopup": "menu",
         onclick: (e) => {
           // The menu is removed before its action runs, so keep the trigger
@@ -291,41 +294,35 @@ function memberRows(t, b) {
 function teamRow({ t, b, at }) {
   const s = b && b.taskSummary;
   const current = t.name === state.team;
-  const open = !rail.folded.has(t.name);
   const members = b ? b.members : [];
+  // As in Magpie's sidebar, only the open team shows its members, under it;
+  // clicking the open team folds or unfolds them.
+  const open = current && !rail.folded.has(t.name);
   const running = members.filter((m) => ["alive", "attention", "remote"].includes(agentState(m)[0])).length;
   const pinned = rail.pins.has(t.name);
-  const strip = el("div", { class: "strip", "aria-hidden": "true" });
-  if (s && s.total) {
-    for (const [cls, n] of [["done", s.completed], ["progress", s.in_progress], ["blocked", s.blocked], ["pending", s.pending]]) {
-      if (n) strip.append(el("span", { class: cls, style: `width:${(n / s.total) * 100}%` }));
-    }
-  }
-  const fold = () => { open ? rail.folded.add(t.name) : rail.folded.delete(t.name); delete rail.shown[t.name]; saveRail(); renderRail(); };
+  const tone = teamTone(s);
+  const fold = () => { rail.folded.has(t.name) ? rail.folded.delete(t.name) : rail.folded.add(t.name); delete rail.shown[t.name]; saveRail(); renderRail(); };
   const li = el("li", { class: "team" + (current ? " current" : "") + (rail.drag === t.name ? " dragging" : ""), draggable: "true",
     "data-team": t.name },
     el("div", { class: "team-row" },
-      members.length ? el("button", { type: "button", class: "toggle", "aria-expanded": String(open),
-        "aria-controls": "people-" + t.name, "aria-label": (open ? "Fold " : "Unfold ") + t.name, onclick: fold }, chevron())
-        : el("span", { class: "toggle-space" }),
-      el("button", { type: "button", class: "team-tab", "aria-current": current ? "page" : null, onclick: () => selectTeam(t.name),
-        title: [t.description, s && s.total ? `${s.completed} of ${s.total} tasks done` : "", at ? "Updated " + new Date(at).toLocaleString() : ""].filter(Boolean).join("\n") },
-        el("div", { class: "name-line" }, el("span", { class: "name" }, t.name),
-          pinned ? el("span", { class: "pin", title: "Pinned" }, icon(ICONS.pin)) : null,
-          teamTone(s) ? el("span", { class: "dot " + teamTone(s), "aria-hidden": "true" }) : null,
-          el("span", { class: "when" }, ago(at))),
-        t.description ? el("div", { class: "desc" }, t.description) : null,
-        strip,
-        el("div", { class: "facts" },
-          el("span", {}, s ? (s.total ? `${s.completed} of ${s.total} done` : "No tasks") : ""),
-          el("span", {}, running ? `${running} running` : `${t.memberCount} members`))),
+      el("button", { type: "button", class: "team-tab", "aria-current": current ? "page" : null,
+        "aria-expanded": current && members.length ? String(open) : null, "aria-controls": open ? "people-" + t.name : null,
+        onclick: () => current ? (members.length && fold()) : selectTeam(t.name),
+        title: [t.description, s && s.total ? `${s.completed} of ${s.total} tasks done${s.blocked ? `, ${s.blocked} blocked` : ""}` : "No tasks",
+          running ? `${running} of ${members.length} members running` : `${t.memberCount} members`,
+          at ? "Updated " + new Date(at).toLocaleString() : ""].filter(Boolean).join("\n") },
+        icon(ICONS.team),
+        el("span", { class: "name" }, t.name),
+        pinned ? el("span", { class: "pin", title: "Pinned" }, icon(ICONS.pin)) : null,
+        tone ? el("span", { class: "dot " + tone, "aria-hidden": "true" }) : null,
+        el("em", {}, s && s.total ? `${s.completed}/${s.total}` : "")),
       el("button", { type: "button", class: "row-more menu-trigger", "aria-label": `${t.name} actions`, "aria-haspopup": "menu",
         onclick: (e) => openMenu(e.currentTarget, "t:" + t.name, [
           [pinned ? "Unpin" : "Pin to top", () => { pinned ? rail.pins.delete(t.name) : rail.pins.add(t.name); saveRail(); renderRail(); }],
           ["Open board", () => { selectTeam(t.name); setView("board"); }],
           ["Open messages", () => { selectTeam(t.name); setView("messages"); }],
           ["Open terminals", () => { selectTeam(t.name); setView("terminals"); }],
-          [open ? "Fold members" : "Unfold members", fold],
+          ...(current && members.length ? [[open ? "Fold members" : "Unfold members", fold]] : []),
           ["Copy team name", () => copyText(t.name)],
         ]) }, icon(ICONS.more))),
     open && b && members.length ? el("ul", { class: "people", id: "people-" + t.name, "aria-label": t.name + " members" }, memberRows(t, b)) : null);

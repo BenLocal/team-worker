@@ -82,30 +82,44 @@ button, input, select { font: inherit; color: inherit; }
 .rail-toggle { margin-left: auto; background: none; border: 0; border-radius: 7px; color: var(--muted);
   cursor: pointer; width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center; line-height: 0; }
 .rail-toggle:hover { color: var(--fg); background: var(--pill); }
-.teams { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
-.team { border-radius: 8px; }
-.team.current { background: var(--card); box-shadow: 0 0 0 1px var(--line); }
-.team-row { display: flex; align-items: flex-start; }
-.team-tab { flex: 1; min-width: 0; text-align: left; background: none; border: 0; cursor: pointer; padding: 10px 6px 10px 12px; border-radius: 8px; }
-.team:not(.current) .team-tab:hover { background: var(--pill); }
-.team-tab .name { font-weight: 600; font-size: 13.5px; letter-spacing: -.005em; overflow-wrap: anywhere; }
-.team-tab .desc { font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
-.toggle { background: none; border: 0; cursor: pointer; color: var(--muted); padding: 10px 12px; line-height: 1.5; }
-.toggle svg { transition: transform .15s; display: block; margin-top: 4px; }
-.toggle[aria-expanded="true"] svg { transform: rotate(90deg); }
-.strip { display: flex; height: 4px; border-radius: 2px; overflow: hidden; margin: 9px 0 6px; background: var(--line); }
-.strip span { display: block; height: 100%; }
-.strip .done { background: var(--done); } .strip .progress { background: var(--progress); }
-.strip .blocked { background: var(--blocked); } .strip .pending { background: var(--faint); }
-.team-tab .facts { display: flex; justify-content: space-between; gap: 8px; font-size: 11.5px; color: var(--muted); }
-.people { list-style: none; margin: 0; padding: 0 8px 8px 18px; display: grid; gap: 1px; }
-.person { width: 100%; display: grid; grid-template-columns: 7px minmax(0, 1fr) auto; align-items: center; gap: 9px;
-  background: none; border: 0; border-radius: 7px; padding: 5px 8px; cursor: pointer; text-align: left; }
-.person:hover { background: var(--pill); }
-.person .who { min-width: 0; }
-.person .pname { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); }
-.person .role { display: block; font-size: 11.5px; color: var(--muted); }
-.person .unread { font-size: 11px; font-weight: 600; color: var(--accent); }
+.teams { list-style: none; margin: 0; padding: 0; display: grid; gap: 1px; }
+/* Teams are rows of Magpie's sidebar: an icon, the name and a count; the
+   open team is the raised white row, its members the thin-lined sub-rows
+   under it. */
+.team-row { position: relative; display: flex; align-items: center; }
+.team-tab { flex: 1; min-width: 0; display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 10px 0 8px;
+  border: 0; border-radius: 7px; background: none; color: var(--fg-2); font-size: 13px; text-align: left; white-space: nowrap; cursor: pointer; }
+.team-tab > svg { flex: none; color: var(--muted); }
+.team-tab:hover:not([aria-current]) { background: var(--pill); color: var(--fg); }
+.team-tab:active:not([aria-current]) { background: color-mix(in srgb, var(--fg) 10%, transparent); }
+.team-tab[aria-current="page"] { background: var(--card); color: var(--fg); box-shadow: var(--seg-edge); font-weight: 500; }
+.team-tab[aria-current="page"] > svg { color: var(--fg); }
+.team-tab .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.team-tab .pin { flex: none; color: var(--muted); line-height: 0; }
+.team-tab .dot { width: 6px; height: 6px; }
+.team-tab .dot.blocked { background: var(--blocked); } .team-tab .dot.progress { background: var(--progress); }
+.team-tab .dot.done { background: var(--done); }
+.team-tab em { margin-left: auto; font-style: normal; font-weight: 400; font-size: 11px; color: var(--muted); }
+.people { position: relative; list-style: none; display: flex; flex-direction: column; gap: 1px; margin: 2px 0 6px 16px; padding: 0 0 0 8px; }
+.people::before { content: ""; position: absolute; left: 0; top: 3px; bottom: 3px; width: 1px; background: var(--line); }
+.person-row { position: relative; }
+.person { width: 100%; display: flex; align-items: center; gap: 7px; height: 26px; padding: 0 10px; border: 0; border-radius: 6px;
+  background: none; color: var(--ctl-fg); font-size: 12.5px; text-align: left; white-space: nowrap; cursor: pointer; }
+.person:hover { color: var(--fg); background: var(--pill); }
+.person .dot { width: 6px; height: 6px; }
+.person .pname { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.person .lead { flex: none; font-size: 11px; color: var(--muted); }
+.person em { margin-left: auto; font-style: normal; font-size: 11px; color: var(--muted); }
+.person em.up { color: var(--accent); font-weight: 500; }
+/* the row's menu sits over its count, shown on hover */
+.row-more { position: absolute; right: 3px; top: 50%; transform: translateY(-50%); visibility: hidden; display: inline-flex;
+  align-items: center; justify-content: center; width: 22px; height: 22px; background: none; border: 0; border-radius: 6px;
+  color: var(--muted); cursor: pointer; line-height: 0; }
+.team-row:hover .row-more, .person-row:hover .row-more, .row-more:focus-visible, .row-more[aria-expanded="true"], .row-more.prompt-origin { visibility: visible; }
+:is(.team-row, .person-row):hover :is(.team-tab, .person) em { visibility: hidden; }
+.row-more:hover { color: var(--fg); background: var(--pill-hover); }
+.show-more { background: none; border: 0; color: var(--muted); cursor: pointer; height: 24px; padding: 0 10px; font-size: 12px; text-align: left; }
+.show-more:hover { color: var(--fg); }
 .rail .empty { margin: 0 12px 0 6px; }
 .mini { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; justify-items: center; }
 .mini button { position: relative; width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--line);
@@ -269,7 +283,6 @@ main { height: 100vh; display: flex; flex-direction: column; min-width: 0; paddi
 @media (max-width: 760px) {
   body, body.rail-collapsed { display: block; }
   .rail { height: auto; position: static; padding: 0 12px 6px; border-right: 0; border-bottom: .5px solid var(--line); }
-  .team { border-radius: 8px; }
   .mini { display: flex; flex-wrap: wrap; justify-items: start; }
   main { padding: 0 16px 16px; }
   .board { grid-template-columns: 1fr; }
@@ -280,7 +293,6 @@ main { height: 100vh; display: flex; flex-direction: column; min-width: 0; paddi
   .row .route { grid-column: 2; }
   .row .gist { grid-column: 1 / -1; padding-left: 74px; }
 }
-@media (prefers-reduced-motion: reduce) { .toggle svg { transition: none; } }
 
 /* ---- team summary cards ---- */
 .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 10px; }
@@ -295,7 +307,7 @@ main { height: 100vh; display: flex; flex-direction: column; min-width: 0; paddi
 @media (max-width: 760px) { .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 
 /* ---- rail operations ---- */
-.rail-section { display: flex; align-items: center; gap: 2px; margin: 8px 0 4px; padding: 0 2px 0 8px; }
+.rail-section { display: flex; align-items: center; gap: 2px; margin: 2px 0 4px; padding: 0 2px 0 8px; }
 .rail-title { flex: 1; font-size: 11px; font-weight: 500; letter-spacing: .04em; color: var(--muted); }
 .icon-btn { background: none; border: 0; border-radius: 7px; color: var(--muted); cursor: pointer;
   width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center; line-height: 0; transition: background .12s, color .12s; }
@@ -303,23 +315,8 @@ main { height: 100vh; display: flex; flex-direction: column; min-width: 0; paddi
 .rail-search { display: flex; align-items: center; gap: 4px; margin: 0 2px 10px 4px; }
 .rail-search input { flex: 1; min-width: 0; height: 28px; border: 1px solid var(--line); background: var(--card); border-radius: 7px; padding: 0 9px; }
 .rail-search .icon-btn { line-height: 1; font-size: 11.5px; width: auto; padding: 0 7px; }
-.team-row { display: grid; grid-template-columns: 26px minmax(0, 1fr) 26px; align-items: start; }
-.team-row .toggle, .toggle-space { padding: 12px 0 0 8px; }
-.team-tab { padding: 9px 4px 10px 4px; }
-.name-line { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.name-line .name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.name-line .when { margin-left: auto; font-size: 11px; color: var(--muted); flex: none; }
-.name-line .pin { color: var(--accent); line-height: 0; flex: none; }
-.row-more { visibility: hidden; background: none; border: 0; border-radius: 6px; color: var(--muted); cursor: pointer; padding: 6px 4px; line-height: 0; }
-.team-row .row-more { margin-top: 6px; }
-.team-row:hover .row-more, .person-row:hover .row-more, .row-more:focus-visible, .row-more[aria-expanded="true"], .row-more.prompt-origin { visibility: visible; }
-.row-more:hover { color: var(--fg); background: var(--pill-hover); }
-.person-row { display: grid; grid-template-columns: minmax(0, 1fr) 24px; align-items: center; }
-.person .when { font-size: 11px; color: var(--muted); }
-.show-more { background: none; border: 0; color: var(--muted); cursor: pointer; padding: 4px 8px 4px 24px; font-size: 12px; }
-.show-more:hover { color: var(--fg); }
 .team.dragging { opacity: .45; }
-.team.drop-target { box-shadow: inset 0 2px 0 var(--accent); }
+.team.drop-target .team-tab { box-shadow: inset 0 2px 0 var(--accent); }
 .result { width: calc(100% - 4px); display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px;
   background: none; border: 0; border-radius: 7px; padding: 6px 8px; cursor: pointer; text-align: left; }
 .result:hover, .result:focus-visible { background: var(--pill); }
