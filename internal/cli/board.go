@@ -21,7 +21,7 @@ import (
 
 func (a *app) boardCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "board", Short: "Team board: members, tasks and messages"}
-	cmd.AddCommand(a.boardShowCmd(), a.boardServeCmd())
+	cmd.AddCommand(a.boardShowCmd(), a.boardServeCmd(), a.boardOverviewCmd(), a.boardLiveCmd(), a.boardUpdateCmd())
 	return cmd
 }
 
@@ -42,6 +42,112 @@ func (a *app) boardShowCmd() *cobra.Command {
 	}
 	cmd.Flags().IntVarP(&messages, "messages", "m", 10, "Number of recent messages to show")
 	return cmd
+}
+
+func (a *app) boardOverviewCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "overview",
+		Short: "Summarize every team: leader, members, tasks and waiting messages",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			teams, err := a.client().Overview(cmd.Context())
+			if err != nil {
+				return a.fail(err)
+			}
+			a.emit(teams, func(w io.Writer) {
+				if len(teams) == 0 {
+					fmt.Fprintln(w, "No teams found")
+					return
+				}
+				tw := newTable(w, "TEAM", "LEADER", "MEMBERS", "TASKS", "PENDING MSGS")
+				for _, t := range teams {
+					row(tw, t.Name, t.Leader, fmt.Sprint(t.Members), fmt.Sprint(t.Tasks), fmt.Sprint(t.PendingMessages))
+				}
+				tw.Flush()
+			})
+			return nil
+		},
+	}
+}
+
+func (a *app) boardLiveCmd() *cobra.Command {
+	var interval time.Duration
+	var messages, count int
+	cmd := &cobra.Command{
+		Use:   "live TEAM",
+		Short: "Redraw the team board in the terminal until Ctrl+C",
+		Long: "Redraws `board show` every --interval. With --json it prints one board per line\n" +
+			"instead of redrawing. --count stops after that many boards.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if interval <= 0 {
+				return a.fail(errors.New("--interval must be positive"))
+			}
+			ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
+			defer stop()
+			for n := 1; ; n++ {
+				b, err := a.client().Board(ctx, args[0], messages)
+				if ctx.Err() != nil {
+					return nil
+				}
+				if err != nil {
+					return a.fail(err)
+				}
+				if a.jsonOut {
+					printJSONLine(a.out, b)
+				} else {
+					// Home the cursor and clear the screen, then redraw.
+					fmt.Fprint(a.out, "\x1b[H\x1b[2J")
+					fmt.Fprintf(a.out, "%s  (every %s, Ctrl+C to stop)\n\n", time.Now().Format("15:04:05"), interval)
+					printBoard(a.out, b)
+				}
+				if count > 0 && n >= count {
+					return nil
+				}
+				select {
+				case <-ctx.Done():
+					return nil
+				case <-time.After(interval):
+				}
+			}
+		},
+	}
+	cmd.Flags().DurationVarP(&interval, "interval", "i", 2*time.Second, "Refresh interval")
+	cmd.Flags().IntVarP(&messages, "messages", "m", 10, "Number of recent messages to show")
+	cmd.Flags().IntVar(&count, "count", 0, "Stop after this many refreshes (0: until Ctrl+C)")
+	return cmd
+}
+
+// boardUpdateCmd keeps ClawTeam's command: the board is derived from tasks
+// and messages, so there is nothing to update.
+func (a *app) boardUpdateCmd() *cobra.Command {
+	var agentName string
+	cmd := &cobra.Command{
+		Use:   "update TEAM",
+		Short: "Compatibility alias: the board always reflects tasks and messages",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if _, err := a.client().Board(cmd.Context(), args[0], 0); err != nil {
+				return a.fail(err)
+			}
+			a.emit(map[string]any{"status": "up_to_date", "team": args[0], "agent": nullable(agentName),
+				"note": "Board state is derived automatically from task and inbox updates."}, func(w io.Writer) {
+				fmt.Fprintln(w, "OK The board is derived from tasks and inbox messages; change them with `task create/update`,\n"+
+					"then view it with `board show` or `board live`.")
+			})
+			return nil
+		},
+	}
+	cmd.Flags().StringVarP(&agentName, "agent", "a", "", "Accepted for compatibility; the board is team-wide")
+	return cmd
+}
+
+// nullable is nil for an empty string, so JSON shows null like ClawTeam.
+func nullable(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 func printBoard(w io.Writer, b model.Board) {

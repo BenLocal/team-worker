@@ -238,6 +238,12 @@ func (c *Client) Health(ctx context.Context) error {
 	return c.doOnce(ctx, http.MethodGet, "/v1/health", nil, nil, nil)
 }
 
+// Overview summarizes every team for `board overview`.
+func (c *Client) Overview(ctx context.Context) ([]model.TeamOverview, error) {
+	var out []model.TeamOverview
+	return out, c.do(ctx, http.MethodGet, "/v1/overview", nil, nil, &out)
+}
+
 func (c *Client) ListTeams(ctx context.Context) ([]model.TeamSummary, error) {
 	var out []model.TeamSummary
 	return out, c.do(ctx, http.MethodGet, "/v1/teams", nil, nil, &out)

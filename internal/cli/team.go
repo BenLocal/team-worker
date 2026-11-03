@@ -348,5 +348,37 @@ func (a *app) identityCmd() *cobra.Command {
 			return nil
 		},
 	})
+	var setID, setName, setType, setTeam string
+	set := &cobra.Command{
+		Use:   "set",
+		Short: "Print shell exports that set the identity: eval \"$(team-worker identity set ...)\"",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			var lines []string
+			for _, v := range []struct{ env, value string }{
+				{"TEAM_WORKER_AGENT_ID", setID},
+				{"TEAM_WORKER_AGENT_NAME", setName},
+				{"TEAM_WORKER_AGENT_TYPE", setType},
+				{"TEAM_WORKER_TEAM_NAME", setTeam},
+			} {
+				if v.value != "" {
+					lines = append(lines, "export "+v.env+"='"+strings.ReplaceAll(v.value, "'", `'\''`)+"'")
+				}
+			}
+			if len(lines) == 0 {
+				return a.fail(errors.New("No options specified. Use --agent-id, --agent-name, --agent-type, --team"))
+			}
+			// The plain output is only the exports, so eval can run it.
+			a.emit(map[string][]string{"exports": lines}, func(w io.Writer) {
+				fmt.Fprintln(w, strings.Join(lines, "\n"))
+			})
+			return nil
+		},
+	}
+	set.Flags().StringVar(&setID, "agent-id", "", "Agent ID")
+	set.Flags().StringVar(&setName, "agent-name", "", "Agent name")
+	set.Flags().StringVar(&setType, "agent-type", "", "Agent type")
+	set.Flags().StringVar(&setTeam, "team", "", "Team name")
+	cmd.AddCommand(set)
 	return cmd
 }

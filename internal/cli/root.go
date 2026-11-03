@@ -73,7 +73,7 @@ func NewRoot(newClient func() *client.Client) *cobra.Command {
 	root.AddCommand(a.profileCmd(), a.presetCmd())
 	root.AddCommand(a.harnessCmd())
 	root.AddCommand(a.configCmd())
-	root.AddCommand(a.workspaceCmd(), a.contextCmd())
+	root.AddCommand(a.workspaceCmd(), a.contextCmd(), a.runCmd())
 	argsWithUsage(root)
 	return root
 }

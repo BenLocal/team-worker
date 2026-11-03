@@ -106,6 +106,16 @@ type TeamSummary struct {
 	MemberCount int    `json:"memberCount"`
 }
 
+// TeamOverview is one row of `board overview`; field names follow ClawTeam.
+type TeamOverview struct {
+	Name            string `json:"name"`
+	Description     string `json:"description"`
+	Leader          string `json:"leader"`
+	Members         int    `json:"members"`
+	Tasks           int    `json:"tasks"`
+	PendingMessages int    `json:"pendingMessages"`
+}
+
 type Task struct {
 	ID          string         `json:"id"`
 	Subject     string         `json:"subject"`

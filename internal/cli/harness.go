@@ -28,7 +28,8 @@ func (a *app) harnessCmd() *cobra.Command {
 			"the role agents and advances automatically; the other commands work by hand.",
 	}
 	cmd.AddCommand(a.harnessStartCmd(), a.harnessStatusCmd(), a.harnessAdvanceCmd(), a.harnessApproveCmd(),
-		a.harnessAbortCmd(), a.harnessArtifactCmd(), a.harnessArtifactsCmd(), a.harnessTaskCmd(), a.harnessConductCmd())
+		a.harnessAbortCmd(), a.harnessArtifactCmd(), a.harnessArtifactsCmd(), a.harnessTaskCmd(), a.harnessConductCmd(),
+		a.harnessContractsCmd())
 	return cmd
 }
 
@@ -317,6 +318,42 @@ func (a *app) harnessArtifactsCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&run, "run", "", "Harness run ID (default: the running or newest run)")
 	cmd.Flags().StringVar(&show, "show", "", "Print this artifact's content")
+	return cmd
+}
+
+// harnessContractsCmd lists the run's sprint contracts: artifacts named
+// sprint-contract-*, as in ClawTeam, which a planner writes with
+// `harness artifact TEAM sprint-contract-NNN.json`.
+func (a *app) harnessContractsCmd() *cobra.Command {
+	var run string
+	cmd := &cobra.Command{
+		Use:   "contracts TEAM",
+		Short: "List the run's sprint contracts (artifacts named sprint-contract-*)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			arts, err := a.client().ListArtifacts(cmd.Context(), args[0], run)
+			if err != nil {
+				return a.fail(err)
+			}
+			contracts := []model.HarnessArtifact{}
+			for _, art := range arts {
+				if strings.Contains(art.Name, "sprint-contract") {
+					contracts = append(contracts, art)
+				}
+			}
+			a.emit(contracts, func(w io.Writer) {
+				if len(contracts) == 0 {
+					fmt.Fprintln(w, "No sprint contracts yet.")
+					return
+				}
+				for _, c := range contracts {
+					fmt.Fprintf(w, "  %s (%d bytes)\n", c.Name, c.Size)
+				}
+			})
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&run, "run", "", "Harness run ID (default: the running or newest run)")
 	return cmd
 }
 

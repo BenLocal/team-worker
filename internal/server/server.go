@@ -143,6 +143,7 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /v1/changes", s.changes)
 
 	m.HandleFunc("GET /v1/teams", s.listTeams)
+	m.HandleFunc("GET /v1/overview", s.overview)
 	m.HandleFunc("POST /v1/teams", s.createTeam)
 	m.HandleFunc("GET /v1/teams/{team}", s.getTeam)
 	m.HandleFunc("DELETE /v1/teams/{team}", s.deleteTeam)
@@ -246,6 +247,11 @@ func (s *Server) changes(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) listTeams(w http.ResponseWriter, r *http.Request) {
 	teams, err := s.store.ListTeams(r.Context())
+	respond(w, teams, err)
+}
+
+func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
+	teams, err := s.store.Overview(r.Context())
 	respond(w, teams, err)
 }
 

@@ -1,10 +1,13 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -16,7 +19,7 @@ import (
 
 func (a *app) lifecycleCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "lifecycle", Short: "Agent exit, idle and shutdown signals"}
-	cmd.AddCommand(a.onExitCmd(), a.idleCmd(), a.requestShutdownCmd(), a.superviseCmd(),
+	cmd.AddCommand(a.onExitCmd(), a.idleCmd(), a.requestShutdownCmd(), a.superviseCmd(), a.checkZombiesCmd(),
 		a.shutdownReplyCmd("approve-shutdown", "shutdown_approved", "Approve a shutdown request, then exit"),
 		a.shutdownReplyCmd("reject-shutdown", "shutdown_rejected", "Reject a shutdown request and keep working"))
 	return cmd
@@ -236,4 +239,100 @@ func (a *app) agentScreenCmd() *cobra.Command {
 	}
 	cmd.Flags().IntVarP(&lines, "lines", "l", 0, "Extra scrollback lines to include")
 	return cmd
+}
+
+// zombie is an agent that has run longer than --max-hours; field names
+// follow ClawTeam, with the activity its hooks last reported added.
+type zombie struct {
+	AgentName    string  `json:"agent_name"`
+	PID          int     `json:"pid"`
+	Backend      string  `json:"backend"`
+	SpawnedAt    float64 `json:"spawned_at"`
+	RunningHours float64 `json:"running_hours"`
+	Activity     string  `json:"activity,omitempty"`
+	ActivityAt   string  `json:"activityAt,omitempty"`
+}
+
+func (a *app) checkZombiesCmd() *cobra.Command {
+	var team string
+	var maxHours float64
+	cmd := &cobra.Command{
+		Use:   "check-zombies [TEAM]",
+		Short: "Warn about agents whose current run has lasted longer than --max-hours",
+		Long: "Lists agents whose process is alive and whose current run started more than --max-hours\n" +
+			"ago, with the activity their hooks last reported. Exits 1 when it finds any. Agents\n" +
+			"that sit at their prompt with a task in progress are handled by the daemon's stuck\n" +
+			"check; this catches agents that keep running without finishing.",
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 1 {
+				team = args[0]
+			}
+			if team == "" {
+				return a.fail(errors.New("Give the team as TEAM or --team"))
+			}
+			if maxHours <= 0 {
+				return a.fail(errors.New("--max-hours must be positive"))
+			}
+			agents, err := a.client().ListAgents(cmd.Context(), team)
+			if err != nil {
+				return a.fail(err)
+			}
+			zombies := findZombies(agents, maxHours, time.Now())
+			a.emit(map[string]any{"team": team, "zombies": zombies}, func(w io.Writer) {
+				dash := func(s string) string {
+					if s == "" {
+						return "-"
+					}
+					return s
+				}
+				if len(zombies) == 0 {
+					fmt.Fprintf(w, "OK No zombie agents detected for team '%s'\n", team)
+					return
+				}
+				fmt.Fprintf(w, "%d agent(s) in team '%s' have run longer than %gh:\n", len(zombies), team, maxHours)
+				for _, z := range zombies {
+					fmt.Fprintf(w, "  %s  pid=%d  backend=%s  running=%gh  activity=%s\n",
+						z.AgentName, z.PID, z.Backend, z.RunningHours, dash(z.Activity))
+				}
+				fmt.Fprintln(w, "\nCheck them with `agent screen` and stop the stuck ones with `agent stop`.")
+			})
+			if len(zombies) > 0 {
+				return exitError{}
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVarP(&team, "team", "t", "", "Team name (same as TEAM)")
+	cmd.Flags().Float64Var(&maxHours, "max-hours", 2, "Warn when the current run has lasted longer than this many hours")
+	return cmd
+}
+
+// findZombies keeps the running agents whose process is alive and whose
+// run started more than maxHours before now.
+func findZombies(agents []model.Agent, maxHours float64, now time.Time) []zombie {
+	out := []zombie{}
+	for _, ag := range agents {
+		if ag.Status == model.AgentExited || ag.Alive == nil || !*ag.Alive {
+			continue
+		}
+		started, err := time.Parse(time.RFC3339Nano, ag.StartedAt)
+		if err != nil {
+			continue
+		}
+		running := now.Sub(started).Hours()
+		if running <= maxHours {
+			continue
+		}
+		out = append(out, zombie{
+			AgentName:    ag.Name,
+			PID:          ag.PID,
+			Backend:      ag.Backend,
+			SpawnedAt:    float64(started.UnixMilli()) / 1000,
+			RunningHours: math.Round(running*10) / 10,
+			Activity:     string(ag.Activity),
+			ActivityAt:   ag.ActivityAt,
+		})
+	}
+	return out
 }

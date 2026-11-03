@@ -172,6 +172,32 @@ func (s *Store) ListTeams(ctx context.Context) ([]model.TeamSummary, error) {
 	return teams, rows.Err()
 }
 
+// Overview summarizes every team: leader, member and task counts and the
+// messages waiting in its inboxes.
+func (s *Store) Overview(ctx context.Context) ([]model.TeamOverview, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT t.name, t.description,
+		        COALESCE((SELECT m.name FROM members m WHERE m.team = t.name AND m.agent_id = t.lead_agent_id
+		                  ORDER BY m.seq LIMIT 1), ''),
+		        (SELECT COUNT(*) FROM members m WHERE m.team = t.name),
+		        (SELECT COUNT(*) FROM tasks k WHERE k.team = t.name),
+		        (SELECT COUNT(*) FROM messages g WHERE g.team = t.name)
+		 FROM teams t ORDER BY t.name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []model.TeamOverview{}
+	for rows.Next() {
+		var o model.TeamOverview
+		if err := rows.Scan(&o.Name, &o.Description, &o.Leader, &o.Members, &o.Tasks, &o.PendingMessages); err != nil {
+			return nil, err
+		}
+		out = append(out, o)
+	}
+	return out, rows.Err()
+}
+
 type AddMemberInput struct {
 	Name      string `json:"name"`
 	AgentID   string `json:"agentId"`
