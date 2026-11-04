@@ -4,7 +4,7 @@
 
 Agent 退出时，退出钩子会通知服务。如果 tmux 窗口是被直接关掉的，退出钩子来不及执行，服务每 10 秒检查一次进程，同样能发现。两种情况下，这个 Agent 手上 `in_progress` 的任务都会退回 `pending`，并通知 leader。
 
-`spawn` 会保存原生 CLI 的会话信息，进程退出不删除这些信息。Claude 和 pi 在启动前分配明确的会话 ID；Codex 优先从启用的会话钩子获取 ID，未启用钩子时，由 daemon 在退出、查看或恢复时按工作目录和 Agent 身份匹配 `~/.codex/sessions` 里的记录。dsh（包括 `dsh tui`）不接受新会话的 ID，daemon 在同样的时机从 `~/.dsh/sessions/<编码后的工作目录>/`（设了 `DSH_HOME` 时以它为准）里找出 Agent 启动后新建、且含有该 Agent 身份行的会话：每个会话目录下的 `session.v4.jsonl.zstd` 首行记着会话 ID、工作目录和创建时间；dsh 在处理完第一条提示词后才建这个会话。匹配不唯一时会报错，不自动选择最近会话。其他 CLI 可用 `session save` 提供准确 ID。
+`spawn` 会保存原生 CLI 的会话信息，进程退出不删除这些信息。Claude 和 pi 在启动前分配明确的会话 ID；Codex 优先从启用的会话钩子获取 ID，未启用钩子时，由 daemon 在退出、查看或恢复时按工作目录和 Agent 身份匹配 `~/.codex/sessions` 里的记录。dsh（包括 `dsh tui`）不接受新会话的 ID，daemon 在同样的时机从 `~/.dsh/sessions/<编码后的工作目录>/`（设了 `DSH_HOME` 时以它为准）里找出 Agent 启动后新建、且含有该 Agent 身份行的会话：每个会话目录下的 `session.v4.jsonl.zstd` 首行记着会话 ID、工作目录和创建时间；dsh 在处理完第一条提示词后才建这个会话。OpenCode 同样不接受新会话的 ID，daemon 在同样的时机只读打开它的数据库 `~/.local/share/opencode/opencode.db`（设了 `XDG_DATA_HOME` 时为 `$XDG_DATA_HOME/opencode/opencode.db`），找出 Agent 启动后在该工作目录新建、某条消息里含有该 Agent 身份行的顶层会话（子 Agent 的会话不算）。匹配不唯一时会报错，不自动选择最近会话。其他 CLI 可用 `session save` 提供准确 ID。
 
 ```bash
 team-worker session show my-team --agent alice

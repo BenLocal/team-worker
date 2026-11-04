@@ -9,8 +9,8 @@ import (
 func (s *Server) getSession(w http.ResponseWriter, r *http.Request) {
 	team, name, user := r.PathValue("team"), r.PathValue("name"), r.URL.Query().Get("user")
 	out, err := s.store.GetSession(r.Context(), team, name, user)
-	if err == nil && out.SessionID == "" && (out.Client == "codex" || out.Client == "dsh") {
-		// Codex and dsh may not report their id; the daemon finds it in their files.
+	if err == nil && out.SessionID == "" && capturesSession(out.Client) {
+		// Codex, dsh and opencode may not report their id; the daemon finds it in their files.
 		if captured, cerr := s.captureSession(r.Context(), team, name); cerr == nil && captured.User == user {
 			out = captured
 		}

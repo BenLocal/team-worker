@@ -81,6 +81,7 @@ team-worker 读取 Agent CLI 的会话和用量文件时，按这些变量找目
 | `CLAUDE_CONFIG_DIR` | Claude Code 的配置目录，读取用量 | `~/.claude` |
 | `CODEX_HOME` | Codex 的目录，读取会话和用量 | `~/.codex` |
 | `DSH_HOME` | dsh 的目录，读取会话 | `~/.dsh` |
+| `XDG_DATA_HOME` | OpenCode 数据库（`opencode/opencode.db`）所在目录，读取会话 | `~/.local/share` |
 
 ## Docker 容器
 

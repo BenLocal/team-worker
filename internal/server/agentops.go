@@ -39,7 +39,7 @@ func (s *Server) memberUser(ctx context.Context, team, name string) string {
 // CLIs know their id from the start.
 func (s *Server) captureSession(ctx context.Context, team, name string) (model.Session, error) {
 	session, err := s.store.GetSession(ctx, team, name, s.memberUser(ctx, team, name))
-	if err != nil || session.SessionID != "" || (session.Client != "codex" && session.Client != "dsh") {
+	if err != nil || session.SessionID != "" || !capturesSession(session.Client) {
 		return session, err
 	}
 	rec, err := s.store.GetAgent(ctx, team, name)
@@ -51,7 +51,8 @@ func (s *Server) captureSession(ctx context.Context, team, name string) (model.S
 		return session, nil
 	}
 	var id string
-	if session.Client == "codex" {
+	switch session.Client {
+	case "codex":
 		root, err := cliHome("CODEX_HOME", ".codex")
 		if err != nil {
 			return session, err
@@ -60,12 +61,22 @@ func (s *Server) captureSession(ctx context.Context, team, name string) (model.S
 		if err != nil {
 			return session, err
 		}
-	} else {
+	case "dsh":
 		root, err := cliHome("DSH_HOME", ".dsh")
 		if err != nil {
 			return session, err
 		}
 		id, err = agent.CaptureDshSession(filepath.Join(root, "sessions"), session.Cwd, rec.AgentID, started)
+		if err != nil {
+			return session, err
+		}
+	case "opencode":
+		// opencode keeps its database under the XDG data directory.
+		root, err := cliHome("XDG_DATA_HOME", filepath.Join(".local", "share"))
+		if err != nil {
+			return session, err
+		}
+		id, err = agent.CaptureOpencodeSession(ctx, filepath.Join(root, "opencode", "opencode.db"), session.Cwd, rec.AgentID, started)
 		if err != nil {
 			return session, err
 		}
@@ -75,6 +86,12 @@ func (s *Server) captureSession(ctx context.Context, team, name string) (model.S
 	}
 	session.SessionID, session.Source = id, "transcript"
 	return s.store.SaveSession(ctx, session)
+}
+
+// capturesSession reports whether the daemon finds a client's session id in
+// its files, for CLIs that may not report it themselves.
+func capturesSession(client string) bool {
+	return client == "codex" || client == "dsh" || client == "opencode"
 }
 
 // cliHome is where a CLI keeps its state: the directory env names, or dir in
