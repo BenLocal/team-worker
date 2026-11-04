@@ -38,17 +38,20 @@ func Protect(next http.Handler, key, basePath string) (http.Handler, error) {
 		h.Write([]byte(value))
 		return hex.EncodeToString(h.Sum(nil))
 	}
+	// A browser can hold an older session scoped to basePath beside the
+	// current one, so any valid cookie of that name will do.
 	validSession := func(r *http.Request) bool {
-		cookie, err := r.Cookie(sessionCookie)
-		if err != nil {
-			return false
+		for _, cookie := range r.CookiesNamed(sessionCookie) {
+			parts := strings.Split(cookie.Value, ".")
+			if len(parts) != 3 {
+				continue
+			}
+			expires, err := strconv.ParseInt(parts[0], 10, 64)
+			if err == nil && expires > time.Now().Unix() && hmac.Equal([]byte(parts[2]), []byte(sign(parts[0]+"."+parts[1]))) {
+				return true
+			}
 		}
-		parts := strings.Split(cookie.Value, ".")
-		if len(parts) != 3 {
-			return false
-		}
-		expires, err := strconv.ParseInt(parts[0], 10, 64)
-		return err == nil && expires > time.Now().Unix() && hmac.Equal([]byte(parts[2]), []byte(sign(parts[0]+"."+parts[1])))
+		return false
 	}
 	setSession := func(w http.ResponseWriter, r *http.Request) bool {
 		var nonce [16]byte
@@ -58,7 +61,9 @@ func Protect(next http.Handler, key, basePath string) (http.Handler, error) {
 		}
 		expires := time.Now().Add(12 * time.Hour)
 		value := strconv.FormatInt(expires.Unix(), 10) + "." + hex.EncodeToString(nonce[:])
-		http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: value + "." + sign(value), Path: basePath + "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https", Expires: expires, MaxAge: 12 * 60 * 60})
+		// Path / so the proxy's auth_request for Magpie and the OpenBao
+		// sign-in, outside basePath, see the session too.
+		http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: value + "." + sign(value), Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https", Expires: expires, MaxAge: 12 * 60 * 60})
 		return true
 	}
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -92,7 +97,10 @@ func Protect(next http.Handler, key, basePath string) (http.Handler, error) {
 			return
 		}
 		if r.URL.Path == "/logout" && r.Method == http.MethodPost {
-			http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: basePath + "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: -1})
+			// Earlier sessions were scoped to basePath; clear those as well.
+			for _, p := range []string{"/", basePath + "/"} {
+				http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: p, HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: -1})
+			}
 			http.Redirect(w, r, basePath+"/", http.StatusSeeOther)
 			return
 		}

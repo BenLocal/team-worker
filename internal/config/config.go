@@ -94,6 +94,14 @@ func MagpieWebKeyPath() string {
 	return filepath.Join(dir, "magpie", "web.key")
 }
 
+// MagpieSessionLogin reports whether the board session signs viewers in to
+// Magpie (TEAM_WORKER_MAGPIE_SESSION_LOGIN=1).
+func MagpieSessionLogin() bool { return os.Getenv("TEAM_WORKER_MAGPIE_SESSION_LOGIN") == "1" }
+
+// OpenBaoSessionLogin reports whether the board session signs viewers in to
+// the OpenBao UI (TEAM_WORKER_OPENBAO_SESSION_LOGIN=1).
+func OpenBaoSessionLogin() bool { return os.Getenv("TEAM_WORKER_OPENBAO_SESSION_LOGIN") == "1" }
+
 func OpenBaoInitPath() string { return filepath.Join(homeDir(), ".openbao", "init.json") }
 
 // DataDir returns TEAM_WORKER_DATA_DIR, then config data_dir, then ~/.team-worker.

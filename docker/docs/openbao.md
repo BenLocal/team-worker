@@ -10,7 +10,11 @@ OpenBao 在容器内只监听 `127.0.0.1:8200`，Nginx 在发布端口上代理�
 
 ## 打开界面并登录
 
-1. 浏览器打开 `http://<主机>:<端口>/openbao`，会跳转到 `/ui/`。
+设置了 `TEAM_WORKER_OPENBAO_SESSION_LOGIN=1` 时，已登录看板后点看板标题栏的 OpenBao 链接或打开 `http://<主机>:<端口>/openbao` 即自动登录：team-workerd 用 `init.json` 里的 root 令牌签发一个 12 小时过期的子令牌（权限与 root 相同），包装 60 秒后跳到 `/ui/vault/auth?wrapped_token=…`，界面拆包后直接进入。包装令牌只能用一次。默认不启用，或人工初始化的部署（没有保存的 root 令牌）时，`/openbao` 跳到 `/ui/`，按下面的步骤手动登录。
+
+手动登录：
+
+1. 浏览器打开 `http://<主机>:<端口>/openbao` 或 `/ui/`。
 2. 未登录时进入登录页 **Sign in to OpenBao**。地址形如 `/ui/vault/auth?redirect_to=%2Fvault%2Funseal&with=token`：
    - `vault` 是 OpenBao 从 Vault 继承的界面路由名，与 Vault 产品无关；
    - `with=token` 表示预选 Token 登录方式；

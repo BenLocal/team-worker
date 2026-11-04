@@ -217,5 +217,7 @@ Web 看板（`team-workerd --board` 或 `board serve`）的提示词读取接口
 | 接口 | 说明 |
 |---|---|
 | `GET /api/service-keys` | 登录后按需读取 Magpie Web Key 和 OpenBao 登录 Token，响应禁止缓存 |
+| `GET /api/service-auth/magpie` | `TEAM_WORKER_MAGPIE_SESSION_LOGIN=1` 时给 Nginx `auth_request` 用：会话有效时返回 204，`X-Magpie-Key` 头带 Magpie Web Key；未开启返回 404 |
+| `GET /api/openbao/login` | `TEAM_WORKER_OPENBAO_SESSION_LOGIN=1` 时用保存的 root 令牌签发 12 小时子令牌，包装 60 秒后跳到 OpenBao 界面自动登录；没有 `init.json` 时跳到 `/ui/`；未开启返回 404 |
 | `GET /api/teams/{team}/prompt` | 查看团队公共提示词 |
 | `GET /api/teams/{team}/members/{name}/prompt?user=...` | 查看成员专属提示词，`user` 默认空 |

@@ -133,6 +133,15 @@ team-worker-ops mcp \
     "${TEAM_WORKER_MCP_FILE:-/etc/team-worker/mcp.yaml}"
 team-worker-ops prompt \
     "${TEAM_WORKER_PROMPT_FILE:-/etc/team-worker/prompt.yaml}"
+# Signing in to Magpie and OpenBao with the board session is opt-in; Nginx
+# includes the pieces for the ones that are on.
+rm -rf /tmp/team-worker-nginx && mkdir -p /tmp/team-worker-nginx
+if [[ ${TEAM_WORKER_MAGPIE_SESSION_LOGIN:-0} == 1 ]]; then
+    cp /etc/nginx/nginx-magpie-session.conf /tmp/team-worker-nginx/magpie-session.conf
+fi
+if [[ ${TEAM_WORKER_OPENBAO_SESSION_LOGIN:-0} == 1 ]]; then
+    cp /etc/nginx/nginx-openbao-session.conf /tmp/team-worker-nginx/openbao-session.conf
+fi
 nginx -c /etc/nginx/team-worker.conf -g 'daemon off;' &
 pids+=($!)
 ready=false

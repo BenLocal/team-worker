@@ -64,9 +64,15 @@ Nginx 在同一地址、同一端口下按路径分发：
 | --- | --- | --- |
 | `/team-worker/` | team-worker 看板（只读，可看 Agent 实时终端），由 team-workerd 直接提供 | `127.0.0.1:8082` |
 | `/magpie/` | Magpie 管理界面 | `127.0.0.1:3430` |
+| `/openbao` | 跳到 OpenBao 界面（启用时）；开启会话登录时经 team-workerd 自动登录 | `/ui/` |
 | `/ui/`、`/v1/` | OpenBao 界面与 API（启用时） | `127.0.0.1:8200` |
 
-根路径跳转到 `/team-worker/`。看板标题栏右侧有 Magpie 链接，启用 OpenBao 时还有 OpenBao 链接（镜像环境变量 `TEAM_WORKER_BOARD_LINKS`，关闭 OpenBao 时入口脚本去掉 OpenBao 那项）。Magpie 链接不带登录密钥：浏览器先用 `web` 打印的完整链接登录一次，之后从看板点 Magpie 就能直接进入。用 `./docker/team-worker.sh web` 获取完整地址和带登录密钥的 Magpie 链接；密钥保存在 home 卷，重启不变。Nginx 关闭了访问日志，避免记录链接密钥。看板和 Magpie 页面使用根路径 API，由 `subpath.js` 给页面请求加上各自前缀。
+根路径跳转到 `/team-worker/`。看板标题栏右侧有 Magpie 链接，启用 OpenBao 时还有 OpenBao 链接（镜像环境变量 `TEAM_WORKER_BOARD_LINKS`，关闭 OpenBao 时入口脚本去掉 OpenBao 那项）。默认 Magpie 和 OpenBao 各自登录：Magpie 链接不带登录密钥，浏览器先用 `web` 打印的完整链接登录一次（或在看板 `Service keys` 里复制 Magpie Web Key），之后从看板点 Magpie 就能直接进入；OpenBao 在 `/ui/` 输入令牌。两个开关可以分别打开，让看板会话代替它们的登录：
+
+- `TEAM_WORKER_MAGPIE_SESSION_LOGIN=1`：Nginx 访问 `/magpie/` 前先让 team-workerd 检查看板会话，通过后把 Magpie Web Key 作为 Magpie 的登录 cookie 转发过去；没有会话就跳回看板登录页，单独的 Magpie 链接不再能绕过看板登录。
+- `TEAM_WORKER_OPENBAO_SESSION_LOGIN=1`：`/openbao` 由 team-workerd 用保存的 root 令牌签发一个 12 小时过期的子令牌，包装 60 秒后交给 OpenBao 界面自动登录。只有自动初始化的部署有保存的 root 令牌，人工模式仍跳到 `/ui/` 手动登录。
+
+入口脚本在启动 Nginx 前按这两个开关把 `/etc/nginx/nginx-*-session.conf` 放进 `/tmp/team-worker-nginx/`，改开关后重启容器生效。看板会话 cookie 的路径是 `/`，开启后这些入口共用一次看板登录。用 `./docker/team-worker.sh web` 获取完整地址和带 Key 的看板登录链接；密钥保存在 home 卷，重启不变。Nginx 关闭了访问日志，避免记录链接密钥。看板和 Magpie 页面使用根路径 API，由 `subpath.js` 给页面请求加上各自前缀。
 
 默认绑定本机 `127.0.0.1:8080`。用服务器 IP 访问时指定监听地址和对外 URL：
 
@@ -105,6 +111,8 @@ team-workerd 由第一条 CLI 命令自动拉起，日志写到 home 卷里的 `
 | `TEAM_WORKER_MASKING` | 默认在 home 卷首次启动时打开 Magpie 的 Privacy masking（发给模型供应商的密钥、密码、token 换成占位符）；之后在 Magpie 里关掉会保持关闭。设为 `0` 跳过 |
 | `TEAM_WORKER_OPENBAO` | 默认 `1`，安装并启动 OpenBao；设为 `0` 关闭启动 |
 | `TEAM_WORKER_OPENBAO_AUTO_UNSEAL` | 默认 `1`，自动初始化、解封并导入配置；设为 `0` 改为手动初始化、解封 |
+| `TEAM_WORKER_MAGPIE_SESSION_LOGIN` | 默认不启用；设为 `1` 后登录看板即可进入 `/magpie/`，不用再输 Magpie Web Key，没有看板会话时跳到看板登录页 |
+| `TEAM_WORKER_OPENBAO_SESSION_LOGIN` | 默认不启用；设为 `1` 后从看板点 OpenBao（`/openbao`）自动登录 OpenBao 界面，令牌权限同 root、12 小时过期，需要自动初始化保存的 root 令牌 |
 | `TEAM_WORKER_*_FILE` | `PROVIDERS`、`SKILLS`、`PROMPT`、`MCP`、`PLUGIN`、`OPENBAO` 配置文件的容器内路径 |
 | `MIRROR_HTTP_PROXY`、`HTTP_PROXY`、`HTTPS_PROXY`、`NO_PROXY` | 代理；`NO_PROXY` 建议包含 `localhost,127.0.0.1,::1` |
 

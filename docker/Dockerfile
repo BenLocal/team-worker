@@ -92,7 +92,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ENV PATH="/opt/team-worker/bin:/opt/venv/bin:${PATH}" HOME=/home/node TERM=xterm-256color \
     TEAM_WORKER_DATA_DIR=/home/node/.team-worker MAGPIE_ADDR=127.0.0.1:3425 \
     TEAM_WORKER_HTTP_ADDR=127.0.0.1:8082 TEAM_WORKER_BOARD=1 TEAM_WORKER_WEB_BASE_PATH=/team-worker \
-    TEAM_WORKER_BOARD_LINKS="Magpie=/magpie/,OpenBao=/ui/" \
+    TEAM_WORKER_BOARD_LINKS="Magpie=/magpie/,OpenBao=/openbao" \
     TEAM_WORKER_OPENBAO=1 TEAM_WORKER_OPENBAO_AUTO_UNSEAL=1 \
     TEAM_WORKER_PROVIDERS_FILE=/etc/team-worker/providers.yaml \
     DISABLE_AUTOUPDATER=1 MAGPIE_BUN=/usr/local/bin/bun \
@@ -111,6 +111,7 @@ RUN mkdir -p /opt/team-worker/bin \
     && printf 'export PATH="/opt/team-worker/bin:/opt/venv/bin:$PATH"\n' > /etc/profile.d/team-worker.sh
 COPY docker/nginx.conf /etc/nginx/team-worker.conf
 COPY docker/nginx-proxy.conf /etc/nginx/team-worker-proxy.conf
+COPY docker/nginx-magpie-session.conf docker/nginx-openbao-session.conf /etc/nginx/
 COPY docker/openbao.hcl /etc/openbao/openbao.hcl
 COPY docker/subpath.js /etc/nginx/subpath.js
 COPY docker/systemd/ /etc/systemd/system/

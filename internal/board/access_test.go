@@ -48,7 +48,8 @@ func TestBoardAccessProtectsAllRoutesAndSupportsLogin(t *testing.T) {
 		t.Fatalf("login redirect: %d %s", w.Code, w.Header().Get("Location"))
 	}
 	cookie := w.Result().Cookies()[0]
-	if !cookie.HttpOnly || cookie.Path != "/team-worker/" || cookie.SameSite != http.SameSiteStrictMode || strings.Contains(cookie.Value, "test-only-key") {
+	// Path / lets the proxy's checks for Magpie and OpenBao see the session.
+	if !cookie.HttpOnly || cookie.Path != "/" || cookie.SameSite != http.SameSiteStrictMode || strings.Contains(cookie.Value, "test-only-key") {
 		t.Fatal("unsafe session cookie")
 	}
 	r = httptest.NewRequest("GET", "/api/teams", nil)
@@ -57,6 +58,27 @@ func TestBoardAccessProtectsAllRoutesAndSupportsLogin(t *testing.T) {
 	protected.ServeHTTP(w, r)
 	if w.Code != 200 || w.Body.String() != "protected" {
 		t.Fatal("session did not authenticate")
+	}
+	// An older session cookie scoped to the base path is sent first; a
+	// stale one there must not hide the current one.
+	r = httptest.NewRequest("GET", "/api/teams", nil)
+	r.AddCookie(&http.Cookie{Name: sessionCookie, Value: "1.stale.signature"})
+	r.AddCookie(cookie)
+	w = httptest.NewRecorder()
+	protected.ServeHTTP(w, r)
+	if w.Code != 200 {
+		t.Fatal("a stale cookie beside the session blocked it")
+	}
+	w = httptest.NewRecorder()
+	protected.ServeHTTP(w, httptest.NewRequest("POST", "/logout", nil))
+	cleared := map[string]bool{}
+	for _, c := range w.Result().Cookies() {
+		if c.Name == sessionCookie && c.MaxAge < 0 {
+			cleared[c.Path] = true
+		}
+	}
+	if !cleared["/"] || !cleared["/team-worker/"] {
+		t.Fatalf("logout cleared %v, want / and /team-worker/", cleared)
 	}
 	cookie.Value += "tampered"
 	r = httptest.NewRequest("GET", "/api/teams", nil)
