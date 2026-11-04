@@ -589,19 +589,23 @@ func ensureAgentLogin(c *baoClient, state string) error {
 	}
 	secretFile := filepath.Join(state, "secret_id")
 	if stored, err := os.ReadFile(secretFile); err == nil {
-		if appRoleLogin(c, roleID, strings.TrimSpace(string(stored))) == nil {
+		err := appRoleLogin(c, roleID, strings.TrimSpace(string(stored)))
+		if err == nil {
 			return nil
 		}
-		fmt.Println("openbao: the stored AppRole secret ID no longer logs in; issuing a new one.")
+		// The status tells a secret ID OpenBao does not know (400) from a
+		// login it refuses (403).
+		fmt.Printf("openbao: the stored AppRole secret ID no longer logs in (%v); issuing a new one.\n", err)
 	}
 	secretID, err := newSecretID(c, secretFile)
 	if err != nil {
 		return err
 	}
-	if appRoleLogin(c, roleID, secretID) == nil {
+	err = appRoleLogin(c, roleID, secretID)
+	if err == nil {
 		return nil
 	}
-	fmt.Println("openbao: a new secret ID does not log in either; recreating the AppRole.")
+	fmt.Printf("openbao: a new secret ID does not log in either (%v); recreating the AppRole.\n", err)
 	if _, err := c.call("DELETE", "auth/approle/role/"+openbaoRole, nil); err != nil {
 		return err
 	}
