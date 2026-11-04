@@ -4,6 +4,8 @@
 
 ## 配置
 
+全部环境变量（含 Docker 镜像和脚本用到的）汇总在 [environment-variables.md](environment-variables.md)。
+
 | 变量 | 作用 | 默认值 |
 |---|---|---|
 | `TEAM_WORKER_DATA_DIR` | 数据目录 | 配置文件中的 `data_dir`，否则为 `~/.team-worker` |

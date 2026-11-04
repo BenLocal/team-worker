@@ -98,6 +98,8 @@ team-workerd 由第一条 CLI 命令自动拉起，日志写到 home 卷里的 `
 
 ## 容器环境变量
 
+全部环境变量的汇总见 [环境变量一览](../docs/environment-variables.md)。
+
 | 变量 | 用途 |
 | --- | --- |
 | `LLM_API_BASE` | 默认 `providers.yaml` 的 OpenAI 兼容网关地址 |
