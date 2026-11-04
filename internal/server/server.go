@@ -206,6 +206,10 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /v1/teams/{team}/snapshots", s.listSnapshots)
 	m.HandleFunc("POST /v1/teams/{team}/snapshots/{id}/restore", s.restoreSnapshot)
 	m.HandleFunc("DELETE /v1/teams/{team}/snapshots/{id}", s.deleteSnapshot)
+	m.HandleFunc("GET /v1/event-hooks", s.listEventHooks)
+	m.HandleFunc("POST /v1/event-hooks", s.addEventHook)
+	m.HandleFunc("DELETE /v1/event-hooks", s.removeEventHooks)
+	m.HandleFunc("POST /v1/event-hooks/test", s.testEventHook)
 
 	m.HandleFunc("POST /v1/teams/{team}/messages", s.send)
 	m.HandleFunc("POST /v1/teams/{team}/broadcast", s.broadcast)
