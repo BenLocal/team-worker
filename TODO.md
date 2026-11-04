@@ -94,8 +94,8 @@ ClawTeam 为每个 Agent 建独立分支（worktree），team-worker 的 spawn �
 
 team-worker 现有的 `hook` 子命令是给 Agent CLI 回调的，与 ClawTeam 的用户事件 hook 不是一回事，实现时需另起命名。
 
-- [ ] 定义事件类型（任务状态变化、成员加入/退出、Agent 崩溃、预算超限等），实现用户事件 hook 的增删查与测试（对应 ClawTeam `hook list/add/remove/test`）。
-- [ ] 评估是否需要插件机制（ClawTeam `plugin list/info`，如 ralph loop）。
+- [x] 定义事件类型，实现用户事件 hook 的增删查与测试：`event types`、`event hook list/add/remove/test`。共 12 种事件，能对上的沿用 ClawTeam 的名字，新增 `MemberJoined`、`MemberLeft`、`TaskCreated`、`BudgetExceeded`。事件和改动在同一个事务里写进 `event_outbox` 表（迁移 00016，只记录有 hook 订阅的），daemon 依次执行 shell hook 后再删除，重启后补执行。用法见 `docs/collaboration.md`。
+- [x] 评估插件机制：不做。ClawTeam 的插件是进程内加载的 Python 类，唯一的内置插件 ralph loop 由 `spawn --keepalive` 覆盖，其他需求用事件 hook 加脚本实现。
 
 ### 11. MCP server
 

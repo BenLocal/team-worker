@@ -136,3 +136,42 @@ team-worker team snapshot-delete my-team 20261103T081500-before-refactor
 - **不保存**：Agent 进程记录、git worktree 和 harness 运行。它们对应的是进程和 git 里的状态，靠恢复数据库找不回来。
 - **团队删除后仍可恢复**：快照不随 `team cleanup` 删除，恢复时会重建团队。不再需要时用 `snapshot-delete` 删掉。
 - 由旧版本保存的快照可以在新版本恢复：只写回当前表结构里有的列，缺的列取默认值。
+
+## 事件 hook
+
+事件 hook 是由 `team-workerd` 在发生某个事件后执行的 shell 命令，可以用来发通知、写日志、触发 CI 等。它对应 ClawTeam 的 `hook list/add/remove/test`；因为 `hook` 已经用于 Agent CLI 自己的回调，这里放在 `event hook` 下。
+
+```bash
+team-worker event types                                    # 列出可用的事件类型和字段
+team-worker event hook add -e TaskCompleted -c 'notify-send "任务 $TEAM_WORKER_EVENT_TASK_ID 完成"'
+team-worker event hook add -e WorkerCrash -t my-team -c 'cat >> ~/crashes.jsonl'   # -t 只对一个团队生效
+team-worker event hook list
+team-worker event hook test -e WorkerCrash -t my-team -n alice   # 用一个虚构的事件立即执行，显示每个 hook 的结果
+team-worker event hook remove -e WorkerCrash               # 删除该事件的全部 hook；-c 只删命令完全相同的
+```
+
+事件类型沿用 ClawTeam 的名字（能对上的）：
+
+| 事件 | 何时触发 | 字段 |
+|---|---|---|
+| `AfterWorkerSpawn` | 一次 Agent 运行开始：spawn、resume、keepalive 重启 | `agent_name`、`agent_id`、`backend`、`target` |
+| `WorkerExit` | 一次 Agent 运行结束，进行中的任务退回 pending | `agent_name`、`exit_code`、`abandoned_tasks` |
+| `WorkerCrash` | 运行以非 0 退出码结束，且不是被要求停止的（`exit_code` 为 -1 表示退出码未知，如 daemon 发现进程已不在） | `agent_name`、`exit_code`、`error` |
+| `AgentIdle` | 成员执行 `lifecycle idle` 告诉 Leader 没活了 | `agent_name` |
+| `MemberJoined` / `MemberLeft` | 往已有团队加成员（含加入审批通过）/ 移除成员 | `agent_name`（加入时还有 `agent_type`、`user`） |
+| `TaskCreated` | 新建任务 | `task_id`、`subject`、`owner` |
+| `AfterTaskUpdate` | 每次 `task update`，以及成员退出时任务被退回 pending | `task_id`、`old_status`、`new_status`、`owner` |
+| `TaskCompleted` | 任务变为 completed | `task_id`、`owner`、`duration_seconds` |
+| `BudgetExceeded` | 花费第一次达到预算 | `spent_cents`、`budget_cents`、`enforce` |
+| `PhaseTransition` | harness 推进或退回到另一个阶段 | `run_id`、`from_phase`、`to_phase` |
+| `TeamShutdown` | 团队被删除（`team cleanup`） | 无 |
+
+每个事件还带 `type`、`team_name` 和 `timestamp`。hook 从标准输入读到整个事件的 JSON，也能从环境变量读：`TEAM_WORKER_EVENT_TYPE`、`TEAM_WORKER_EVENT_TEAM_NAME`，以及每个字段一个 `TEAM_WORKER_EVENT_<字段名大写>`，列表用逗号连接。环境变量故意不用 `TEAM_WORKER_AGENT_NAME` 这类身份变量，hook 里调用 `team-worker` 不会冒充事件里的成员。
+
+执行方式：
+
+- **在 daemon 的机器上执行**：用 `--remote` 添加的 hook 也在服务器上运行，环境是 `team-workerd` 进程的环境。能调 API 的人本来就能让 daemon 启动任意命令（`spawn`），hook 不额外放宽权限。
+- **不丢事件**：事件和引起它的改动在同一个事务里写进数据库，改动回滚时事件也没有。daemon 执行完一个事件的全部 hook 后才删掉它，中途重启会在下次启动时重新执行，所以 hook 可能执行不止一次，要能安全重跑。只记录有 hook 订阅的事件。
+- **顺序与超时**：同一时间只执行一个 hook，事件按发生顺序处理，同一事件的 hook 按 `-p` 从小到大、再按添加先后执行；每个限时 30 秒。失败（非 0 退出、超时）只写进 `team-workerd.log`，不重试，也不影响其他 hook。
+- **和 ClawTeam 的不同**：只有 shell hook，没有 Python hook；没有 `Before*` 这类能否决操作的事件；ClawTeam 的 `BeforeTaskCreate` 在这里是事后的 `TaskCreated`。`WorkerExit` 每次运行结束都会触发，ClawTeam 只在有任务被退回时触发。`MemberJoined`、`MemberLeft`、`TaskCreated`、`BudgetExceeded` 是新增的；`TeamLaunch`、`BeforeInboxSend`、`AfterInboxReceive`、`HeartbeatTimeout`、workspace 和 transport 相关的事件没有实现。
+- **插件**：不提供 ClawTeam 的 `plugin list/info`。ClawTeam 的插件是进程内加载的 Python 类，唯一的内置插件 ralph loop（成员没做完任务就退出时重新拉起它）由 `spawn --keepalive` 覆盖；其他需求用事件 hook 加脚本实现。

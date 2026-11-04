@@ -197,6 +197,9 @@ team-workerd 记录这些事件：
 | `GET/POST /v1/teams/{team}/snapshots` | 列出团队的快照（新的在前）/ 保存一份快照（请求体可带 `tag`） |
 | `POST /v1/teams/{team}/snapshots/{id}/restore` | 用快照替换团队的状态（请求体 `dryRun` 为真时只返回数量）；团队有运行中的 Agent 时返回 409 |
 | `DELETE /v1/teams/{team}/snapshots/{id}` | 删除快照 |
+| `GET/POST /v1/event-hooks` | 列出全部事件 hook（按执行顺序）/ 添加一个（`event`、`command`、`team`、`priority`，`action` 只能是 `shell`） |
+| `DELETE /v1/event-hooks?event=...&command=...` | 删除一个事件类型的 hook，带 `command` 时只删命令相同的；返回 `{"event": ..., "removed": N}` |
+| `POST /v1/event-hooks/test` | 用虚构的事件（`event`、`team`、`agent`）立即执行匹配的 hook，返回事件内容和每个 hook 的退出码与输出 |
 | `DELETE /v1/teams/{team}/sessions[/{name}]?user=...` | 删除一个 Agent 的会话，不带名字时删除整个团队的会话；返回 `{"cleared": N}` |
 | `GET/POST /v1/teams/{team}/costs` | 用量汇总和明细（`agent` 只筛选明细）/ 上报一次用量 |
 | `PUT /v1/teams/{team}/costs/sessions` | 记录一个原生会话的累计 token，按会话覆盖 |
