@@ -63,7 +63,10 @@ func (s *Store) CreateTask(ctx context.Context, team string, in CreateTaskInput)
 		if err := insertTask(ctx, tx, team, t); err != nil {
 			return err
 		}
-		return addDeps(ctx, tx, team, t.ID, t.BlockedBy)
+		if err := addDeps(ctx, tx, team, t.ID, t.BlockedBy); err != nil {
+			return err
+		}
+		return s.emit(ctx, tx, team, "TaskCreated", map[string]any{"task_id": t.ID, "subject": t.Subject, "owner": t.Owner})
 	})
 	return t, err
 }
@@ -112,6 +115,7 @@ func (s *Store) UpdateTask(ctx context.Context, team, id string, in UpdateTaskIn
 		if err != nil {
 			return err
 		}
+		oldStatus := t.Status
 		now := s.timestamp()
 
 		if in.Status != nil && (*in.Status == model.StatusInProgress || *in.Status == model.StatusCompleted) {
@@ -203,11 +207,30 @@ func (s *Store) UpdateTask(ctx context.Context, team, id string, in UpdateTaskIn
 			return err
 		}
 		if t.Status == model.StatusCompleted {
-			return resolveDependents(ctx, tx, team, t.ID, now)
+			if err := resolveDependents(ctx, tx, team, t.ID, now); err != nil {
+				return err
+			}
 		}
-		return nil
+		return s.emitTaskUpdate(ctx, tx, team, t, oldStatus)
 	})
 	return t, err
+}
+
+// emitTaskUpdate records AfterTaskUpdate and, when the task just completed,
+// TaskCompleted.
+func (s *Store) emitTaskUpdate(ctx context.Context, tx *sql.Tx, team string, t model.Task, oldStatus model.TaskStatus) error {
+	if err := s.emit(ctx, tx, team, "AfterTaskUpdate", map[string]any{
+		"task_id": t.ID, "old_status": oldStatus, "new_status": t.Status, "owner": t.Owner}); err != nil {
+		return err
+	}
+	if t.Status != model.StatusCompleted || oldStatus == model.StatusCompleted {
+		return nil
+	}
+	duration := t.Metadata["duration_seconds"]
+	if duration == nil {
+		duration = 0.0
+	}
+	return s.emit(ctx, tx, team, "TaskCompleted", map[string]any{"task_id": t.ID, "owner": t.Owner, "duration_seconds": duration})
 }
 
 type TaskFilter struct {

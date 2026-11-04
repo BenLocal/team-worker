@@ -240,11 +240,13 @@ func (s *Store) AddMember(ctx context.Context, team string, in AddMemberInput) (
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-		_, err = tx.ExecContext(ctx,
+		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO members (team, name, user_name, agent_id, agent_type, joined_at, plan_required)
 			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			team, m.Name, m.User, m.AgentID, m.AgentType, m.JoinedAt, m.PlanRequired)
-		return err
+			team, m.Name, m.User, m.AgentID, m.AgentType, m.JoinedAt, m.PlanRequired); err != nil {
+			return err
+		}
+		return s.emitJoined(ctx, tx, team, m)
 	})
 	return m, err
 }
@@ -257,10 +259,17 @@ func (s *Store) RemoveMember(ctx context.Context, team, name string) (bool, erro
 			return err
 		}
 		n, err := res.RowsAffected()
-		removed = n > 0
-		return err
+		if err != nil || n == 0 {
+			return err
+		}
+		removed = true
+		return s.emit(ctx, tx, team, "MemberLeft", map[string]any{"agent_name": name})
 	})
 	return removed, err
+}
+
+func (s *Store) emitJoined(ctx context.Context, tx *sql.Tx, team string, m model.Member) error {
+	return s.emit(ctx, tx, team, "MemberJoined", map[string]any{"agent_name": m.Name, "agent_type": m.AgentType, "user": m.User})
 }
 
 // DeleteTeam removes a team and, through cascades, its members, tasks and messages.
@@ -275,8 +284,11 @@ func (s *Store) DeleteTeam(ctx context.Context, name string) (bool, error) {
 			return err
 		}
 		n, err := res.RowsAffected()
-		deleted = n > 0
-		return err
+		if err != nil || n == 0 {
+			return err
+		}
+		deleted = true
+		return s.emit(ctx, tx, name, "TeamShutdown", nil)
 	})
 	return deleted, err
 }

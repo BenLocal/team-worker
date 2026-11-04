@@ -183,6 +183,10 @@ func (s *Store) alertBudget(ctx context.Context, tx *sql.Tx, team string) error 
 	if _, err := tx.ExecContext(ctx, "UPDATE teams SET budget_alerted = 1 WHERE name = ?", team); err != nil {
 		return err
 	}
+	if err := s.emit(ctx, tx, team, "BudgetExceeded", map[string]any{
+		"spent_cents": b.SpentCents, "budget_cents": b.BudgetCents, "enforce": b.Enforce}); err != nil {
+		return err
+	}
 	leader, err := leaderInbox(ctx, tx, team)
 	if err != nil || leader == "" {
 		return err

@@ -42,7 +42,10 @@ func (s *Store) Send(ctx context.Context, team string, in SendInput) (model.Mess
 		if err != nil {
 			return err
 		}
-		return deliver(ctx, tx, team, inbox, msg)
+		if err := deliver(ctx, tx, team, inbox, msg); err != nil || msg.Type != "idle" {
+			return err
+		}
+		return s.emit(ctx, tx, team, "AgentIdle", map[string]any{"agent_name": msg.From})
 	})
 	return msg, err
 }

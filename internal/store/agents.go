@@ -60,8 +60,10 @@ func (s *Store) RegisterAgent(ctx context.Context, a model.Agent) (model.Agent, 
 		if a.PreviousRunID != "" && (err != nil || previous.RunID != a.PreviousRunID || previous.StopRequested || previous.Status != model.AgentExited) {
 			return conflictf("Agent restart was cancelled or replaced")
 		}
+		sameRun := false
 		if err == nil && a.RunID != "" {
 			if previous.RunID == a.RunID {
+				sameRun = true
 				a.Status, a.ExitedAt, a.StopRequested, a.ExitCode = previous.Status, previous.ExitedAt, previous.StopRequested, previous.ExitCode
 				a.StartedAt = previous.StartedAt
 				a.Activity, a.ActivityAt = previous.Activity, previous.ActivityAt
@@ -73,7 +75,11 @@ func (s *Store) RegisterAgent(ctx context.Context, a model.Agent) (model.Agent, 
 			`INSERT OR REPLACE INTO agents (`+agentColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			a.Team, a.Name, a.AgentID, a.Backend, a.Target, a.PID, string(command), a.Cwd,
 			a.Status, a.StartedAt, a.ExitedAt, a.Nudge, a.RunID, a.StopRequested, a.ExitCode, a.Host, a.Activity, a.ActivityAt)
-		return err
+		if err != nil || sameRun {
+			return err
+		}
+		return s.emit(ctx, tx, a.Team, "AfterWorkerSpawn", map[string]any{
+			"agent_name": a.Name, "agent_id": a.AgentID, "backend": a.Backend, "target": a.Target})
 	})
 	return a, err
 }
@@ -211,8 +217,14 @@ func (s *Store) AgentExitedRun(ctx context.Context, team, name, runID string, ex
 		res.Changed = true
 
 		released, err := releaseTasks(ctx, tx, team, name, s.timestamp())
-		if err != nil || len(released) == 0 {
+		if err != nil {
 			return err
+		}
+		if err := s.emitExit(ctx, tx, team, name, exitCode, a.StopRequested, released); err != nil {
+			return err
+		}
+		if len(released) == 0 {
+			return nil
 		}
 		res.Released = released
 		subjects := make([]string, len(released))
@@ -234,6 +246,29 @@ func (s *Store) AgentExitedRun(ctx context.Context, team, name, runID string, ex
 		})
 	})
 	return res, err
+}
+
+// emitExit records WorkerExit, AfterTaskUpdate for each released task and,
+// when the run failed without being asked to stop, WorkerCrash.
+func (s *Store) emitExit(ctx context.Context, tx *sql.Tx, team, name string, exitCode int, stopRequested bool, released []model.Task) error {
+	ids := make([]string, len(released))
+	for i, t := range released {
+		ids[i] = t.ID
+		if err := s.emit(ctx, tx, team, "AfterTaskUpdate", map[string]any{"task_id": t.ID,
+			"old_status": model.StatusInProgress, "new_status": t.Status, "owner": t.Owner}); err != nil {
+			return err
+		}
+	}
+	if err := s.emit(ctx, tx, team, "WorkerExit", map[string]any{
+		"agent_name": name, "exit_code": exitCode, "abandoned_tasks": ids}); err != nil {
+		return err
+	}
+	if exitCode == 0 || stopRequested {
+		return nil
+	}
+	// -1 means the exit code is unknown, e.g. the daemon found the process gone.
+	return s.emit(ctx, tx, team, "WorkerCrash", map[string]any{
+		"agent_name": name, "exit_code": exitCode, "error": fmt.Sprintf("exit code %d", exitCode)})
 }
 
 // releaseTasks returns an agent's in-progress tasks to pending and unlocks them.

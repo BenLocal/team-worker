@@ -161,6 +161,9 @@ func (s *Store) ApproveJoin(ctx context.Context, team, id string, in JoinDecisio
 		if err := saveDecision(ctx, tx, r); err != nil {
 			return err
 		}
+		if err := s.emitJoined(ctx, tx, team, member); err != nil {
+			return err
+		}
 		return deliver(ctx, tx, team, member.InboxName(), model.Message{
 			Type:         "join_approved",
 			From:         in.Caller,

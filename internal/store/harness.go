@@ -288,7 +288,10 @@ func (s *Store) AdvanceHarness(ctx context.Context, team, id string) (model.Harn
 		out = model.HarnessAdvance{ID: r.ID, From: r.Phase, Attempt: r.Attempt}
 		if g.rollback {
 			out.RolledBack = true
-			return s.rollbackHarness(ctx, tx, &r, g.feedback, now, &out)
+			if err := s.rollbackHarness(ctx, tx, &r, g.feedback, now, &out); err != nil {
+				return err
+			}
+			return s.emitPhase(ctx, tx, team, out)
 		}
 		next := model.HarnessPhases[slices.Index(model.HarnessPhases, r.Phase)+1]
 		status := model.HarnessRunning
@@ -303,9 +306,17 @@ func (s *Store) AdvanceHarness(ctx context.Context, team, id string) (model.Harn
 			return err
 		}
 		out.Phase, out.Status = next, status
-		return nil
+		return s.emitPhase(ctx, tx, team, out)
 	})
 	return out, err
+}
+
+// emitPhase records PhaseTransition when an advance changed the phase.
+func (s *Store) emitPhase(ctx context.Context, tx *sql.Tx, team string, out model.HarnessAdvance) error {
+	if out.Phase == "" || out.Phase == out.From {
+		return nil
+	}
+	return s.emit(ctx, tx, team, "PhaseTransition", map[string]any{"run_id": out.ID, "from_phase": out.From, "to_phase": out.Phase})
 }
 
 func (s *Store) rollbackHarness(ctx context.Context, tx *sql.Tx, r *model.HarnessRun, feedback, now string, out *model.HarnessAdvance) error {
