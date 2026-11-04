@@ -99,19 +99,10 @@ team-worker 现有的 `hook` 子命令是给 Agent CLI 回调的，与 ClawTeam 
 
 ### 11. MCP server
 
-- [ ] 评估把团队、任务、消息操作暴露为 MCP 工具（对应 `clawteam/mcp`），供不便调用 CLI 的 Agent 使用。
+- [x] 评估把团队、任务、消息操作暴露为 MCP 工具（对应 `clawteam/mcp`）：不做（2026-11-04 决定）。成员 Agent 都能直接调用 `team-worker` CLI，`--json` 输出可供解析；远程操作走 `--remote`。
 
 ### 12. 配置与诊断
 
 - [x] 实现 `config health`：本地模式检查数据目录能否写入、数据库能否以读写方式打开、socket 权限是否为 0600、daemon 是否应答；远程模式检查服务地址、Key 和服务端是否应答。不会启动 daemon，发现问题时退出码为 1，`--json` 字段名与 ClawTeam 一致。
 - [x] 实现 `config show/set/get`：读写本机 `config.json` 的 `data_dir`、`user`、`server_url`、`workspace`、`default_profile`，来源标为 `env` / `file` / `default`，保留文件里的其他键。
 - [x] 实现交互式 `profile wizard`（标准库逐行问答，不新增依赖）和 `profile doctor claude`（经 API 在 daemon 机器上改 `~/.claude.json`，文件不是合法 JSON 时拒绝而不是覆盖）。
-
-### 13. 其余命令
-
-- [x] `run CLI [GOAL]`：spawn 的简写，团队（默认 `default`）不存在时以该 Agent 为 leader 创建；`--resume` 续接已有团队 leader 的会话。
-- [x] `board overview`（所有团队总览，一次查询）、`board live`（终端内定时重绘，`--json` 每次输出一行）、`board update`（兼容别名）。
-- [ ] 不做：`board attach`（只能在 daemon 机器上操作 tmux，与「CLI 不碰 tmux」冲突；Web 看板的 All terminals 已能同时看全部成员）、`board gource`（依赖本机 gource，需求不明确）。
-- [x] `session clear`：命令和 JSON 输出与 ClawTeam 一致，不带 `--agent` 时清除整个团队的会话；另有 `DELETE /v1/teams/{team}/sessions[/{name}]`。
-- [x] `identity set`（输出可直接 `eval` 的 export 语句）、`harness contracts`（列出名为 `sprint-contract-*` 的交付物）、`lifecycle check-zombies`（这一轮已运行超过 `--max-hours` 且进程存活的 Agent，附带 hook 上报的 activity；有则退出码为 1）。带着 `in_progress` 任务停在输入框的成员仍由 daemon 的卡住检测处理。
-- [ ] 不做或另行评估：ClawTeam 的 file / p2p transport 与 wsh 后端。team-worker 采用单 daemon + HTTP 远程，跨机器场景由远程 API 覆盖。
