@@ -53,6 +53,8 @@ type Server struct {
 	// runDataDir and workerBin configure the agents it starts (SetRunner).
 	runDataDir, workerBin string
 	conduct               conductors
+	// restoreMu keeps restores from resuming the same agent twice.
+	restoreMu sync.Mutex
 }
 
 // New wires the store's change notifications into a hub and registers
@@ -174,6 +176,7 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /v1/teams/{team}/costs/sync", s.syncCosts)
 	m.HandleFunc("POST /v1/teams/{team}/agents/{name}/spawn", s.spawnAgent)
 	m.HandleFunc("POST /v1/teams/{team}/agents/{name}/resume", s.resumeAgent)
+	m.HandleFunc("POST /v1/agents/restore", s.restoreAgents)
 	m.HandleFunc("POST /v1/launch", s.launchTeam)
 	m.HandleFunc("GET /v1/profiles", s.getProfiles)
 	m.HandleFunc("PUT /v1/profiles", s.saveProfiles)

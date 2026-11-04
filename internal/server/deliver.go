@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/benlocal/team-worker/internal/model"
-	"github.com/benlocal/team-worker/internal/proc"
 	"github.com/benlocal/team-worker/internal/store"
 	"github.com/benlocal/team-worker/internal/tmux"
 )
@@ -74,8 +73,7 @@ func (d *Deliverer) Sync(ctx context.Context) {
 	defer d.mu.Unlock()
 	want := map[string]model.Agent{}
 	for _, a := range agents {
-		// A pane id from another machine could name an unrelated pane here.
-		if a.Nudge && a.Backend == "tmux" && a.Target != "" && proc.OnServer(a) {
+		if a.Nudge && a.Backend == "tmux" && a.Target != "" {
 			want[a.Team+"/"+a.Name+"/"+a.RunID+"/"+a.Target] = a
 		}
 	}

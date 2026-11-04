@@ -370,3 +370,25 @@ func resolveInbox(ctx context.Context, q queryer, team, name, user string) (stri
 	}
 	return name, nil
 }
+
+// Leaders returns every team's leader name, chosen as Leader does, in one
+// query. A team without members is left out.
+func (s *Store) Leaders(ctx context.Context) (map[string]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT t.name, t.lead_agent_id, m.name, m.agent_id
+		FROM teams t JOIN members m ON m.team = t.name ORDER BY m.seq`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out, lead := map[string]string{}, map[string]bool{}
+	for rows.Next() {
+		var team, leadID, name, agentID string
+		if err := rows.Scan(&team, &leadID, &name, &agentID); err != nil {
+			return nil, err
+		}
+		if _, ok := out[team]; !ok || (!lead[team] && agentID == leadID) {
+			out[team], lead[team] = name, agentID == leadID
+		}
+	}
+	return out, rows.Err()
+}

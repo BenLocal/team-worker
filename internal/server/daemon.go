@@ -16,7 +16,6 @@ import (
 	"github.com/benlocal/team-worker/internal/board"
 	"github.com/benlocal/team-worker/internal/board/live"
 	"github.com/benlocal/team-worker/internal/config"
-	"github.com/benlocal/team-worker/internal/model"
 	"github.com/benlocal/team-worker/internal/proc"
 	"github.com/benlocal/team-worker/internal/store"
 )
@@ -67,14 +66,8 @@ func Run(ctx context.Context, opts Options) error {
 	if err != nil {
 		return fmt.Errorf("prepare access key: %w", err)
 	}
-	// Agents a remote CLI started run on that client; their pane ids and
-	// pids mean nothing here, so they are never probed (unknown keeps locks).
-	st.Probe = func(a model.Agent) (bool, bool) {
-		if !proc.OnServer(a) {
-			return false, false
-		}
-		return proc.Probe(a)
-	}
+	// Every agent is started by this daemon, so its process is probed here.
+	st.Probe = proc.Probe
 
 	ln, err := listenUnix(opts.Socket)
 	if err != nil {
@@ -135,8 +128,16 @@ func Run(ctx context.Context, opts Options) error {
 	for i, srv := range servers {
 		workers.Go(func() { errCh <- srv.Serve(listeners[i]) })
 	}
-	workers.Go(func() { reapLoop(baseCtx, st, log) })
+	// Resume what the last shutdown left running before the first reap
+	// records those agents as exited.
+	workers.Go(func() {
+		if _, err := handler.Restore(baseCtx); err != nil {
+			log.Warn("agent restore", "err", err)
+		}
+		reapLoop(baseCtx, st, log)
+	})
 	workers.Go(func() { NewNudger(st, log).Run(baseCtx) })
+	workers.Go(func() { NewAnnouncer(st, log).Run(baseCtx) })
 	workers.Go(func() { NewDeliverer(st, handler.hub, log).Run(baseCtx) })
 	log.Info("team-workerd started", "socket", opts.Socket, "db", config.DBPath(opts.DataDir), "pid", os.Getpid())
 

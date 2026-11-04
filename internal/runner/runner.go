@@ -246,7 +246,7 @@ func Spawn(ctx context.Context, e Env, req Request) (_ Result, err error) {
 	}
 
 	rec := model.Agent{Team: req.Team, Name: req.Name, AgentID: req.AgentID, RunID: req.RunID, Backend: req.Backend,
-		Command: req.Command, Cwd: cwd, Nudge: req.Backend == "tmux" && adapter.Nudge(), Host: proc.Host()}
+		Command: req.Command, Cwd: cwd, Nudge: req.Backend == "tmux" && adapter.Nudge()}
 	if _, err := c.RegisterAgent(ctx, rec); err != nil {
 		return Result{}, err
 	}

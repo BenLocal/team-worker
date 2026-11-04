@@ -122,7 +122,6 @@ RUN systemctl enable docker.service magpie.service openbao.service openbao-agent
     && rm -f /var/lib/dbus/machine-id \
     && ln -s /etc/machine-id /var/lib/dbus/machine-id
 COPY docker/magpie-config/ /etc/team-worker/
-COPY --chmod=755 docker/leader-session.sh /usr/local/bin/leader-session
 COPY --chmod=755 docker/container-entrypoint.sh /usr/local/bin/container-entrypoint
 COPY --chmod=755 docker/docker-entrypoint.sh /usr/local/bin/team-worker-docker-entrypoint
 USER node

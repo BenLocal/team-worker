@@ -93,6 +93,35 @@ func (a *app) sessionCmd() *cobra.Command {
 	return cmd
 }
 
+func (a *app) agentRestoreCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "restore",
+		Short: "Resume, in every team, the agents a restart left behind",
+		Long: "Resumes the saved session of every agent still recorded as running, not asked to\n" +
+			"stop, whose process is gone. team-workerd does this itself when it starts; running it\n" +
+			"again waits for that and resumes nothing twice.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			restored, err := a.client().RestoreAgents(cmd.Context())
+			if err != nil {
+				return a.fail(err)
+			}
+			a.emit(restored, func(w io.Writer) {
+				if len(restored) == 0 {
+					fmt.Fprintln(w, "Nothing left to restore; team-workerd resumes agents itself as it starts (see agent list and its log).")
+					return
+				}
+				tw := newTable(w, "TEAM", "AGENT", "STATUS", "ERROR")
+				for _, r := range restored {
+					row(tw, r.Team, r.Agent, r.Status, r.Error)
+				}
+				tw.Flush()
+			})
+			return nil
+		},
+	}
+}
+
 func (a *app) agentResumeCmd() *cobra.Command {
 	var replace, dryRun, keepalive bool
 	var maxRestarts int

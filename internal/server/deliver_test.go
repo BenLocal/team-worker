@@ -154,18 +154,11 @@ func TestDeliverWaitsForStartupAndLivePane(t *testing.T) {
 	}
 }
 
-func TestDeliverWatchesEachLocalAgentAndPastesOnArrival(t *testing.T) {
+func TestDeliverWatchesEachTypingAgentAndPastesOnArrival(t *testing.T) {
 	d, st, pane, _ := newDeliverFixture(t)
 	ctx := context.Background()
-	// Neither gets a goroutine: bob forbids typing, carol runs elsewhere.
+	// bob forbids typing, so he gets no goroutine.
 	if _, err := st.RegisterAgent(ctx, model.Agent{Team: "demo", Name: "bob", Backend: "tmux", Target: "%2"}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.AddMember(ctx, "demo", store.AddMemberInput{Name: "carol"}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.RegisterAgent(ctx, model.Agent{Team: "demo", Name: "carol", Backend: "tmux", Target: "%3", Nudge: true,
-		Host: "other-machine.example"}); err != nil {
 		t.Fatal(err)
 	}
 	runCtx, cancel := context.WithCancel(ctx)

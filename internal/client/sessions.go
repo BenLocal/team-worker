@@ -66,6 +66,13 @@ func (c *Client) ResumeAgent(ctx context.Context, in model.ResumeRequest) (model
 	return out, c.do(ctx, http.MethodPost, teamPath(in.Team, "agents", in.Name, "resume"), nil, in, &out)
 }
 
+// RestoreAgents has the daemon resume the agents a restart left behind, in
+// every team; see Server.Restore.
+func (c *Client) RestoreAgents(ctx context.Context) ([]model.RestoredAgent, error) {
+	var out []model.RestoredAgent
+	return out, c.do(ctx, http.MethodPost, "/v1/agents/restore", nil, nil, &out)
+}
+
 // Launch has the daemon create a team from a template and spawn its agents.
 func (c *Client) Launch(ctx context.Context, in model.LaunchRequest) (model.LaunchResult, error) {
 	var out model.LaunchResult

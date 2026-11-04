@@ -504,3 +504,34 @@ func dedupe(items []string) []string {
 	}
 	return out
 }
+
+// UnassignedPending returns, for every team, the pending tasks nobody owns,
+// in creation order, in one query. Dependencies are not filled in.
+func (s *Store) UnassignedPending(ctx context.Context) (map[string][]model.Task, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT team, "+taskColumns+
+		" FROM tasks WHERE status = ? AND owner = '' ORDER BY rowid", model.StatusPending)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string][]model.Task{}
+	for rows.Next() {
+		var team string
+		t, err := scanTask(teamScanner{rows, &team})
+		if err != nil {
+			return nil, err
+		}
+		out[team] = append(out[team], t)
+	}
+	return out, rows.Err()
+}
+
+// teamScanner reads a leading team column before the task columns.
+type teamScanner struct {
+	row  scanner
+	team *string
+}
+
+func (t teamScanner) Scan(dest ...any) error {
+	return t.row.Scan(append([]any{t.team}, dest...)...)
+}

@@ -18,7 +18,7 @@
 | `TEAM_WORKER_USER` | 多用户场景下的用户名，收件箱按 `<user>_<name>` 区分 | 配置文件的 `user` |
 | `TEAM_WORKER_WORKSPACE` | daemon 的工作区模式：`auto`、`always` 或 `never`，决定 spawn 是否为 Agent 建 git worktree（见 [workspaces.md](workspaces.md)） | 配置文件的 `workspace`，否则 `auto` |
 | `TEAM_WORKER_DEFAULT_PROFILE` | spawn 未指定 `--profile` 时使用的运行配置（见 [profiles.md](profiles.md)） | 配置文件的 `default_profile` |
-| `TEAM_WORKER_START_BLOCKED_FILE` | 带 keepalive 的 Agent 等该文件被删除后才启动子进程；Docker 用它等待 provider Key 配置好 | 不设；Docker 入口脚本设为 `/tmp/team-worker-provider-pending` |
+| `TEAM_WORKER_START_BLOCKED_FILE` | 带 keepalive 的 Agent 等该文件被删除后才启动子进程；Docker 用它等待 provider Key 配置好，daemon 开机续接的 Agent 也一样等 | 不设；Docker 入口脚本在拉起 daemon 前设为 `/tmp/team-worker-provider-pending` |
 
 ## daemon（team-workerd）
 
@@ -48,7 +48,7 @@ spawn 启动 Agent 时把这些变量写进 Agent 的进程环境，Agent 里的
 | `TEAM_WORKER_AGENT_ID` | Agent ID | 随机生成 |
 | `TEAM_WORKER_AGENT_TYPE` | Agent 类型 | `general-purpose` |
 | `TEAM_WORKER_AGENT_LEADER` | 是否为团队 Leader（`1` / `0`） | 否 |
-| `TEAM_WORKER_TEAM_NAME` | 所属团队；Docker 容器里也是入口脚本注册的团队名 | 无；容器默认 `team-worker-docker` |
+| `TEAM_WORKER_TEAM_NAME` | 所属团队 | 无 |
 | `TEAM_WORKER_RUN_ID` | 本次运行的 ID，用于会话记录和 `agent` 生命周期命令的 `--run-id` | 无 |
 | `TEAM_WORKER_WORKSPACE_DIR` | spawn 给 Agent 设定的工作目录（建了 worktree 时是 worktree 路径） | 无 |
 | `TEAM_WORKER_BIN` | spawn 使用的 `team-worker` 可执行文件路径 | 无 |
@@ -86,14 +86,11 @@ team-worker 读取 Agent CLI 的会话和用量文件时，按这些变量找目
 
 这些变量在容器启动时传入（`docker run -e`、compose 的 `environment:`、`TEAM_WORKER_ENV_FILE` 指定的 env 文件），由入口脚本、`team-worker-ops` 和 systemd 单元读取。systemd 模式下，`team-worker-ops systemd prepare` 把容器环境写进 `/run/team-worker/agent.env`，各服务、Leader 和成员都继承它。
 
-### 团队与 Leader
+### 模型
 
 | 变量 | 作用 | 默认值 |
 |---|---|---|
-| `TEAM_WORKER_TEAM_NAME` | 容器启动时注册的团队名 | `team-worker-docker` |
 | `TEAM_WORKER_MODEL` | Magpie 模型路由，优先于 `providers.yaml` 的 `claude.model`；入口脚本把解析结果写回这个变量 | `providers.yaml` 的配置 |
-| `TEAM_WORKER_LEADER_RESTART_DELAY` | Leader 续接前的初始等待秒数，必须是正整数，最大 60 | `10` |
-| `TEAM_WORKER_LEADER_MAX_RESTARTS` | Leader 连续快速退出后最多续接几次 | `3` |
 | `LLM_API_BASE` | 默认 `providers.yaml` 里 OpenAI 兼容网关的地址（`url_env`） | 无，使用默认配置时必须提供 |
 
 ### 服务开关
@@ -164,7 +161,7 @@ Dockerfile 用 ENV 设好、一般不需要改的变量：
 | `TEAM_WORKER_CONFIG_DIR` | 配置目录，从中挂载 `providers.yaml`、`skills.yaml`、`prompt.yaml`、`mcp.yaml`、`plugin.yaml`，以及可选的 `openbao.yaml`、`openbao.token`、`gitconfig` | `docker/magpie-config` |
 | `TEAM_WORKER_PROVIDERS_FILE`、`TEAM_WORKER_SKILLS_FILE`、`TEAM_WORKER_PROMPT_FILE` 等 | 宿主机上的单个配置文件，优先于配置目录里的同名文件 | 配置目录里的文件 |
 
-`start` 会把宿主机上已设置的以下变量原样传进容器：`ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_BASE_URL`、`TEAM_WORKER_MODEL`、`TEAM_WORKER_WEB_URL`、`TEAM_WORKER_API_KEY`、`TEAM_WORKER_HTTP_ADDR`、`TEAM_WORKER_OPENBAO`、`TEAM_WORKER_OPENBAO_AUTO_UNSEAL`、`TEAM_WORKER_MAGPIE_SESSION_LOGIN`、`TEAM_WORKER_OPENBAO_SESSION_LOGIN`、`TEAM_WORKER_TEAM_NAME` 和各代理变量。`TEAM_WORKER_DIND=1` 时以 privileged、systemd 模式启动。Magpie 接管模型路由时，入口脚本会清掉 `ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_BASE_URL`、`ANTHROPIC_MODEL`。
+`start` 会把宿主机上已设置的以下变量原样传进容器：`ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_BASE_URL`、`TEAM_WORKER_MODEL`、`TEAM_WORKER_WEB_URL`、`TEAM_WORKER_API_KEY`、`TEAM_WORKER_HTTP_ADDR`、`TEAM_WORKER_OPENBAO`、`TEAM_WORKER_OPENBAO_AUTO_UNSEAL`、`TEAM_WORKER_MAGPIE_SESSION_LOGIN`、`TEAM_WORKER_OPENBAO_SESSION_LOGIN` 和各代理变量。`TEAM_WORKER_DIND=1` 时以 privileged、systemd 模式启动。Magpie 接管模型路由时，入口脚本会清掉 `ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_BASE_URL`、`ANTHROPIC_MODEL`。
 
 ## 镜像构建参数
 

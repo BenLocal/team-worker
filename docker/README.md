@@ -23,23 +23,25 @@ TEAM_WORKER_ENV_FILE=/绝对路径/team-worker.env \
 
 ## 启动流程与任务通知
 
-容器启动时依次：导入 Magpie 配置（providers、插件、技能、MCP、Instructions）→ 第一条 CLI 命令自动拉起 `team-workerd`（看板、HTTP 监听和页头链接都由镜像的环境变量配置，不管哪个进程先拉起，配置都一样）→ 启动 Nginx → 注册团队 `team-worker-docker`（`TEAM_WORKER_TEAM_NAME` 可改）和 Leader → 在 tmux 中启动 Leader → 启动 `team-worker-ops leader watch`。已有团队会复用；Worker 在 Leader 分配任务时才创建。
+容器启动时依次：导入 Magpie 配置（providers、插件、技能、MCP、Instructions）→ 第一条 CLI 命令自动拉起 `team-workerd`（看板、HTTP 监听和页头链接都由镜像的环境变量配置，不管哪个进程先拉起，配置都一样）→ 启动 Nginx。容器不再自带默认团队：用 `./docker/team-worker.sh shell` 进入后以 `team-worker team spawn-team`、`team-worker spawn`（或 `launch` 模板）创建团队和成员。
+
+team-workerd 启动时续接上次关停时还在运行的 Agent，所有团队都算：记录为运行中、没有被 `agent stop` 停下、进程已不在、并且保存了原生会话的 Agent 按保存的参数（含 keepalive）`agent resume`，上下文保留；被停下的、keepalive 放弃重试的不续接。入口脚本在技能、MCP、Instructions 就位后才拉起 daemon，再执行 `team-worker agent restore` 等它恢复完；这条命令也可以随时手动执行，已在运行的不会再起一次。
 
 消息由 team-worker 自己送到 Agent 面前，规则和容器外完全一样（见仓库的 [docs/agents.md](../docs/agents.md)）：
 
-- Leader 和 Claude Worker 装有 team-worker hook：每轮结束时收到新消息、自己的待办任务和团队进展；干活途中也会收到新消息。Leader 的 hook 由入口脚本通过 `claude --settings "$(team-worker hook settings --role leader)"` 装上。
+- Leader 和 Claude Worker 装有 team-worker hook：每轮结束时收到新消息、自己的待办任务和团队进展；干活途中也会收到新消息。
 - pi Worker 由内置扩展在空闲时自己开始新一轮。
 - 新消息一到，team-workerd 就把它从收件箱取走、粘贴进成员的 tmux 窗口（和 ClawTeam 的 `runtime watch` 一样，同一发送人 30 秒节流）；只有 hook 上报为「工作中」的 Claude 和 pi 交给 hook 投递。
-- `leader watch` 每 2 秒检查一次：出现新的、没有负责人的 pending 任务时，给 Leader 的收件箱发一条消息。它不读取也不移走任何收件箱。
+- team-workerd 每 2 秒检查一次每个团队：出现新的、没有负责人的 pending 任务时，给该团队 Leader 的收件箱发一条消息，停在输入框的 Leader 因此也会收到。
 
 与 ClawTeam 面板不同，team-worker 的看板是只读的，没有 New Task 按钮，也没有 OpenAPI。新增任务在容器内用 CLI：
 
 ```bash
 ./docker/team-worker.sh shell
-team-worker task create team-worker-docker "实现登录功能" -d "说明……"
+team-worker task create <团队> "实现登录功能" -d "说明……"
 ```
 
-Leader 通过 `team-worker spawn --keepalive` 运行，保存准确的原生会话 ID；后续容器启动有保存的会话时使用 `agent resume`。Claude 进程未经批准退出后，默认等待 10 秒再续接，连续快速退出最多重试 3 次，等待时间逐次加倍、最长 1 分钟；运行满 1 分钟后重置连续次数。用 `TEAM_WORKER_LEADER_RESTART_DELAY` 调整初始间隔，用 `TEAM_WORKER_LEADER_MAX_RESTARTS` 调整次数上限。批准关停或 `agent stop` 后不再重启。供应商凭据错误需自行修正；tmux 会保留错误信息，不能只凭会话存在就判断模型可用。
+用 `--keepalive` spawn 的成员保存准确的原生会话 ID；进程未经批准退出后按 `--max-restarts`、`--restart-delay` 续接，等待时间逐次加倍、最长 1 分钟，运行满 1 分钟后重置连续次数。批准关停或 `agent stop` 后不再重启。供应商凭据错误需自行修正；tmux 会保留错误信息，不能只凭会话存在就判断模型可用。
 
 ## 更新二进制而不重建镜像
 
@@ -103,12 +105,9 @@ team-workerd 由第一条 CLI 命令自动拉起，日志写到 home 卷里的 `
 | 变量 | 用途 |
 | --- | --- |
 | `LLM_API_BASE` | 默认 `providers.yaml` 的 OpenAI 兼容网关地址 |
-| `TEAM_WORKER_TEAM_NAME` | 容器团队名，默认 `team-worker-docker` |
 | `TEAM_WORKER_API_KEY` | 覆盖并保存到 SQLite 的共享 Web / CLI HTTP Key；默认自动生成 |
 | `TEAM_WORKER_HTTP_ADDR` | daemon 的 HTTP 监听地址，镜像默认 `127.0.0.1:8082`，内置 Nginx 路由依赖它；`TEAM_WORKER_BOARD`、`TEAM_WORKER_BOARD_LINKS`、`TEAM_WORKER_WEB_BASE_PATH` 同样由镜像设好，一般不用改 |
 | `TEAM_WORKER_MODEL` | Magpie 模型路由，优先于 `providers.yaml` 的 `claude.model` |
-| `TEAM_WORKER_LEADER_RESTART_DELAY` | Leader 续接的初始等待秒数，默认 10，最大 60 |
-| `TEAM_WORKER_LEADER_MAX_RESTARTS` | Leader 连续快速退出后的最大续接次数，默认 3 |
 | `TEAM_WORKER_DIND` | 设为 `1` 启用 Docker in Docker（systemd 模式） |
 | `TEAM_WORKER_MASKING` | 默认在 home 卷首次启动时打开 Magpie 的 Privacy masking（发给模型供应商的密钥、密码、token 换成占位符）；之后在 Magpie 里关掉会保持关闭。设为 `0` 跳过 |
 | `TEAM_WORKER_OPENBAO` | 默认 `1`，安装并启动 OpenBao；设为 `0` 关闭启动 |
@@ -201,7 +200,6 @@ raft 会记住创建数据时的节点名（`openbao.hcl` 里是 `team-worker`�
 | `plugins FILE` / `skills [--update] [FILE]` / `mcp FILE` / `prompt FILE` | 导入插件、技能、MCP、Instructions |
 | `openbao FILE` | 导入密钥并启动 OpenBao Agent |
 | `systemd prepare\|agent\|magpie` | DinD 模式下把运行配置交给 systemd，并启动对应服务 |
-| `leader prepare\|register\|watch` | 注册团队与 Leader（开启消息粘贴），把新的未分配任务发到 Leader 收件箱 |
 | `openbao --wait-rendered DURATION FILE` | 等待 OpenBao Agent 为本次启动渲染 openbao.yaml 声明的文件 |
 | `openbao-raft` | OpenBao 启动前把其他节点名下的 raft 数据恢复为本节点（每个数据目录一次） |
 

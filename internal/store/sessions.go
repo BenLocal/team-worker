@@ -128,3 +128,26 @@ func (s *Store) StopTeamAgents(ctx context.Context, team string) ([]model.Agent,
 	})
 	return agents, err
 }
+
+// Sessions returns every saved session without a user, keyed by team and
+// agent ("team/agent"), in one query.
+func (s *Store) Sessions(ctx context.Context) (map[string]model.Session, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT team, agent, data FROM sessions WHERE user_name = ''")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]model.Session{}
+	for rows.Next() {
+		var team, agent, data string
+		if err := rows.Scan(&team, &agent, &data); err != nil {
+			return nil, err
+		}
+		var session model.Session
+		if err := json.Unmarshal([]byte(data), &session); err != nil {
+			return nil, err
+		}
+		out[team+"/"+agent] = session
+	}
+	return out, rows.Err()
+}

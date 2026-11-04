@@ -1,7 +1,7 @@
 // Command team-worker-ops prepares and supervises the services inside the
 // team-worker Docker image: Magpie configuration, skills, MCP servers,
-// plugins, instructions, OpenBao secrets, Docker proxies, systemd hand-off
-// and the leader runtime.
+// plugins, instructions, OpenBao secrets, Docker proxies and the systemd
+// hand-off.
 package main
 
 import (
@@ -22,7 +22,7 @@ func main() {
 	}
 	root.AddCommand(
 		proxyCmd(), magpieCmd(), pluginsCmd(), skillsCmd(), mcpCmd(), promptCmd(),
-		openbaoCmd(), openbaoRaftCmd(), systemdCmd(), leaderCmd(), maskingCmd(),
+		openbaoCmd(), openbaoRaftCmd(), systemdCmd(), maskingCmd(),
 	)
 	if err := root.Execute(); err != nil {
 		var exit exitError

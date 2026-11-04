@@ -8,8 +8,8 @@ usage() {
 用法：
   ./team-worker.sh build                     构建镜像
   ./team-worker.sh bins                      编译 team-worker、team-workerd、team-worker-ops 到二进制目录
-  ./team-worker.sh start [项目目录] [任务]    启动容器并连接 Leader
-  ./team-worker.sh attach                    重新连接 tmux
+  ./team-worker.sh start [项目目录]          启动容器；上次在运行的 Agent 由 team-workerd 自动续接
+  ./team-worker.sh attach                    连接容器里 Agent 所在的 tmux
   ./team-worker.sh shell                     进入容器 Bash（可运行 claude 登录、team-worker 命令）
   ./team-worker.sh web                       显示两个 Web 界面地址
   ./team-worker.sh magpie [参数...]           运行 Magpie CLI（无参数进入 TUI）
@@ -77,7 +77,6 @@ case "$action" in
         ;;
     start)
         project=$(cd -- "${1:-.}" && pwd)
-        task=${2:-}
         if docker container inspect "$NAME" >/dev/null 2>&1; then
             echo "容器 $NAME 已存在。请用 attach/shell，或 stop 后重新 start。" >&2
             exit 1
@@ -127,7 +126,7 @@ case "$action" in
         for var in ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL TEAM_WORKER_MODEL TEAM_WORKER_WEB_URL \
             TEAM_WORKER_API_KEY TEAM_WORKER_HTTP_ADDR \
             TEAM_WORKER_OPENBAO TEAM_WORKER_OPENBAO_AUTO_UNSEAL TEAM_WORKER_MAGPIE_SESSION_LOGIN \
-            TEAM_WORKER_OPENBAO_SESSION_LOGIN TEAM_WORKER_TEAM_NAME \
+            TEAM_WORKER_OPENBAO_SESSION_LOGIN \
             MIRROR_HTTP_PROXY HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy ALL_PROXY all_proxy; do
             if [[ -n ${!var:-} ]]; then options+=(-e "$var"); fi
         done
@@ -137,23 +136,27 @@ case "$action" in
             -e "TEAM_WORKER_WEB_PORT=${TEAM_WORKER_WEB_PORT:-8080}" \
             --mount "type=bind,source=$project,target=/workspace" \
             --mount "type=volume,source=${NAME}-home,target=/home/node" \
-            ${options[@]+"${options[@]}"} "$IMAGE" start "$task" >/dev/null
-        # Wait until the entrypoint has created the tmux session, or report its error.
+            ${options[@]+"${options[@]}"} "$IMAGE" start >/dev/null
+        # Wait until the entrypoint has the Web board up, or report its error.
         ready=false
-        for ((i=0; i<250; i++)); do
-            if docker exec --user node "$NAME" tmux has-session -t team-worker 2>/dev/null; then
+        for ((i=0; i<600; i++)); do
+            if docker exec --user node "$NAME" curl --noproxy '*' -fsS --max-time 1 \
+                http://127.0.0.1:8080/team-worker/ >/dev/null 2>&1; then
                 ready=true; break
             fi
             if [[ $(docker inspect -f '{{.State.Running}}' "$NAME") != true ]]; then break; fi
-            sleep 0.2
+            sleep 0.5
         done
         if [[ $ready != true ]]; then docker logs "$NAME"; exit 1; fi
-        if [[ -t 0 && -t 1 ]]; then
-            exec docker exec --user node -it "$NAME" tmux attach-session -t team-worker
-        fi
-        echo "已启动 ${NAME}；运行 ./team-worker.sh attach 连接 Leader。"
+        echo "已启动 ${NAME}；./team-worker.sh web 查看地址，./team-worker.sh shell 里用 team-worker team spawn-team 创建团队。"
         ;;
-    attach) exec docker exec --user node -it "$NAME" tmux attach-session -t team-worker ;;
+    attach)
+        if ! docker exec --user node "$NAME" tmux has-session 2>/dev/null; then
+            echo "容器 $NAME 里还没有运行中的 Agent。" >&2
+            exit 1
+        fi
+        exec docker exec --user node -it "$NAME" tmux attach-session
+        ;;
     shell) exec docker exec --user node -it "$NAME" bash ;;
     web)
         docker exec --user node "$NAME" python3 -c '

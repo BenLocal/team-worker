@@ -87,6 +87,15 @@ type ResumeRequest struct {
 	DryRun       bool           `json:"dryRun,omitempty"`
 }
 
+// RestoredAgent is one agent a restore tried to resume: Status is "resumed"
+// or "failed", with Error saying why.
+type RestoredAgent struct {
+	Team   string `json:"team"`
+	Agent  string `json:"agent"`
+	Status string `json:"status"`
+	Error  string `json:"error,omitempty"`
+}
+
 // LaunchRequest creates a team from a template and spawns its agents. The
 // template is TemplateText when set (a file the client read), else the
 // daemon's template called Template.

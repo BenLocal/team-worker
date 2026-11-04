@@ -412,3 +412,32 @@ func TestWorkspacesAreKeptPerAgentAndRepository(t *testing.T) {
 		t.Fatalf("%+v %v", left, err)
 	}
 }
+
+func TestLeadersPicksEachTeamsLeaderLikeLeader(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	newTeam(t, s, "alice", "bob")
+	if _, err := s.CreateTeam(ctx, CreateTeamInput{Name: "orphan", LeaderName: "lead", LeaderID: "lead-id"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddMember(ctx, "orphan", AddMemberInput{Name: "carol"}); err != nil {
+		t.Fatal(err)
+	}
+	// The recorded leader left; Leader then falls back to the first member.
+	if _, err := s.db.ExecContext(ctx, "UPDATE teams SET lead_agent_id = 'gone' WHERE name = 'orphan'"); err != nil {
+		t.Fatal(err)
+	}
+	leaders, err := s.Leaders(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, team := range []string{"demo", "orphan"} {
+		want, err := s.Leader(ctx, team)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if leaders[team] != want.Name {
+			t.Fatalf("%s: Leaders says %q, Leader says %q", team, leaders[team], want.Name)
+		}
+	}
+}

@@ -208,7 +208,7 @@ hook 只在 Agent 这一轮还没结束时起作用。Agent 已经停在输入�
 - **刚启动的 Agent**：启动后的前 15 秒不粘贴，免得和第一条提示词撞在一起。
 - **窗口已经不在了**：不取消息，消息留在收件箱里，避免取走后粘贴失败而丢失。
 
-daemon 只能往自己机器上的 tmux 窗口粘贴；用远程 CLI 在别的机器上启动的 Agent 收不到粘贴，仍由 hook 和 Stop hook 投递。subprocess 后端没有终端，也不粘贴。
+所有 Agent 都由 daemon 在它所在的机器上启动，daemon 直接探测、粘贴到这些进程。subprocess 后端没有终端，不粘贴，仍由 hook 和 Stop hook 投递。
 
 ### 卡住的成员
 

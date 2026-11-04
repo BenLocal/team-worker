@@ -51,10 +51,6 @@ if ! git rev-parse --verify HEAD >/dev/null 2>&1; then
 fi
 workspace=$(git rev-parse --show-toplevel)
 cd "$workspace"
-if [[ ! ${TEAM_WORKER_LEADER_RESTART_DELAY:-10} =~ ^[1-9][0-9]*$ ]]; then
-    echo 'TEAM_WORKER_LEADER_RESTART_DELAY must be a positive number of seconds.' >&2
-    exit 1
-fi
 # Apply the file on every start, including docker start on an existing container.
 TEAM_WORKER_MODEL=$(team-worker-ops magpie \
     "${TEAM_WORKER_PROVIDERS_FILE:-/etc/team-worker/providers.yaml}")
@@ -81,16 +77,6 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 143' TERM
 trap 'exit 130' INT
-# team-workerd starts on the first CLI call, configured by the image's
-# environment: the HTTP API, the web board Nginx publishes under
-# /team-worker/ and its header links. Whichever process makes that call
-# starts the same daemon, so none can take the data directory with another
-# setup; if the daemon stops, the next CLI call starts it again.
-if [[ ${TEAM_WORKER_OPENBAO:-0} != 1 ]]; then export TEAM_WORKER_BOARD_LINKS="Magpie=/magpie/"; fi
-if ! env -u TEAM_WORKER_NO_AUTOSTART team-worker team discover >/dev/null; then
-    echo 'team-workerd failed to start; see team-workerd.out in the data directory.' >&2
-    exit 1
-fi
 magpie_pid=
 if [[ ${TEAM_WORKER_DIND:-0} != 1 ]]; then
     magpie web --addr 127.0.0.1:3430 --no-open &
@@ -133,6 +119,22 @@ team-worker-ops mcp \
     "${TEAM_WORKER_MCP_FILE:-/etc/team-worker/mcp.yaml}"
 team-worker-ops prompt \
     "${TEAM_WORKER_PROMPT_FILE:-/etc/team-worker/prompt.yaml}"
+# team-workerd starts on the first CLI call, configured by the image's
+# environment: the HTTP API, the web board Nginx publishes under
+# /team-worker/ and its header links. Whichever process makes that call
+# starts the same daemon, so none can take the data directory with another
+# setup; if the daemon stops, the next CLI call starts it again. It starts
+# after the skills, MCP servers and prompts are in place because it resumes
+# the agents the last shutdown left running, in every team, as it starts.
+# Supervised agents wait for the provider marker, the daemon's included.
+export TEAM_WORKER_START_BLOCKED_FILE=/tmp/team-worker-provider-pending
+if [[ ${TEAM_WORKER_OPENBAO:-0} != 1 ]]; then export TEAM_WORKER_BOARD_LINKS="Magpie=/magpie/"; fi
+if ! env -u TEAM_WORKER_NO_AUTOSTART team-worker team discover >/dev/null; then
+    echo 'team-workerd failed to start; see team-workerd.out in the data directory.' >&2
+    exit 1
+fi
+# Waits for the daemon's own restore and reports what it resumed.
+team-worker agent restore || echo 'warning: restoring the agents failed; see team-workerd.log in the data directory.' >&2
 # Signing in to Magpie and OpenBao with the board session is opt-in; Nginx
 # includes the pieces for the ones that are on.
 rm -rf /tmp/team-worker-nginx && mkdir -p /tmp/team-worker-nginx
@@ -152,36 +154,6 @@ for ((i=0; i<50; i++)); do
     sleep 0.2
 done
 if [[ $ready != true ]]; then echo 'The Web board failed to start.' >&2; exit 1; fi
-export TEAM_WORKER_TEAM_NAME="${TEAM_WORKER_TEAM_NAME:-team-worker-docker}"
-identity=$(team-worker-ops leader prepare "$TEAM_WORKER_TEAM_NAME")
-read -r TEAM_WORKER_AGENT_NAME TEAM_WORKER_AGENT_ID <<< "$identity"
-export TEAM_WORKER_AGENT_NAME TEAM_WORKER_AGENT_ID
-export TEAM_WORKER_AGENT_TYPE=leader TEAM_WORKER_AGENT_LEADER=1 TEAM_WORKER_WORKSPACE_DIR="$workspace"
-team=$TEAM_WORKER_TEAM_NAME
-prompt="你是团队 $team 的 Leader，名字是 $TEAM_WORKER_AGENT_NAME。团队已注册，直接使用它。按第一条提示词里的 Leader Protocol 完成用户任务。用 team-worker spawn tmux --team $team -n <名字> --task <任务> 创建 Worker（默认运行 claude）；Leader 和所有 Worker 都必须在本容器运行。收件箱消息、Worker 的进展和新的未分配 pending 任务会在你每轮结束时自动送到你面前（team-worker hook），你停在输入框时会收到一行提醒；不需要执行 task wait。收到任务通知时，检查任务列表，主动接手未分配的 pending 任务，按需拆分、分配并汇总结果到任务描述。工作目标以成员专属提示词和当前任务列表为准。"
-# Use the CLI's shared bounded supervisor and exact-session persistence.
-export TEAM_WORKER_START_BLOCKED_FILE=/tmp/team-worker-provider-pending
-leader_delay=${TEAM_WORKER_LEADER_RESTART_DELAY:-10}
-if [[ ! $leader_delay =~ ^[1-9][0-9]*$ ]]; then
-    echo 'TEAM_WORKER_LEADER_RESTART_DELAY must be a positive number of seconds.' >&2
-    exit 1
-fi
-leader_options=(--keepalive --max-restarts "${TEAM_WORKER_LEADER_MAX_RESTARTS:-3}" --restart-delay "${leader_delay}s")
-saved_session=$(team-worker --json session show "$team" --agent "$TEAM_WORKER_AGENT_NAME" 2>/dev/null || true)
-if [[ -n $saved_session ]] && python3 -c 'import json,sys; sys.exit(not bool(json.load(sys.stdin).get("sessionId")))' <<< "$saved_session"; then
-    if [[ -n ${1:-} ]]; then leader_options+=(--task "$1"); fi
-    team-worker agent resume "$team" "$TEAM_WORKER_AGENT_NAME" --replace "${leader_options[@]}"
-else
-    team-worker spawn tmux --team "$team" -n "$TEAM_WORKER_AGENT_NAME" --cwd "$workspace" \
-        --no-skip-permissions "${leader_options[@]}" \
-        --task "${1:-检查团队任务列表，认领并执行 pending 任务；没有任务时等待任务通知。}" \
-        -- claude --append-system-prompt "$prompt" --allowedTools 'Bash(team-worker *)'
-fi
-team_session="team-worker-$team"
-# A fixed session name lets the host script attach without knowing the team.
-tmux new-session -d -s team-worker -t "$team_session"
-team-worker-ops leader watch "$team" "$TEAM_WORKER_AGENT_NAME" &
-pids+=($!)
 # Detaching tmux keeps agents alive; a failed Web service stops the container.
 set +e
 wait -n "${pids[@]}"
