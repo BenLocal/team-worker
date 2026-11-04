@@ -51,7 +51,7 @@
 
 ## 📇 项目 Skill 索引（全仓 SKILL.md，脚本生成）
 <!-- SKILLS:START -->
-- **teamworker** — 从团队外部远程操作已部署的 team-worker 多 Agent 团队（默认 部署主机 上的部署，替代原 ClawTeam OpenAPI）：查看团队和看板、给成员派任务、给 Leader 发消息、等… （`skills/teamworker`）
+- **teamworker** — 从团队外部远程操作已部署的 team-worker 多 Agent 团队（替代原 ClawTeam OpenAPI）：查看团队和看板、给成员派任务、给 Leader 发消息、等任务完成、查 Agent… （`skills/teamworker`）
 <!-- SKILLS:END -->
 
 ## 📂 模块文档索引（docs/agents-dot-md/，脚本生成）

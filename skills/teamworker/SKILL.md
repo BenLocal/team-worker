@@ -1,6 +1,6 @@
 ---
 name: teamworker
-description: 从团队外部远程操作已部署的 team-worker 多 Agent 团队（默认 部署主机 上的部署，替代原 ClawTeam OpenAPI）：查看团队和看板、给成员派任务、给 Leader 发消息、等任务完成、查 Agent 存活和费用。用户提到 teamworker、ClawTeam、部署主机 上的团队，要给已部署团队派活、查进度或等结果时使用。在本机建团队或启动 Agent 不用本 skill：直接用 team-worker CLI（见仓库 README），被 spawn 的 Agent 在第一条提示词里收到 Leader 或 Worker 的协作规则。
+description: 从团队外部远程操作已部署的 team-worker 多 Agent 团队（替代原 ClawTeam OpenAPI）：查看团队和看板、给成员派任务、给 Leader 发消息、等任务完成、查 Agent 存活和费用。用户提到 teamworker、ClawTeam、服务器上的团队，要给已部署团队派活、查进度或等结果时使用。在本机建团队或启动 Agent 不用本 skill：直接用 team-worker CLI（见仓库 README），被 spawn 的 Agent 在第一条提示词里收到 Leader 或 Worker 的协作规则。
 ---
 
 # 远程操作 team-worker 团队
@@ -22,7 +22,7 @@ description: 从团队外部远程操作已部署的 team-worker 多 Agent 团�
      }
    }
    ```
-   - `server_url` 是完整的 API 地址，**要带上反向代理的路径**（115 是 `/team-worker-api`），不带时请求会落到 Nginx 的其他位置，返回 500。
+   - `server_url` 是完整的 API 地址，**要带上反向代理的路径**（示例部署是 `/team-worker-api`），不带时请求会落到 Nginx 的其他位置，返回 500。
    - `as` 是消息和任务的发起人名字，默认 `operator`。需要经过代理才能连上时加 `"use_proxy": true`。
    - 没有地址时问用户要，不要猜。Key 由部署方提供，或在服务器上执行 `docker exec --user node <容器名> team-worker key show` 读取。不要把 Key 写进命令行、仓库或回复。
 3. **自检**：`tw config health`。它显示用的是哪个远程配置、Key 是否设置、服务端是否应答，`config.json` 存了 Key 却对其他用户可读时也会报出来；有问题时退出码为 1。
