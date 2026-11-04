@@ -27,7 +27,7 @@ backend = "tmux"              # tmux 或 subprocess，默认 tmux
 repos = ["/srv/app"]          # 可选，git 仓库（daemon 机器上的路径）：每个 Agent 一个 worktree，也作为团队的默认仓库
 
 [template.env]                # 可选，所有 Agent 共用的环境变量，值里可以用 ${NAME}
-GIT_AUTHOR_NAME = "team-bot"
+TZ = "Asia/Shanghai"
 
 [template.leader]             # 必填，团队的 leader
 name = "lead"
