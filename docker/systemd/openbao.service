@@ -8,6 +8,9 @@ Group=node
 EnvironmentFile=/run/team-worker/agent.env
 ExecCondition=/bin/sh -c 'test "$${TEAM_WORKER_OPENBAO:-0}" = 1'
 ExecStartPre=/usr/bin/mkdir -p -m 700 /home/node/.openbao/data
+# Raft data from a deployment with another node ID would leave this node a
+# standby that never serves secrets; recover it as this node once.
+ExecStartPre=/usr/local/bin/team-worker-ops openbao-raft
 ExecStart=/usr/local/bin/bao server -config=/etc/openbao/openbao.hcl
 Restart=always
 RestartSec=3

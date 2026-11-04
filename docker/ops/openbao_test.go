@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -29,6 +30,11 @@ type fakeBao struct {
 	stored      map[string]map[string]any
 	initialized bool
 	sealed      bool
+	// Logins with these secret IDs fail; loginsFail fails every login until
+	// the AppRole is deleted.
+	badSecrets map[string]bool
+	loginsFail bool
+	secretSeq  int
 }
 
 func newFakeBao(t *testing.T) (*fakeBao, *baoClient) {
@@ -70,7 +76,22 @@ func (f *fakeBao) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case strings.HasSuffix(path, "/role-id"):
 		reply(map[string]any{"data": map[string]any{"role_id": "role-123"}})
 	case strings.HasSuffix(path, "/secret-id"):
-		reply(map[string]any{"data": map[string]any{"secret_id": "secret-456"}})
+		id := "secret-456"
+		if f.secretSeq > 0 {
+			id = fmt.Sprintf("secret-%d", 456+f.secretSeq)
+		}
+		f.secretSeq++
+		reply(map[string]any{"data": map[string]any{"secret_id": id}})
+	case path == "auth/approle/login":
+		body, _ := payload.(map[string]any)
+		if f.loginsFail || f.badSecrets[fmt.Sprint(body["secret_id"])] {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		reply(map[string]any{"auth": map[string]any{"client_token": "agent-token"}})
+	case path == "auth/approle/role/team-worker-agent" && r.Method == "DELETE":
+		f.loginsFail = false
+		reply(map[string]any{})
 	case path == "sys/seal-status":
 		reply(map[string]any{"initialized": f.initialized, "sealed": f.sealed, "t": 1})
 	case path == "sys/init":
@@ -231,8 +252,11 @@ func TestConfigureWaitsImportsAndWritesPrivateAgentConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if f.tokens[len(f.tokens)-1] != "admin-token" {
-		t.Errorf("token = %q", f.tokens[len(f.tokens)-1])
+	// The import uses the import token; only the Agent's own login check does not.
+	for i, c := range f.calls {
+		if c.path == "sys/policies/acl/team-worker-agent" && f.tokens[i] != "admin-token" {
+			t.Errorf("import token = %q", f.tokens[i])
+		}
 	}
 	state := filepath.Join(root, ".openbao/agent")
 	for name, want := range map[string]string{"role_id": "role-123", "secret_id": "secret-456"} {
@@ -368,18 +392,113 @@ func TestAutoUnsealWaitsForUnreachableServer(t *testing.T) {
 
 func TestWaitForRenderedFiles(t *testing.T) {
 	dir := t.TempDir()
+	state := filepath.Join(dir, ".openbao/agent")
+	os.MkdirAll(state, 0o700)
 	target := filepath.Join(dir, "git-credentials")
 	config := filepath.Join(dir, "openbao.yaml")
 	os.WriteFile(config, []byte(`{"secrets": {"app/git": {"password": "x"}},
 "files": [{"path": "`+target+`", "template": "t"}]}`), 0o600)
-	if err := waitForRenderedFiles(config, 600*time.Millisecond); err == nil {
+	if err := waitForRenderedFiles(config, dir, 600*time.Millisecond); err == nil {
 		t.Fatal("missing file should time out")
+	}
+	// A file an earlier start left is not this start's render.
+	os.WriteFile(target, []byte("https://u:p@host\n"), 0o600)
+	os.WriteFile(filepath.Join(state, "rendered"), []byte("old"), 0o600)
+	old := time.Now().Add(-time.Hour)
+	os.Chtimes(filepath.Join(state, "rendered"), old, old)
+	os.WriteFile(filepath.Join(state, "started"), []byte("now"), 0o600)
+	if err := waitForRenderedFiles(config, dir, 600*time.Millisecond); err == nil || !strings.Contains(err.Error(), "earlier start") {
+		t.Fatalf("stale files must not count: %v", err)
 	}
 	go func() {
 		time.Sleep(300 * time.Millisecond)
-		os.WriteFile(target, []byte("https://u:p@host\n"), 0o600)
+		os.WriteFile(filepath.Join(state, "rendered"), []byte("now"), 0o600)
 	}()
-	if err := waitForRenderedFiles(config, 5*time.Second); err != nil {
+	if err := waitForRenderedFiles(config, dir, 5*time.Second); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestAgentConfigRendersAStartMarker(t *testing.T) {
+	cfg := agentConfig("/h", []openbaoFile{{Path: "/h/out.env", Template: "x"}})
+	templates := cfg["template"].([]map[string]any)
+	last := templates[len(templates)-1]
+	if len(templates) != 2 || last["destination"] != "/h/.openbao/agent/rendered" || last["contents"] != "{{ timestamp }}" {
+		t.Fatalf("templates = %v", templates)
+	}
+}
+
+func agentState(t *testing.T) (string, string) {
+	t.Helper()
+	root := t.TempDir()
+	config := writeBaoConfig(t, root, map[string]any{
+		"secrets": map[string]any{"team/env": map[string]any{"TOKEN": "x"}},
+		"files":   []any{map[string]any{"path": filepath.Join(root, "out.env"), "template": "{{ . }}"}},
+	})
+	token := filepath.Join(root, "token")
+	os.WriteFile(token, []byte("admin-token\n"), 0o600)
+	return root, config
+}
+
+func TestConfigureReplacesASecretIDThatNoLongerLogsIn(t *testing.T) {
+	f, _ := newFakeBao(t)
+	root, config := agentState(t)
+	state := filepath.Join(root, ".openbao/agent")
+	os.MkdirAll(state, 0o700)
+	os.WriteFile(filepath.Join(state, "secret_id"), []byte("from-clawteam"), 0o600)
+	f.badSecrets = map[string]bool{"from-clawteam": true}
+	if _, err := configureOpenBao(config, filepath.Join(root, "token"), root, false); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(filepath.Join(state, "secret_id")); string(got) != "secret-456" {
+		t.Fatalf("secret_id = %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(state, "started")); err != nil {
+		t.Fatal("the agent's start must be recorded")
+	}
+	// The check logs in without the import token.
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i, c := range f.calls {
+		if c.path == "auth/approle/login" && f.tokens[i] != "" {
+			t.Fatalf("login sent a token: %q", f.tokens[i])
+		}
+	}
+}
+
+func TestConfigureRecreatesAnAppRoleThatRefusesEveryLogin(t *testing.T) {
+	f, _ := newFakeBao(t)
+	root, config := agentState(t)
+	f.loginsFail = true
+	if _, err := configureOpenBao(config, filepath.Join(root, "token"), root, false); err != nil {
+		t.Fatal(err)
+	}
+	if !hasCall(f.writes(), "DELETE", "auth/approle/role/team-worker-agent", nil) {
+		t.Fatal("the AppRole was not recreated")
+	}
+	if got, _ := os.ReadFile(filepath.Join(root, ".openbao/agent/secret_id")); string(got) != "secret-457" {
+		t.Fatalf("secret_id = %q, want the one issued after recreating", got)
+	}
+}
+
+func TestPrepareRaftRecoversDataFromAnotherNodeOnce(t *testing.T) {
+	data := t.TempDir()
+	if wrote, err := prepareRaft(data, "team-worker", "127.0.0.1:8201"); err != nil || wrote {
+		t.Fatalf("new data needs nothing: %v %v", wrote, err)
+	}
+	os.MkdirAll(filepath.Join(data, "raft"), 0o700)
+	os.WriteFile(filepath.Join(data, "raft", "raft.db"), []byte("x"), 0o600)
+	if wrote, err := prepareRaft(data, "team-worker", "127.0.0.1:8201"); err != nil || !wrote {
+		t.Fatalf("existing data must be recovered: %v %v", wrote, err)
+	}
+	var peers []map[string]any
+	raw, _ := os.ReadFile(filepath.Join(data, "raft", "peers.json"))
+	if err := json.Unmarshal(raw, &peers); err != nil || len(peers) != 1 || peers[0]["id"] != "team-worker" ||
+		peers[0]["address"] != "127.0.0.1:8201" || peers[0]["non_voter"] != false {
+		t.Fatalf("peers.json = %s, %v", raw, err)
+	}
+	os.Remove(filepath.Join(data, "raft", "peers.json")) // raft consumes it at start
+	if wrote, err := prepareRaft(data, "team-worker", "127.0.0.1:8201"); err != nil || wrote {
+		t.Fatalf("a prepared directory is left alone: %v %v", wrote, err)
 	}
 }

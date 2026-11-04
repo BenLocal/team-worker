@@ -2,9 +2,9 @@
 # Upgrade a Docker Compose deployment of team-worker to this checkout's
 # binaries: build them here, copy them over with ah, add them as one layer on
 # the base image, point the compose file at the new tag and recreate the
-# container. The layer also carries the image's entrypoint scripts and the
-# Dockerfile's team-workerd settings, so changes to those arrive too; other
-# Dockerfile changes need a full image build. Recreating ends every agent, so it refuses while the team has
+# container. The layer also carries the image's entrypoint scripts, systemd
+# units and the Dockerfile's team-workerd settings, so changes to those arrive
+# too; other Dockerfile changes need a full image build. Recreating ends every agent, so it refuses while the team has
 # in-progress tasks unless --force is given.
 set -euo pipefail
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
@@ -67,6 +67,7 @@ fi
 echo "building binaries for $rev"
 "$ROOT/docker/team-worker.sh" bins >/dev/null
 cp "$ROOT/docker/container-entrypoint.sh" "$ROOT/docker/docker-entrypoint.sh" "$ROOT/bin/docker/"
+rm -rf "$ROOT/bin/docker/systemd" && cp -r "$ROOT/docker/systemd" "$ROOT/bin/docker/systemd"
 ah --timeout 240s cp -r "$ROOT/bin/docker" "$host:$build"
 local_sums=$(cd "$ROOT/bin/docker" && sha256sum team-worker team-workerd team-worker-ops)
 remote_sums=$(ah --timeout 60s connect "$host" "cd '$build' && sha256sum team-worker team-workerd team-worker-ops")
@@ -85,6 +86,7 @@ USER root
 COPY team-worker team-workerd team-worker-ops /usr/local/bin/
 COPY container-entrypoint.sh /usr/local/bin/container-entrypoint
 COPY docker-entrypoint.sh /usr/local/bin/team-worker-docker-entrypoint
+COPY systemd/ /etc/systemd/system/
 RUN chmod 755 /usr/local/bin/container-entrypoint /usr/local/bin/team-worker-docker-entrypoint
 ENV $daemon_env
 USER node

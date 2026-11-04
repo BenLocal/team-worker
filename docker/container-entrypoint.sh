@@ -99,6 +99,7 @@ if [[ ${TEAM_WORKER_DIND:-0} != 1 ]]; then
     # systemd mode runs openbao.service and openbao-agent.service instead.
     if [[ ${TEAM_WORKER_OPENBAO:-0} == 1 ]]; then
         mkdir -p -m 700 "$HOME/.openbao/data"
+        team-worker-ops openbao-raft
         bao server -config=/etc/openbao/openbao.hcl &
         pids+=($!)
         # Waits for manual unseal, so it stays out of the services that stop the container.
@@ -118,10 +119,13 @@ team-worker-ops plugins \
 # Privacy masking is on by default; a failure is reported and retried next start.
 team-worker-ops masking || echo 'Magpie privacy masking could not be turned on; retrying on the next start.' >&2
 # Skill sources may need Git credentials that OpenBao Agent renders; with
-# automatic unsealing nothing waits on a person, so wait for those files.
+# automatic unsealing nothing waits on a person, so wait for this start's
+# render. A failure is reported and the start goes on: stopping here would
+# restart the container in a loop and take every agent down with it.
 if [[ ${TEAM_WORKER_OPENBAO:-0} == 1 && ${TEAM_WORKER_OPENBAO_AUTO_UNSEAL:-0} == 1 ]]; then
     team-worker-ops openbao --wait-rendered 180s \
-        "${TEAM_WORKER_OPENBAO_FILE:-/etc/team-worker/openbao.yaml}"
+        "${TEAM_WORKER_OPENBAO_FILE:-/etc/team-worker/openbao.yaml}" ||
+        echo 'warning: OpenBao has not rendered the secret files for this start; continuing with the files there are (journalctl -u openbao-agent).' >&2
 fi
 team-worker-ops skills \
     "${TEAM_WORKER_SKILLS_FILE:-/etc/team-worker/skills.yaml}"

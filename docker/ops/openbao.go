@@ -43,7 +43,7 @@ func openbaoCmd() *cobra.Command {
 				return nil
 			}
 			if waitRendered > 0 {
-				return failWith("OpenBao files not rendered: ", waitForRenderedFiles(args[0], waitRendered))
+				return failWith("OpenBao files not rendered: ", waitForRenderedFiles(args[0], homeDir(), waitRendered))
 			}
 			tokenFile := os.Getenv("TEAM_WORKER_OPENBAO_TOKEN_FILE")
 			if tokenFile == "" {
@@ -69,25 +69,51 @@ func openbaoCmd() *cobra.Command {
 	return cmd
 }
 
-// waitForRenderedFiles waits until every file openbao.yaml declares exists.
-func waitForRenderedFiles(configPath string, timeout time.Duration) error {
+// waitForRenderedFiles waits until the Agent started for this boot has
+// rendered: every declared file exists and the Agent's marker file is newer
+// than the start it records. Files alone are not enough: ones left by an
+// earlier start (or another deployment) would hide an Agent that cannot log
+// in or read its secrets.
+func waitForRenderedFiles(configPath, home string, timeout time.Duration) error {
 	_, files, err := readOpenBaoConfig(configPath)
 	if err != nil {
 		return err
 	}
+	if len(files) == 0 {
+		return nil
+	}
+	state := filepath.Join(home, ".openbao/agent")
 	deadline := time.Now().Add(timeout)
-	for _, f := range files {
-		for {
-			if st, err := os.Stat(f.Path); err == nil && st.Size() > 0 {
+	for {
+		missing := ""
+		for _, f := range files {
+			if st, err := os.Stat(f.Path); err != nil || st.Size() == 0 {
+				missing = f.Path
 				break
 			}
-			if time.Now().After(deadline) {
-				return fmt.Errorf("%s did not appear within %s", f.Path, timeout)
-			}
-			time.Sleep(500 * time.Millisecond)
 		}
+		if missing == "" && renderedSinceStart(state) {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			if missing != "" {
+				return fmt.Errorf("%s did not appear within %s", missing, timeout)
+			}
+			return fmt.Errorf("OpenBao Agent has not rendered since it started (see journalctl -u openbao-agent); the files are from an earlier start")
+		}
+		time.Sleep(500 * time.Millisecond)
 	}
-	return nil
+}
+
+// renderedSinceStart reports whether the Agent's marker was rendered after
+// the start recorded in the started file.
+func renderedSinceStart(state string) bool {
+	started, err := os.Stat(filepath.Join(state, "started"))
+	if err != nil {
+		return false
+	}
+	rendered, err := os.Stat(filepath.Join(state, "rendered"))
+	return err == nil && !rendered.ModTime().Before(started.ModTime())
 }
 
 const (
@@ -362,7 +388,12 @@ func importSecrets(c *baoClient, secrets map[string]map[string]string) error {
 			return err
 		}
 	}
-	_, err = c.call("POST", "auth/approle/role/"+openbaoRole, map[string]any{
+	return writeAppRole(c)
+}
+
+// writeAppRole creates or updates the Agent's AppRole with its policy.
+func writeAppRole(c *baoClient) error {
+	_, err := c.call("POST", "auth/approle/role/"+openbaoRole, map[string]any{
 		"token_policies": []string{openbaoRole}, "token_ttl": "1h", "token_max_ttl": "24h",
 	})
 	return err
@@ -388,7 +419,7 @@ func sameSecret(current map[string]any, want map[string]string) bool {
 
 func agentConfig(home string, files []openbaoFile) map[string]any {
 	state := filepath.Join(home, ".openbao/agent")
-	templates := make([]map[string]any, 0, len(files))
+	templates := make([]map[string]any, 0, len(files)+1)
 	for _, f := range files {
 		templates = append(templates, map[string]any{
 			"contents":         f.Template,
@@ -397,6 +428,14 @@ func agentConfig(home string, files []openbaoFile) map[string]any {
 			"create_dest_dirs": true,
 		})
 	}
+	// The Agent renders only after it has logged in; this marker changes on
+	// every render, so --wait-rendered can tell this start's work from files
+	// an earlier start left behind.
+	templates = append(templates, map[string]any{
+		"contents":    `{{ timestamp }}`,
+		"destination": filepath.Join(state, "rendered"),
+		"perms":       "0600",
+	})
 	return map[string]any{
 		"vault": map[string]any{"address": openbaoAddress},
 		"auto_auth": map[string]any{
@@ -520,29 +559,8 @@ func configureOpenBao(configPath, tokenFile, home string, autoUnseal bool) (stri
 		return "", nil
 	}
 	state := filepath.Join(home, ".openbao/agent")
-	roleID, err := c.call("GET", "auth/approle/role/"+openbaoRole+"/role-id", nil)
-	if err != nil {
+	if err := ensureAgentLogin(c, state); err != nil {
 		return "", err
-	}
-	id, ok := nestedString(roleID, "data", "role_id")
-	if !ok {
-		return "", errors.New("OpenBao returned no AppRole role_id")
-	}
-	if err := writeAtomic(filepath.Join(state, "role_id"), []byte(id), 0o600); err != nil {
-		return "", err
-	}
-	if _, err := os.Stat(filepath.Join(state, "secret_id")); errors.Is(err, os.ErrNotExist) {
-		secretID, err := c.call("POST", "auth/approle/role/"+openbaoRole+"/secret-id", nil)
-		if err != nil {
-			return "", err
-		}
-		id, ok := nestedString(secretID, "data", "secret_id")
-		if !ok {
-			return "", errors.New("OpenBao returned no AppRole secret_id")
-		}
-		if err := writeAtomic(filepath.Join(state, "secret_id"), []byte(id), 0o600); err != nil {
-			return "", err
-		}
 	}
 	path := filepath.Join(state, "agent.json")
 	data, err := json.MarshalIndent(agentConfig(home, files), "", "  ")
@@ -552,7 +570,93 @@ func configureOpenBao(configPath, tokenFile, home string, autoUnseal bool) (stri
 	if err := writeAtomic(path, data, 0o600); err != nil {
 		return "", err
 	}
+	// The Agent starts next; renders older than this are an earlier start's.
+	if err := writeAtomic(filepath.Join(state, "started"), []byte(time.Now().UTC().Format(time.RFC3339Nano)), 0o600); err != nil {
+		return "", err
+	}
 	return path, nil
+}
+
+// ensureAgentLogin leaves a role ID and secret ID in state that log in to
+// the Agent's AppRole. A stored secret ID is kept while it works; one that
+// does not (issued by an earlier deployment, or for a role since replaced) is
+// replaced, and if a fresh one fails too the role itself is recreated, since
+// a role left by an earlier deployment can refuse every login.
+func ensureAgentLogin(c *baoClient, state string) error {
+	roleID, err := writeRoleID(c, state)
+	if err != nil {
+		return err
+	}
+	secretFile := filepath.Join(state, "secret_id")
+	if stored, err := os.ReadFile(secretFile); err == nil {
+		if appRoleLogin(c, roleID, strings.TrimSpace(string(stored))) == nil {
+			return nil
+		}
+		fmt.Println("openbao: the stored AppRole secret ID no longer logs in; issuing a new one.")
+	}
+	secretID, err := newSecretID(c, secretFile)
+	if err != nil {
+		return err
+	}
+	if appRoleLogin(c, roleID, secretID) == nil {
+		return nil
+	}
+	fmt.Println("openbao: a new secret ID does not log in either; recreating the AppRole.")
+	if _, err := c.call("DELETE", "auth/approle/role/"+openbaoRole, nil); err != nil {
+		return err
+	}
+	if err := writeAppRole(c); err != nil {
+		return err
+	}
+	if roleID, err = writeRoleID(c, state); err != nil {
+		return err
+	}
+	if secretID, err = newSecretID(c, secretFile); err != nil {
+		return err
+	}
+	if err := appRoleLogin(c, roleID, secretID); err != nil {
+		return fmt.Errorf("AppRole login fails even after recreating the role: %w", err)
+	}
+	return nil
+}
+
+func writeRoleID(c *baoClient, state string) (string, error) {
+	resp, err := c.call("GET", "auth/approle/role/"+openbaoRole+"/role-id", nil)
+	if err != nil {
+		return "", err
+	}
+	id, ok := nestedString(resp, "data", "role_id")
+	if !ok {
+		return "", errors.New("OpenBao returned no AppRole role_id")
+	}
+	return id, writeAtomic(filepath.Join(state, "role_id"), []byte(id), 0o600)
+}
+
+func newSecretID(c *baoClient, path string) (string, error) {
+	resp, err := c.call("POST", "auth/approle/role/"+openbaoRole+"/secret-id", nil)
+	if err != nil {
+		return "", err
+	}
+	id, ok := nestedString(resp, "data", "secret_id")
+	if !ok {
+		return "", errors.New("OpenBao returned no AppRole secret_id")
+	}
+	return id, writeAtomic(path, []byte(id), 0o600)
+}
+
+// appRoleLogin logs in as the Agent would, without the import token, and
+// revokes the token it gets.
+func appRoleLogin(c *baoClient, roleID, secretID string) error {
+	agent := &baoClient{address: c.address, http: c.http}
+	resp, err := agent.call("PUT", "auth/approle/login", map[string]any{"role_id": roleID, "secret_id": secretID})
+	if err != nil {
+		return err
+	}
+	if token, ok := nestedString(resp, "auth", "client_token"); ok {
+		agent.token = token
+		agent.call("PUT", "auth/token/revoke-self", nil)
+	}
+	return nil
 }
 
 // nestedString reads m[outer][inner] as a string.

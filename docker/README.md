@@ -143,7 +143,7 @@ TEAM_WORKER_CONFIG_DIR=docker/magpie-config.local \
   ./docker/team-worker.sh start /项目目录
 ```
 
-启用 OpenBao 且自动解封时，入口脚本会先等 OpenBao Agent 把 `openbao.yaml` 声明的文件都渲染出来（最多 180 秒），再导入技能；这样 `gitconfig` 里的凭据助手在技能克隆私有仓库时已经能读到凭据。
+启用 OpenBao 且自动解封时，入口脚本会先等 OpenBao Agent 为这次启动渲染出 `openbao.yaml` 声明的文件（最多 180 秒），再导入技能；这样 `gitconfig` 里的凭据助手在技能克隆私有仓库时已经能读到凭据。只看文件存在不够：以前启动留下的文件会掩盖 Agent 登录或读取失败，所以 Agent 另外渲染一个时间戳标记 `~/.openbao/agent/rendered`，它比本次启动记录的 `~/.openbao/agent/started` 新才算渲染成功。超时只打印警告、继续启动，不会让容器反复重启，原因看 `journalctl -u openbao-agent`。
 
 `magpie-config/` 存放 `providers.yaml`、`skills.yaml`、`prompt.yaml`、`mcp.yaml`、`plugin.yaml` 和 `openbao.yaml`，格式与 ClawTeam-Docker 相同，每个文件里有注释示例。启动脚本默认挂载本目录下的文件，也可用 `TEAM_WORKER_PROVIDERS_FILE`、`TEAM_WORKER_SKILLS_FILE`、`TEAM_WORKER_PROMPT_FILE`、`TEAM_WORKER_MCP_FILE`、`TEAM_WORKER_PLUGIN_FILE` 指定宿主机文件。使用 Compose 时把整个目录只读挂载到 `/etc/team-worker`：
 
@@ -174,9 +174,11 @@ volumes:
 
 ## OpenBao 密钥服务
 
-镜像默认安装并启动 OpenBao 服务端（`TEAM_WORKER_OPENBAO=1`，只监听容器内 `127.0.0.1:8200`，数据在 home 卷 `~/.openbao/data`）；设为 `0` 可关闭启动。界面见 [OpenBao 界面使用指南](docs/openbao.md)。`magpie-config/openbao.yaml` 声明要导入的 KV 密钥和要用 OpenBao Agent 渲染的 0600 文件；当前默认配置为空，按需填写。自备导入令牌可放在 `/etc/team-worker/openbao.token`（`TEAM_WORKER_OPENBAO_TOKEN_FILE` 可改）。授予 Agent 的只读 AppRole 名为 `team-worker-agent`。
+镜像默认安装并启动 OpenBao 服务端（`TEAM_WORKER_OPENBAO=1`，只监听容器内 `127.0.0.1:8200`，数据在 home 卷 `~/.openbao/data`）；设为 `0` 可关闭启动。界面见 [OpenBao 界面使用指南](docs/openbao.md)。`magpie-config/openbao.yaml` 声明要导入的 KV 密钥和要用 OpenBao Agent 渲染的 0600 文件；当前默认配置为空，按需填写。自备导入令牌可放在 `/etc/team-worker/openbao.token`（`TEAM_WORKER_OPENBAO_TOKEN_FILE` 可改）。授予 Agent 的只读 AppRole 名为 `team-worker-agent`。每次启动先用保存的 secret ID 试登录：失效（比如是以前的部署签发的）就重新签发，新的也登录不了就重建这个 AppRole 再签发。
 
 默认 `TEAM_WORKER_OPENBAO_AUTO_UNSEAL=1`：首次启动自动初始化，重启自动解封，再导入 YAML 并渲染文件。解封密钥与 root 令牌写入 home 卷的 `~/.openbao/init.json`，权限为 0600；未提供导入令牌时使用该 root 令牌完成导入。取得卷即可解开全部密钥，需要限制卷和宿主机的访问。设为 `0` 后，由管理员手动初始化、解封并提供导入令牌。
+
+raft 会记住创建数据时的节点名（`openbao.hcl` 里是 `team-worker`）。沿用其他部署的数据（比如 ClawTeam 的 `clawteam`）时节点名对不上，OpenBao 会一直是 standby，不提供密钥。`openbao.service` 启动前运行 `team-worker-ops openbao-raft`：数据目录已存在但还没为本节点处理过时，写一次 raft 的 `peers.json` 恢复文件，只列出本节点，OpenBao 启动时据此改成本节点；之后不再改动。
 
 ## team-worker-ops
 
@@ -190,7 +192,8 @@ volumes:
 | `openbao FILE` | 导入密钥并启动 OpenBao Agent |
 | `systemd prepare\|agent\|magpie` | DinD 模式下把运行配置交给 systemd，并启动对应服务 |
 | `leader prepare\|register\|watch` | 注册团队与 Leader（开启消息粘贴），把新的未分配任务发到 Leader 收件箱 |
-| `openbao --wait-rendered DURATION FILE` | 等待 OpenBao Agent 渲染 openbao.yaml 声明的文件 |
+| `openbao --wait-rendered DURATION FILE` | 等待 OpenBao Agent 为本次启动渲染 openbao.yaml 声明的文件 |
+| `openbao-raft` | OpenBao 启动前把其他节点名下的 raft 数据恢复为本节点（每个数据目录一次） |
 
 开发与测试：
 
