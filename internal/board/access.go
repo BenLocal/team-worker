@@ -38,9 +38,10 @@ func Protect(next http.Handler, key, basePath string) (http.Handler, error) {
 		h.Write([]byte(value))
 		return hex.EncodeToString(h.Sum(nil))
 	}
-	// A browser can hold an older session scoped to basePath beside the
-	// current one, so any valid cookie of that name will do.
-	validSession := func(r *http.Request) bool {
+	// validSession returns the session cookie's value and expiry. A browser
+	// can hold an older session scoped to basePath beside the current one, so
+	// any valid cookie of that name will do.
+	validSession := func(r *http.Request) (string, time.Time, bool) {
 		for _, cookie := range r.CookiesNamed(sessionCookie) {
 			parts := strings.Split(cookie.Value, ".")
 			if len(parts) != 3 {
@@ -48,10 +49,15 @@ func Protect(next http.Handler, key, basePath string) (http.Handler, error) {
 			}
 			expires, err := strconv.ParseInt(parts[0], 10, 64)
 			if err == nil && expires > time.Now().Unix() && hmac.Equal([]byte(parts[2]), []byte(sign(parts[0]+"."+parts[1]))) {
-				return true
+				return cookie.Value, time.Unix(expires, 0), true
 			}
 		}
-		return false
+		return "", time.Time{}, false
+	}
+	// writeSession sets the cookie on Path / so the proxy's auth_request for
+	// Magpie and the OpenBao sign-in, outside basePath, see the session too.
+	writeSession := func(w http.ResponseWriter, r *http.Request, value string, expires time.Time) {
+		http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: value, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https", Expires: expires, MaxAge: int(time.Until(expires).Seconds())})
 	}
 	setSession := func(w http.ResponseWriter, r *http.Request) bool {
 		var nonce [16]byte
@@ -61,9 +67,7 @@ func Protect(next http.Handler, key, basePath string) (http.Handler, error) {
 		}
 		expires := time.Now().Add(12 * time.Hour)
 		value := strconv.FormatInt(expires.Unix(), 10) + "." + hex.EncodeToString(nonce[:])
-		// Path / so the proxy's auth_request for Magpie and the OpenBao
-		// sign-in, outside basePath, see the session too.
-		http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: value + "." + sign(value), Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https", Expires: expires, MaxAge: 12 * 60 * 60})
+		writeSession(w, r, value+"."+sign(value), expires)
 		return true
 	}
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -121,7 +125,25 @@ func Protect(next http.Handler, key, basePath string) (http.Handler, error) {
 			return
 		}
 		bearer, hasBearer := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if (hasBearer && matches(bearer)) || validSession(r) {
+		if hasBearer && matches(bearer) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if value, expires, ok := validSession(r); ok {
+			if r.URL.Path == "/" && r.Method == http.MethodGet {
+				// A session from before cookies moved to Path / only reaches
+				// basePath; opening the board moves it, keeping its expiry.
+				writeSession(w, r, value, expires)
+				if basePath != "" {
+					http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: basePath + "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: -1})
+				}
+				// The proxy sends a viewer without a session here with
+				// ?next=<page>; go back there once signed in.
+				if target := localPath(r.URL.Query().Get("next")); target != "" {
+					http.Redirect(w, r, target, http.StatusSeeOther)
+					return
+				}
+			}
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -135,6 +157,15 @@ func Protect(next http.Handler, key, basePath string) (http.Handler, error) {
 		fmt.Fprintln(w, `{"error":"Unauthorized"}`)
 	})
 	return http.NewCrossOriginProtection().Handler(handler), nil
+}
+
+// localPath returns p when it is a path on this site, so ?next= cannot send
+// the viewer to another one.
+func localPath(p string) string {
+	if !strings.HasPrefix(p, "/") || strings.HasPrefix(p, "//") || strings.ContainsAny(p, "\\\r\n") {
+		return ""
+	}
+	return p
 }
 
 var signIn = template.Must(template.New("sign-in").Parse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sign in · team-worker</title><style>

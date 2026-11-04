@@ -136,3 +136,45 @@ func TestServiceKeysAreAuthenticatedAndNeverExposeUnsealKeys(t *testing.T) {
 		t.Fatal("unexpected service key response")
 	}
 }
+
+func TestOpeningTheBoardMovesAnOldSessionToTheRootPathAndFollowsNext(t *testing.T) {
+	protected, err := Protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "protected") }), "test-only-key", "/team-worker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	protected.ServeHTTP(w, httptest.NewRequest("GET", "/?k=test-only-key", nil))
+	session := w.Result().Cookies()[0]
+	// The browser sends the cookie it kept from before, wherever it was scoped.
+	r := httptest.NewRequest("GET", "/", nil)
+	r.AddCookie(&http.Cookie{Name: sessionCookie, Value: session.Value})
+	w = httptest.NewRecorder()
+	protected.ServeHTTP(w, r)
+	moved, cleared := false, false
+	for _, c := range w.Result().Cookies() {
+		switch {
+		case c.Path == "/" && c.Value == session.Value && c.MaxAge > 0 && c.HttpOnly:
+			moved = true
+		case c.Path == "/team-worker/" && c.MaxAge < 0:
+			cleared = true
+		}
+	}
+	if w.Code != 200 || !moved || !cleared {
+		t.Fatalf("session not moved to /: %d moved=%v cleared=%v", w.Code, moved, cleared)
+	}
+	for next, want := range map[string]string{"/magpie/": "/magpie/", "//other.example/": "", "https://other.example/": ""} {
+		r = httptest.NewRequest("GET", "/?next="+url.QueryEscape(next), nil)
+		r.AddCookie(&http.Cookie{Name: sessionCookie, Value: session.Value})
+		w = httptest.NewRecorder()
+		protected.ServeHTTP(w, r)
+		if got := w.Header().Get("Location"); got != want || (want == "" && w.Code != 200) {
+			t.Fatalf("next=%s: %d %q, want %q", next, w.Code, got, want)
+		}
+	}
+	// Signing in keeps next, so the board then goes back to it.
+	w = httptest.NewRecorder()
+	protected.ServeHTTP(w, httptest.NewRequest("GET", "/?k=test-only-key&next=%2Fmagpie%2F", nil))
+	if w.Code != 303 || w.Header().Get("Location") != "/team-worker/?next=%2Fmagpie%2F" {
+		t.Fatalf("sign-in dropped next: %d %s", w.Code, w.Header().Get("Location"))
+	}
+}
