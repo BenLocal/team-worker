@@ -17,7 +17,7 @@ usage() {
   ./team-worker.sh stop                      停止并删除容器，保留 home 卷和项目
 可选环境变量：TEAM_WORKER_IMAGE、TEAM_WORKER_CONTAINER、TEAM_WORKER_ENV_FILE
 Web 端口：TEAM_WORKER_WEB_PORT（默认 8080）；TEAM_WORKER_WEB_BIND（默认 127.0.0.1）
-访问地址：TEAM_WORKER_WEB_URL（例如 http://192.168.1.10:8080，无末尾斜线）
+访问地址：TEAM_WORKER_WEB_URL（例如 http://192.0.2.10:8080，无末尾斜线）
 模型路由：TEAM_WORKER_MODEL（例如 group/coding；留空沿用 Claude 配置）
 二进制：TEAM_WORKER_BIN_DIR（默认仓库的 bin/docker；目录里有 team-worker 时只读挂载并优先使用）
 配置目录：TEAM_WORKER_CONFIG_DIR（默认 docker/magpie-config；可另含 openbao.yaml、openbao.token、gitconfig）

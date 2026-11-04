@@ -72,7 +72,7 @@ Nginx 在同一地址、同一端口下按路径分发：
 
 ```bash
 TEAM_WORKER_WEB_BIND=0.0.0.0 TEAM_WORKER_WEB_PORT=18080 \
-  TEAM_WORKER_WEB_URL=http://192.168.1.10:18080 \
+  TEAM_WORKER_WEB_URL=http://192.0.2.10:18080 \
   ./docker/team-worker.sh start /项目目录
 ```
 
