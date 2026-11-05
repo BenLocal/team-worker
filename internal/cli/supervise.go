@@ -163,15 +163,7 @@ func (a *app) supervise(ctx context.Context, team, name, runID, paste string, co
 		close(watchDone)
 		cancelChild()
 		readyCancel()
-		code = 0
-		if waitErr != nil {
-			var exit *exec.ExitError
-			if errors.As(waitErr, &exit) {
-				code = exit.ExitCode()
-			} else {
-				code = -1
-			}
-		}
+		code = childExitCode(waitErr)
 		// Cancellation must still record the stop while the normal command context is cancelled.
 		reportCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		if ctx.Err() != nil {
@@ -271,6 +263,30 @@ func (a *app) supervise(ctx context.Context, team, name, runID, paste string, co
 		}
 		restarts++
 	}
+}
+
+// childExitCode turns the agent CLI's end into the exit code its run records.
+// A crash signal (SIGSEGV, SIGABRT, ...) is 128 plus the signal, like a shell
+// reports it, so the agent stays down. A termination signal counts as
+// interrupted, like the supervisor's own: a shutdown signals both, and when
+// the child's end is seen first its run must still be resumed on restart.
+func childExitCode(waitErr error) int {
+	if waitErr == nil {
+		return 0
+	}
+	var exit *exec.ExitError
+	if !errors.As(waitErr, &exit) {
+		return store.InterruptedExit
+	}
+	status, ok := exit.Sys().(syscall.WaitStatus)
+	if !ok || !status.Signaled() {
+		return exit.ExitCode()
+	}
+	switch status.Signal() {
+	case syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGKILL:
+		return store.InterruptedExit
+	}
+	return 128 + int(status.Signal())
 }
 
 // stopPollInterval is how often a running child checks for a stop request.
