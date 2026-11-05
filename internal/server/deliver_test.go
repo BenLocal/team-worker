@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"path/filepath"
@@ -221,5 +222,35 @@ func TestDeliverLeavesWorkingAgentsToTheirHooks(t *testing.T) {
 			send(t, st, "leader", "again")
 			pane.texts = nil
 		}
+	}
+}
+
+func TestDeliverKeepsMessagesWhenThePasteFails(t *testing.T) {
+	d, st, pane, now := newDeliverFixture(t)
+	ctx := context.Background()
+	send(t, st, "leader", "first")
+	send(t, st, "bob", "second")
+	paste := d.Paste
+	d.Paste = func(string, string) error { return errors.New("tmux went away") }
+	last := map[string]time.Time{}
+	// The senders count as tried, so a failing pane is not hammered.
+	if retry := d.deliver(ctx, alice(t, st), last); retry != d.Throttle {
+		t.Fatalf("retry after a failed paste: %s, want %s", retry, d.Throttle)
+	}
+	if n := unread(t, st); n != 2 {
+		t.Fatalf("a failed paste must leave the messages in the inbox, %d left", n)
+	}
+	send(t, st, "leader", "third")
+
+	d.Paste = paste
+	*now = now.Add(d.Throttle)
+	d.deliver(ctx, alice(t, st), last)
+	got := pane.pasted()
+	if len(got) != 1 || unread(t, st) != 0 {
+		t.Fatalf("want one paste emptying the inbox, got %q", got)
+	}
+	first, second, third := strings.Index(got[0], "first"), strings.Index(got[0], "second"), strings.Index(got[0], "third")
+	if first < 0 || first > second || second > third {
+		t.Fatalf("messages out of order: %q", got[0])
 	}
 }

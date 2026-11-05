@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -162,19 +163,24 @@ func (d *Deliverer) deliver(ctx context.Context, run model.Agent, last map[strin
 	if !d.Alive(a.Target) {
 		return time.Second
 	}
-	msgs, err := d.Store.Receive(ctx, a.Team, a.Name, "", 50)
-	if err != nil || len(msgs) == 0 {
-		return 0
+	// A failed paste puts the messages back; marking their senders as tried
+	// keeps a broken pane from being retried more than once per Throttle.
+	var retry time.Duration
+	err = d.Store.ReceiveWith(ctx, a.Team, a.Name, "", 50, func(msgs []model.Message) error {
+		for _, m := range msgs {
+			last[m.From] = now
+		}
+		if err := d.Paste(a.Target, model.FormatMessages(a.Team, msgs)); err != nil {
+			retry = d.Throttle
+			return fmt.Errorf("paste %d message(s): %w", len(msgs), err)
+		}
+		d.Log.Info("pasted messages", "team", a.Team, "agent", a.Name, "messages", len(msgs))
+		return nil
+	})
+	if err != nil {
+		d.Log.Warn("message delivery failed", "team", a.Team, "agent", a.Name, "err", err)
 	}
-	if err := d.Paste(a.Target, model.FormatMessages(a.Team, msgs)); err != nil {
-		d.Log.Warn("message paste failed", "team", a.Team, "agent", a.Name, "messages", len(msgs), "err", err)
-		return 0
-	}
-	d.Log.Info("pasted messages", "team", a.Team, "agent", a.Name, "messages", len(msgs))
-	for _, m := range msgs {
-		last[m.From] = now
-	}
-	return 0
+	return retry
 }
 
 func paneAlive(pane string) bool {

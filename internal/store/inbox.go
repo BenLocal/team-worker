@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"sort"
 
 	"github.com/benlocal/team-worker/internal/model"
@@ -158,6 +160,83 @@ func (s *Store) Receive(ctx context.Context, team, agent, user string, limit int
 		return err
 	})
 	return msgs, err
+}
+
+// ReceiveWith consumes up to limit messages like Receive and hands them to
+// handle outside the transaction. When handle fails, the messages go back
+// into the inbox under their old ids, so they keep their place ahead of
+// newer ones, and the error is returned.
+func (s *Store) ReceiveWith(ctx context.Context, team, agent, user string, limit int, handle func([]model.Message) error) error {
+	if limit <= 0 {
+		limit = 10
+	}
+	type claimed struct {
+		id              int64
+		body, createdAt string
+	}
+	var inbox string
+	var rows []claimed
+	var msgs []model.Message
+	err := s.write(ctx, func(tx *sql.Tx) error {
+		if err := requireTeam(ctx, tx, team); err != nil {
+			return err
+		}
+		var err error
+		if inbox, err = resolveInbox(ctx, tx, team, agent, user); err != nil {
+			return err
+		}
+		result, err := tx.QueryContext(ctx,
+			`DELETE FROM messages WHERE id IN (
+			   SELECT id FROM messages WHERE team = ? AND inbox = ? ORDER BY id LIMIT ?
+			 ) RETURNING id, body, created_at`,
+			team, inbox, limit)
+		if err != nil {
+			return err
+		}
+		defer result.Close()
+		for result.Next() {
+			var c claimed
+			if err := result.Scan(&c.id, &c.body, &c.createdAt); err != nil {
+				return err
+			}
+			rows = append(rows, c)
+		}
+		if err := result.Err(); err != nil {
+			return err
+		}
+		// Decoding inside the transaction rolls the claim back on bad data.
+		sort.Slice(rows, func(i, j int) bool { return rows[i].id < rows[j].id })
+		msgs = make([]model.Message, len(rows))
+		for i, c := range rows {
+			if err := json.Unmarshal([]byte(c.body), &msgs[i]); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil || len(rows) == 0 {
+		return err
+	}
+	handleErr := handle(msgs)
+	if handleErr == nil {
+		return nil
+	}
+	// Put them back even when the caller is shutting down.
+	restoreCtx := context.WithoutCancel(ctx)
+	restoreErr := s.write(restoreCtx, func(tx *sql.Tx) error {
+		for _, c := range rows {
+			if _, err := tx.ExecContext(restoreCtx,
+				"INSERT INTO messages (id, team, inbox, body, created_at) VALUES (?, ?, ?, ?, ?)",
+				c.id, team, inbox, c.body, c.createdAt); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if restoreErr != nil {
+		return errors.Join(handleErr, fmt.Errorf("return messages to the inbox: %w", restoreErr))
+	}
+	return handleErr
 }
 
 // Peek returns pending messages without consuming them.
