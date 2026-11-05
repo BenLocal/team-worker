@@ -66,10 +66,10 @@ func (a *app) supervise(ctx context.Context, team, name, runID, paste string, co
 		if err != nil || current.RunID != runID {
 			return
 		}
-		if _, err := c.RequestAgentStop(report, team, name, runID); err != nil {
-			fmt.Fprintf(a.errOut, "record supervisor stop: %v\n", err)
-		}
-		if _, err := c.AgentExitedRun(report, team, name, runID, -1); err != nil {
+		// A signal to the supervisor is not a stop request: a shutdown sends
+		// one too, and team-workerd resumes interrupted agents when it
+		// starts. agent stop records its request before ending the process.
+		if _, err := c.AgentExitedRun(report, team, name, runID, store.InterruptedExit); err != nil {
 			fmt.Fprintf(a.errOut, "record supervisor exit: %v\n", err)
 		}
 	}()

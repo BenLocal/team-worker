@@ -55,13 +55,16 @@ func TestRestoreResumesOnlyAgentsARestartLeftBehind(t *testing.T) {
 	}
 	t.Setenv("ATTEMPT_LOG", log)
 	ctx := context.Background()
-	// alice was running when the daemon went down; bob was asked to stop;
-	// carol has no saved session; dave is still alive.
+	// alice was running when the daemon went down; erin's supervisor was
+	// killed by the shutdown; bob was asked to stop; frank's supervisor gave
+	// up with the child's exit code; carol has no saved session; dave is
+	// still alive.
 	for _, a := range []struct {
 		name    string
 		pid     int
 		session bool
-	}{{"alice", deadPID(t), true}, {"bob", deadPID(t), true}, {"carol", deadPID(t), false}, {"dave", os.Getpid(), true}} {
+	}{{"alice", deadPID(t), true}, {"erin", deadPID(t), true}, {"bob", deadPID(t), true}, {"frank", deadPID(t), true},
+		{"carol", deadPID(t), false}, {"dave", os.Getpid(), true}} {
 		h.run("team", "add-member", "demo", a.name)
 		if _, err := h.api.RegisterAgent(ctx, model.Agent{Team: "demo", Name: a.name, AgentID: a.name + "-id", RunID: "before",
 			Backend: "subprocess", PID: a.pid, Command: []string{command}, Cwd: dir}); err != nil {
@@ -77,30 +80,45 @@ func TestRestoreResumesOnlyAgentsARestartLeftBehind(t *testing.T) {
 	if _, err := h.api.RequestAgentStop(ctx, "demo", "bob", "before"); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := h.api.AgentExitedRun(ctx, "demo", "erin", "before", store.InterruptedExit); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.api.AgentExitedRun(ctx, "demo", "frank", "before", 1); err != nil {
+		t.Fatal(err)
+	}
 	var restored []model.RestoredAgent
 	h.json(&restored, "agent", "restore")
-	if len(restored) != 1 || restored[0].Agent != "alice" || restored[0].Status != "resumed" {
-		t.Fatalf("restored %+v, want only alice", restored)
+	names := []string{}
+	for _, r := range restored {
+		if r.Status != "resumed" {
+			t.Fatalf("restore failed: %+v", r)
+		}
+		names = append(names, r.Agent)
+	}
+	if strings.Join(names, ",") != "alice,erin" {
+		t.Fatalf("restored %v, want alice and erin", names)
 	}
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		data, _ := os.ReadFile(log)
-		if strings.Contains(string(data), "alice") {
-			if !strings.Contains(string(data), "alice-session") || strings.Contains(string(data), "bob") {
+		if strings.Contains(string(data), "alice") && strings.Contains(string(data), "erin") {
+			if !strings.Contains(string(data), "alice-session") || !strings.Contains(string(data), "erin-session") ||
+				strings.Contains(string(data), "bob") || strings.Contains(string(data), "frank") {
 				t.Fatalf("attempts: %q", data)
 			}
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("alice was not resumed: %q", data)
+			t.Fatalf("alice and erin were not resumed: %q", data)
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	// alice is now recorded with a new run, so a second restore has nothing to do.
+	// Both now run again or exited on their own, so a second restore has
+	// nothing to do for them.
 	h.json(&restored, "agent", "restore")
 	for _, r := range restored {
-		if r.Agent == "alice" {
-			t.Fatalf("alice restored twice: %+v", restored)
+		if r.Agent == "alice" || r.Agent == "erin" {
+			t.Fatalf("restored twice: %+v", restored)
 		}
 	}
 }

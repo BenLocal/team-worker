@@ -25,7 +25,7 @@ TEAM_WORKER_ENV_FILE=/绝对路径/team-worker.env \
 
 容器启动时依次：导入 Magpie 配置（providers、插件、技能、MCP、Instructions）→ 第一条 CLI 命令自动拉起 `team-workerd`（看板、HTTP 监听和页头链接都由镜像的环境变量配置，不管哪个进程先拉起，配置都一样）→ 启动 Nginx。容器不再自带默认团队：用 `./docker/team-worker.sh shell` 进入后以 `team-worker team spawn-team`、`team-worker spawn`（或 `launch` 模板）创建团队和成员。
 
-team-workerd 启动时续接上次关停时还在运行的 Agent，所有团队都算：记录为运行中、没有被 `agent stop` 停下、进程已不在、并且保存了原生会话的 Agent 按保存的参数（含 keepalive）`agent resume`，上下文保留；被停下的、keepalive 放弃重试的不续接。入口脚本在技能、MCP、Instructions 就位后才拉起 daemon，再执行 `team-worker agent restore` 等它恢复完；这条命令也可以随时手动执行，已在运行的不会再起一次。
+team-workerd 启动时续接上次关停时还在运行的 Agent，所有团队都算：没有被 `agent stop` 停下、进程已不在、保存了原生会话，并且记录为运行中或中断退出（容器停止时关掉 tmux 就属于这种）的 Agent 按保存的参数（含 keepalive）`agent resume`，上下文保留；被停下的、keepalive 放弃重试的不续接。入口脚本在技能、MCP、Instructions 就位后才拉起 daemon，再执行 `team-worker agent restore` 等它恢复完；这条命令也可以随时手动执行，已在运行的不会再起一次。
 
 消息由 team-worker 自己送到 Agent 面前，规则和容器外完全一样（见仓库的 [docs/agents.md](../docs/agents.md)）：
 

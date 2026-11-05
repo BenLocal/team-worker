@@ -110,6 +110,20 @@ func (s *Store) RunningAgents(ctx context.Context) ([]model.Agent, error) {
 		model.AgentRunning)
 }
 
+// InterruptedExit is the exit code recorded for an agent whose process ended
+// without reporting one: its supervisor was terminated by a signal, or the
+// reaper found the process gone.
+const InterruptedExit = -1
+
+// RestorableAgents lists agents in every team a restart may have left
+// behind: not asked to stop, and either still recorded as running or
+// recorded as interrupted.
+func (s *Store) RestorableAgents(ctx context.Context) ([]model.Agent, error) {
+	return s.queryAgents(ctx, "SELECT "+agentColumns+` FROM agents WHERE stop_requested = 0
+		AND (status = ? OR (status = ? AND exit_code = ?)) ORDER BY team, name`,
+		model.AgentRunning, model.AgentExited, InterruptedExit)
+}
+
 func (s *Store) queryAgents(ctx context.Context, query string, args ...any) ([]model.Agent, error) {
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {

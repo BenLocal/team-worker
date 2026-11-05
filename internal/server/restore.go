@@ -8,15 +8,17 @@ import (
 	"github.com/benlocal/team-worker/internal/runner"
 )
 
-// Restore resumes, in every team, the agents a restart left behind: recorded
-// as running, not asked to stop, with their process gone and a saved session.
-// A stopped agent or one whose supervisor gave up is recorded as exited and
-// stays down. One restore runs at a time, so a caller that asks while the
-// daemon's own restore runs waits for it and finds those agents alive.
+// Restore resumes, in every team, the agents a restart left behind: not
+// asked to stop, recorded as running or as interrupted (their supervisor
+// was killed by the shutdown, or the reaper found them gone), with their
+// process gone and a saved session. An agent stopped with agent stop, or
+// whose supervisor gave up after its own exit code, stays down. One restore
+// runs at a time, so a caller that asks while the daemon's own restore runs
+// waits for it and finds those agents alive.
 func (s *Server) Restore(ctx context.Context) ([]model.RestoredAgent, error) {
 	s.restoreMu.Lock()
 	defer s.restoreMu.Unlock()
-	agents, err := s.store.RunningAgents(ctx)
+	agents, err := s.store.RestorableAgents(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -26,9 +28,6 @@ func (s *Server) Restore(ctx context.Context) ([]model.RestoredAgent, error) {
 	}
 	out := []model.RestoredAgent{}
 	for _, a := range agents {
-		if a.StopRequested {
-			continue
-		}
 		if alive, known := s.store.Probe(a); !known || alive {
 			continue
 		}
