@@ -50,12 +50,17 @@ func (s *Store) CreateTask(ctx context.Context, team string, in CreateTaskInput)
 	if t.Metadata == nil {
 		t.Metadata = map[string]any{}
 	}
-	if len(t.BlockedBy) > 0 {
-		t.Status = model.StatusBlocked
-	}
 	err := s.write(ctx, func(tx *sql.Tx) error {
 		if err := requireTeam(ctx, tx, team); err != nil {
 			return err
+		}
+		open, err := openBlockers(ctx, tx, team, t.BlockedBy)
+		if err != nil {
+			return err
+		}
+		t.BlockedBy = open
+		if len(t.BlockedBy) > 0 {
+			t.Status = model.StatusBlocked
 		}
 		if err := checkDeps(ctx, tx, team, t.ID, t.BlockedBy); err != nil {
 			return err
@@ -86,7 +91,10 @@ type UpdateTaskInput struct {
 	Priority     *model.Priority   `json:"priority,omitempty"`
 	AddBlocks    []string          `json:"addBlocks,omitempty"`
 	AddBlockedBy []string          `json:"addBlockedBy,omitempty"`
-	Metadata     map[string]any    `json:"metadata,omitempty"`
+	// RemoveBlockedBy drops blockers; a blocked task left without any
+	// becomes pending.
+	RemoveBlockedBy []string       `json:"removeBlockedBy,omitempty"`
+	Metadata        map[string]any `json:"metadata,omitempty"`
 	// Caller is the agent making the change; it takes the lock when starting a task.
 	Caller string `json:"caller,omitempty"`
 	Force  bool   `json:"force,omitempty"`
@@ -180,11 +188,27 @@ func (s *Store) UpdateTask(ctx context.Context, team, id string, in UpdateTaskIn
 				t.Blocks = append(t.Blocks, b)
 			}
 		}
+		for _, b := range dedupe(in.RemoveBlockedBy) {
+			if !slices.Contains(t.BlockedBy, b) {
+				return invalidf("Task '%s' is not blocked by '%s'", t.ID, b)
+			}
+			if _, err := tx.ExecContext(ctx,
+				"DELETE FROM task_deps WHERE team = ? AND task_id = ? AND blocked_by = ?", team, t.ID, b); err != nil {
+				return err
+			}
+			t.BlockedBy = slices.DeleteFunc(t.BlockedBy, func(x string) bool { return x == b })
+		}
+		if len(in.RemoveBlockedBy) > 0 && len(t.BlockedBy) == 0 && t.Status == model.StatusBlocked {
+			t.Status = model.StatusPending
+		}
 		var newDeps []string
 		for _, b := range dedupe(in.AddBlockedBy) {
 			if !slices.Contains(t.BlockedBy, b) {
 				newDeps = append(newDeps, b)
 			}
+		}
+		if newDeps, err = openBlockers(ctx, tx, team, newDeps); err != nil {
+			return err
 		}
 		if len(newDeps) > 0 {
 			if err := checkDeps(ctx, tx, team, t.ID, newDeps); err != nil {
@@ -436,6 +460,28 @@ func encodeTaskJSON(t model.Task) (string, string, error) {
 		return "", "", err
 	}
 	return string(blocks), string(metadata), nil
+}
+
+// openBlockers checks that every blocker is a task of the team and returns
+// those not yet completed. A completed blocker would never unblock the task
+// again, since dependents are released only when a blocker completes, and a
+// mistyped id would block it for good.
+func openBlockers(ctx context.Context, q queryer, team string, deps []string) ([]string, error) {
+	open := []string{}
+	for _, dep := range deps {
+		var status model.TaskStatus
+		err := q.QueryRowContext(ctx, "SELECT status FROM tasks WHERE team = ? AND id = ?", team, dep).Scan(&status)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, invalidf("Blocking task '%s' does not exist in team '%s'", dep, team)
+		}
+		if err != nil {
+			return nil, err
+		}
+		if status != model.StatusCompleted {
+			open = append(open, dep)
+		}
+	}
+	return open, nil
 }
 
 // checkDeps rejects self-dependencies and any new edge that would close a

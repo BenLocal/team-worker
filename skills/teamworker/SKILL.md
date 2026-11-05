@@ -56,7 +56,7 @@ tw inbox send <team> <leader名> < brief.md                  # 长内容走 stdi
 ```
 
 - 负责人填 `board show` 里已有的成员名；不确定分给谁时交给 Leader，由它拆分和分派。
-- 有前置任务时加 `--blocked-by <ID,ID>`，前置完成前状态是 `blocked`，完成后自动变回 `pending`。
+- 有前置任务时加 `--blocked-by <ID,ID>`，前置完成前状态是 `blocked`，完成后自动变回 `pending`。前置任务必须是这个团队里已有的任务，写错的 ID 会被拒绝；已完成的前置任务不算依赖。不再需要的前置任务用 `task update <team> <ID> --remove-blocked-by <ID>` 移除。
 - 请求超时或没收到响应时，先 `task list` 查是否已建好，确实没有再重试，避免重复派活。
 
 ### 3. 等结果并核实

@@ -115,7 +115,7 @@ func (a *app) taskGetCmd() *cobra.Command {
 }
 
 func (a *app) taskUpdateCmd() *cobra.Command {
-	var status, owner, subject, description, priority, addBlocks, addBlockedBy string
+	var status, owner, subject, description, priority, addBlocks, addBlockedBy, removeBlockedBy string
 	var force bool
 	cmd := &cobra.Command{
 		Use:   "update TEAM TASK_ID",
@@ -123,10 +123,11 @@ func (a *app) taskUpdateCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			in := store.UpdateTaskInput{
-				AddBlocks:    splitList(addBlocks),
-				AddBlockedBy: splitList(addBlockedBy),
-				Caller:       config.IdentityFromEnv().AgentName,
-				Force:        force,
+				AddBlocks:       splitList(addBlocks),
+				AddBlockedBy:    splitList(addBlockedBy),
+				RemoveBlockedBy: splitList(removeBlockedBy),
+				Caller:          config.IdentityFromEnv().AgentName,
+				Force:           force,
 			}
 			if cmd.Flags().Changed("status") {
 				s, err := model.ParseTaskStatus(status)
@@ -169,6 +170,7 @@ func (a *app) taskUpdateCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&priority, "priority", "p", "", "New priority: low, medium, high, urgent")
 	cmd.Flags().StringVar(&addBlocks, "add-blocks", "", "Comma-separated task IDs this blocks")
 	cmd.Flags().StringVar(&addBlockedBy, "add-blocked-by", "", "Comma-separated task IDs blocking this")
+	cmd.Flags().StringVar(&removeBlockedBy, "remove-blocked-by", "", "Comma-separated task IDs that no longer block this (pending again once none is left)")
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "Force override task lock")
 	return cmd
 }

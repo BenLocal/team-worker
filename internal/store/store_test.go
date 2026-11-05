@@ -441,3 +441,80 @@ func TestLeadersPicksEachTeamsLeaderLikeLeader(t *testing.T) {
 		}
 	}
 }
+
+func TestBlockersMustExistAndCompletedOnesDoNotBlock(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	newTeam(t, s)
+	if _, err := s.CreateTask(ctx, "demo", CreateTaskInput{Subject: "typo", BlockedBy: []string{"deadbeef"}}); err == nil {
+		t.Fatal("a missing blocker was accepted on create")
+	}
+	open, err := s.CreateTask(ctx, "demo", CreateTaskInput{Subject: "open"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpdateTask(ctx, "demo", open.ID, UpdateTaskInput{AddBlockedBy: []string{"deadbeef"}}); err == nil {
+		t.Fatal("a missing blocker was accepted on update")
+	}
+	done, err := s.CreateTask(ctx, "demo", CreateTaskInput{Subject: "done"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpdateTask(ctx, "demo", done.ID, UpdateTaskInput{Status: ptr(model.StatusCompleted)}); err != nil {
+		t.Fatal(err)
+	}
+	// A completed blocker would never release the task, so it is not recorded.
+	after, err := s.CreateTask(ctx, "demo", CreateTaskInput{Subject: "after", BlockedBy: []string{done.ID, open.ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Status != model.StatusBlocked || len(after.BlockedBy) != 1 || after.BlockedBy[0] != open.ID {
+		t.Fatalf("after: %s blocked by %v", after.Status, after.BlockedBy)
+	}
+	solo, err := s.CreateTask(ctx, "demo", CreateTaskInput{Subject: "solo", BlockedBy: []string{done.ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if solo.Status != model.StatusPending || len(solo.BlockedBy) != 0 {
+		t.Fatalf("solo: %s blocked by %v", solo.Status, solo.BlockedBy)
+	}
+}
+
+func TestRemoveBlockedByReleasesTheTask(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	newTeam(t, s)
+	a, err := s.CreateTask(ctx, "demo", CreateTaskInput{Subject: "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := s.CreateTask(ctx, "demo", CreateTaskInput{Subject: "b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := s.CreateTask(ctx, "demo", CreateTaskInput{Subject: "c", BlockedBy: []string{a.ID, b.ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpdateTask(ctx, "demo", c.ID, UpdateTaskInput{RemoveBlockedBy: []string{"deadbeef"}}); err == nil {
+		t.Fatal("removing a task that does not block it was accepted")
+	}
+	c, err = s.UpdateTask(ctx, "demo", c.ID, UpdateTaskInput{RemoveBlockedBy: []string{a.ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Status != model.StatusBlocked || len(c.BlockedBy) != 1 {
+		t.Fatalf("one blocker left: %s blocked by %v", c.Status, c.BlockedBy)
+	}
+	c, err = s.UpdateTask(ctx, "demo", c.ID, UpdateTaskInput{RemoveBlockedBy: []string{b.ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetTask(ctx, "demo", c.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Status != model.StatusPending || len(got.BlockedBy) != 0 || got.Status != model.StatusPending {
+		t.Fatalf("no blocker left: %s, stored %s blocked by %v", c.Status, got.Status, got.BlockedBy)
+	}
+}
