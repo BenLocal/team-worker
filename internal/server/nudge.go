@@ -55,6 +55,10 @@ type nudgeState struct {
 	stallNudges   int
 	stallAt       time.Time
 	stallReported bool
+	// blockedSince is when the agent was first seen on a question or
+	// permission prompt; blockedReported is set once the leader was told.
+	blockedSince    time.Time
+	blockedReported bool
 }
 
 // stallReminders is how many reminders a stalled worker gets before the
@@ -123,7 +127,15 @@ func (n *Nudger) check(ctx context.Context, a model.Agent, key string) {
 		n.state[key] = st
 	}
 	now := n.Now()
+	if a.Activity != model.ActivityBlocked {
+		st.blockedSince, st.blockedReported = time.Time{}, false
+	}
 	var idle time.Duration
+	if a.Activity == model.ActivityBlocked {
+		st.idleSince = time.Time{}
+		n.checkBlocked(ctx, a, st, now)
+		return
+	}
 	if a.Activity != "" {
 		// A working agent is busy, and typing into a blocked one would answer
 		// its question; only a waiting one can have stalled.
@@ -199,6 +211,35 @@ func (n *Nudger) checkStall(ctx context.Context, a model.Agent, st *nudgeState, 
 	}
 	n.Log.Info("reported stalled agent to the leader", "team", a.Team, "agent", a.Name, "tasks", st.stallTasks)
 	st.stallReported = true
+}
+
+// checkBlocked tells the leader once when an agent has sat on a question or
+// permission prompt for StallAfter: nothing typed reaches it there, and only
+// someone at its terminal can answer. A blocked leader has nobody to tell.
+func (n *Nudger) checkBlocked(ctx context.Context, a model.Agent, st *nudgeState, now time.Time) {
+	if st.blockedSince.IsZero() {
+		st.blockedSince = now
+	}
+	if st.blockedReported || now.Sub(st.blockedSince) < n.StallAfter {
+		return
+	}
+	leader, err := n.Store.Leader(ctx, a.Team)
+	if err != nil {
+		return
+	}
+	if leader.Name == a.Name {
+		st.blockedReported = true
+		return
+	}
+	content := fmt.Sprintf("%s has been stopped at a question or permission prompt for %s. Look at it with "+
+		"`team-worker agent screen %s %s`; someone at its terminal has to answer, or restart it.",
+		a.Name, now.Sub(st.blockedSince).Round(time.Minute), a.Team, a.Name)
+	if _, err := n.Store.Send(ctx, a.Team, store.SendInput{From: "team-worker", To: leader.Name, Content: content}); err != nil {
+		n.Log.Warn("blocked report failed", "team", a.Team, "agent", a.Name, "err", err)
+		return
+	}
+	n.Log.Info("reported blocked agent to the leader", "team", a.Team, "agent", a.Name)
+	st.blockedReported = true
 }
 
 // screenIdle judges an agent whose CLI reports no activity by its screen:

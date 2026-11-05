@@ -202,7 +202,7 @@ func (d *Deliverer) workersSnapshot() []string {
 	return keys
 }
 
-func TestDeliverLeavesWorkingAgentsToTheirHooks(t *testing.T) {
+func TestDeliverLeavesWorkingAndBlockedAgentsAlone(t *testing.T) {
 	d, st, pane, _ := newDeliverFixture(t)
 	ctx := context.Background()
 	send(t, st, "leader", "hi")
@@ -211,16 +211,13 @@ func TestDeliverLeavesWorkingAgentsToTheirHooks(t *testing.T) {
 			t.Fatal(err)
 		}
 		d.deliver(ctx, alice(t, st), map[string]time.Time{})
-		want := 1
-		if act == model.ActivityWorking {
-			want = 0
+		// Typing into a question or permission prompt would answer it.
+		want := 0
+		if act == model.ActivityWaiting {
+			want = 1
 		}
 		if got := pane.pasted(); len(got) != want {
 			t.Fatalf("%s: pasted %q", act, got)
-		}
-		if act == model.ActivityBlocked {
-			send(t, st, "leader", "again")
-			pane.texts = nil
 		}
 	}
 }

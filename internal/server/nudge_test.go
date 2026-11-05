@@ -189,3 +189,43 @@ func TestNoStallReminderWhileMessagesAreUnread(t *testing.T) {
 		t.Fatalf("unread messages are not a stall: %q", pane.typed)
 	}
 }
+
+func TestAgentStuckOnAPromptIsReportedOnce(t *testing.T) {
+	n, st, pane, now := newNudgeFixture(t, true)
+	setActivity(t, st, "alice", model.ActivityBlocked)
+	advance(n, now, 9*time.Minute)
+	if got := leaderMessages(t, st); len(got) != 0 {
+		t.Fatalf("reported before StallAfter: %+v", got)
+	}
+	advance(n, now, 2*time.Minute)
+	got := leaderMessages(t, st)
+	if len(got) != 1 || !strings.Contains(got[0].Content, "alice") {
+		t.Fatalf("want one report about alice, got %+v", got)
+	}
+	advance(n, now, time.Hour)
+	if len(leaderMessages(t, st)) != 1 || len(pane.typed) != 0 {
+		t.Fatalf("reported more than once or typed into the prompt: %+v, %q", leaderMessages(t, st), pane.typed)
+	}
+
+	// Answering the prompt ends the episode; the next one is reported again.
+	setActivity(t, st, "alice", model.ActivityWorking)
+	advance(n, now, time.Minute)
+	setActivity(t, st, "alice", model.ActivityBlocked)
+	advance(n, now, 11*time.Minute)
+	if len(leaderMessages(t, st)) != 2 {
+		t.Fatalf("a new prompt is reported again: %+v", leaderMessages(t, st))
+	}
+}
+
+func TestLeaderStuckOnAPromptIsNotReportedToItself(t *testing.T) {
+	n, st, _, now := newNudgeFixture(t, true)
+	if _, err := st.RegisterAgent(context.Background(), model.Agent{Team: "demo", Name: "leader", Backend: "tmux",
+		Target: "%2", Nudge: true, Command: []string{"claude"}}); err != nil {
+		t.Fatal(err)
+	}
+	setActivity(t, st, "leader", model.ActivityBlocked)
+	advance(n, now, time.Hour)
+	if got := leaderMessages(t, st); len(got) != 0 {
+		t.Fatalf("told the leader about itself: %+v", got)
+	}
+}

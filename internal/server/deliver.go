@@ -15,10 +15,11 @@ import (
 // Deliverer runs one goroutine per running tmux agent on this machine. Each
 // takes the agent's new messages as soon as they reach its inbox and pastes
 // them into the agent's pane, as ClawTeam's runtime watch does, without
-// reading the screen. Only an agent whose hooks report it working is left to
-// its hooks. A sender's messages are pasted at most once every
-// Throttle; later ones stay in the inbox and go with the next paste, which
-// also lets a hook that runs meanwhile take them.
+// reading the screen. An agent whose hooks report it working is left to its
+// hooks, and one they report blocked on a prompt is left alone. A sender's
+// messages are pasted at most once every Throttle; later ones stay in the
+// inbox and go with the next paste, which also lets a hook that runs
+// meanwhile take them.
 type Deliverer struct {
 	Store *store.Store
 	Hub   *Hub
@@ -133,8 +134,10 @@ func (d *Deliverer) deliver(ctx context.Context, run model.Agent, last map[strin
 	}
 	// Hooks hand messages to a working agent, at its next tool call or in
 	// its Stop hook. A paste taken past a Stop hook that waits for messages
-	// would sit unread until the hook times out, minutes later.
-	if a.Activity == model.ActivityWorking {
+	// would sit unread until the hook times out, minutes later. A blocked
+	// agent shows a question or permission prompt that a paste would
+	// answer; its messages wait until it works or waits again.
+	if a.Activity == model.ActivityWorking || a.Activity == model.ActivityBlocked {
 		return 0
 	}
 	now := d.Now()
