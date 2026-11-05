@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -77,16 +78,21 @@ func (a *app) supervise(ctx context.Context, team, name, runID, paste string, co
 	// The outer spawn publishes the process details before a fast child may exit.
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		rec, err := c.GetAgent(ctx, team, name)
-		if err != nil {
+		var rec model.Agent
+		if err := a.retryDaemon(ctx, "read agent", func() (err error) {
+			rec, err = c.GetAgent(ctx, team, name)
+			return err
+		}); err != nil {
 			return err
 		}
 		if rec.RunID != runID {
 			return nil
 		}
 		if rec.StopRequested {
-			_, err := c.AgentExitedRun(ctx, team, name, runID, 0)
-			return err
+			return a.retryDaemon(ctx, "record exit", func() error {
+				_, err := c.AgentExitedRun(ctx, team, name, runID, 0)
+				return err
+			})
 		}
 		if rec.PID > 0 || rec.Target != "" {
 			break
@@ -115,20 +121,25 @@ func (a *app) supervise(ctx context.Context, team, name, runID, paste string, co
 				return nil
 			}
 		}
-		session, err := c.GetSession(ctx, team, name, user)
-		if err != nil {
+		var session model.Session
+		var rec model.Agent
+		if err := a.retryDaemon(ctx, "read agent", func() (err error) {
+			if session, err = c.GetSession(ctx, team, name, user); err != nil {
+				return err
+			}
+			rec, err = c.GetAgent(ctx, team, name)
 			return err
-		}
-		rec, err := c.GetAgent(ctx, team, name)
-		if err != nil {
+		}); err != nil {
 			return err
 		}
 		if rec.RunID != runID {
 			return nil
 		}
 		if rec.StopRequested {
-			_, err := c.AgentExitedRun(ctx, team, name, runID, 0)
-			return err
+			return a.retryDaemon(ctx, "record exit", func() error {
+				_, err := c.AgentExitedRun(ctx, team, name, runID, 0)
+				return err
+			})
 		}
 		started := time.Now()
 		childCtx, cancelChild := context.WithCancel(ctx)
@@ -164,32 +175,39 @@ func (a *app) supervise(ctx context.Context, team, name, runID, paste string, co
 		cancelChild()
 		readyCancel()
 		code = childExitCode(waitErr)
-		// Cancellation must still record the stop while the normal command context is cancelled.
-		reportCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		// A cancelled supervisor records its exit in the deferred report.
 		if ctx.Err() != nil {
-			cancel()
 			return nil
 		}
-		// Reading the session first lets the daemon save a Codex session id
-		// that the restart below resumes.
-		if _, err := c.GetSession(reportCtx, team, name, user); err != nil && !client.IsNotFound(err) {
-			fmt.Fprintf(a.errOut, "read session: %v\n", err)
-		}
-		_, err = c.AgentExitedRun(reportCtx, team, name, runID, code)
-		cancel()
-		if err != nil {
+		// The exit is retried while team-workerd restarts: given up, the agent
+		// would stay recorded as running and keepalive would end with it.
+		if err := a.retryDaemon(ctx, "record exit", func() error {
+			callCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
+			// Reading the session first lets the daemon save a Codex session
+			// id that the restart below resumes.
+			if _, err := c.GetSession(callCtx, team, name, user); err != nil && !client.IsNotFound(err) {
+				if daemonDown(err) {
+					return err
+				}
+				fmt.Fprintf(a.errOut, "read session: %v\n", err)
+			}
+			_, err := c.AgentExitedRun(callCtx, team, name, runID, code)
+			return err
+		}); err != nil {
 			return err
 		}
-		rec, err = c.GetAgent(ctx, team, name)
-		if err != nil {
+		if err := a.retryDaemon(ctx, "read agent", func() (err error) {
+			if rec, err = c.GetAgent(ctx, team, name); err != nil {
+				return err
+			}
+			session, err = c.GetSession(ctx, team, name, user)
+			return err
+		}); err != nil {
 			return err
 		}
 		if rec.RunID != runID || rec.StopRequested {
 			return nil
-		}
-		session, err = c.GetSession(ctx, team, name, user)
-		if err != nil {
-			return err
 		}
 		if !session.KeepAlive {
 			return waitErr
@@ -225,8 +243,11 @@ func (a *app) supervise(ctx context.Context, team, name, runID, paste string, co
 		if config.IdentityFromEnv().IsLeader {
 			role = "leader"
 		}
-		contextText, err := a.teamContext(ctx, hookTarget{team: team, agent: name, user: user, role: role}, session.Cwd)
-		if err != nil {
+		var contextText string
+		if err := a.retryDaemon(ctx, "read team context", func() (err error) {
+			contextText, err = a.teamContext(ctx, hookTarget{team: team, agent: name, user: user, role: role}, session.Cwd)
+			return err
+		}); err != nil {
 			return err
 		}
 		plan := registry.For(session.Command).Prepare(agent.Session{Command: native, Prompt: "Resume your saved conversation. Re-check task ownership before continuing.\n" + contextText,
@@ -242,15 +263,25 @@ func (a *app) supervise(ctx context.Context, team, name, runID, paste string, co
 		}
 		next := rec
 		next.PreviousRunID, next.RunID, next.StopRequested = runID, store.NewAgentID(), false
-		if _, err := c.RegisterAgent(ctx, next); err != nil {
-			current, readErr := c.GetAgent(ctx, team, name)
-			if readErr == nil && (current.StopRequested || current.RunID != runID) {
-				return nil
-			}
+		if err := a.retryDaemon(ctx, "register restart", func() error {
+			_, err := c.RegisterAgent(ctx, next)
 			return err
+		}); err != nil {
+			current, readErr := c.GetAgent(ctx, team, name)
+			// A retry after a lost answer finds its own registration.
+			registered := readErr == nil && current.RunID == next.RunID && !current.StopRequested
+			if !registered {
+				if readErr == nil && (current.StopRequested || current.RunID != runID) {
+					return nil
+				}
+				return err
+			}
 		}
 		runID, session.RunID = next.RunID, next.RunID
-		if _, err := c.SaveSession(ctx, session); err != nil {
+		if err := a.retryDaemon(ctx, "save session", func() error {
+			_, err := c.SaveSession(ctx, session)
+			return err
+		}); err != nil {
 			if _, exitErr := c.AgentExitedRun(ctx, team, name, runID, -1); exitErr != nil {
 				return errors.Join(err, exitErr)
 			}
@@ -287,6 +318,44 @@ func childExitCode(waitErr error) int {
 		return store.InterruptedExit
 	}
 	return 128 + int(status.Signal())
+}
+
+// daemonRetryFor is how long the supervisor keeps calling team-workerd while
+// it cannot be reached, e.g. during a restart; daemonRetryDelay is the first
+// pause, doubled up to five seconds.
+var (
+	daemonRetryFor   = 2 * time.Minute
+	daemonRetryDelay = 500 * time.Millisecond
+)
+
+// retryDaemon runs call until it succeeds, team-workerd answers with an
+// error, daemonRetryFor passes or ctx ends. Only failures to reach the daemon
+// are retried: connection errors, a failed start and 503 while it stops.
+func (a *app) retryDaemon(ctx context.Context, what string, call func() error) error {
+	deadline := time.Now().Add(daemonRetryFor)
+	delay := daemonRetryDelay
+	for {
+		err := call()
+		if err == nil || !daemonDown(err) || ctx.Err() != nil || time.Now().After(deadline) {
+			return err
+		}
+		fmt.Fprintf(a.errOut, "%s: team-workerd unavailable, retrying in %s: %v\n", what, delay, err)
+		if !waitRetry(ctx, delay) {
+			return err
+		}
+		delay = min(2*delay, 5*time.Second)
+	}
+}
+
+// daemonDown reports an error from not reaching team-workerd rather than an
+// answer from it. A call that timed out counts as not reached; the caller's
+// own context ending does not.
+func daemonDown(err error) bool {
+	var apiErr *client.APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.Status == http.StatusServiceUnavailable
+	}
+	return !errors.Is(err, context.Canceled)
 }
 
 // stopPollInterval is how often a running child checks for a stop request.

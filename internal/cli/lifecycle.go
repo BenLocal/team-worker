@@ -38,8 +38,13 @@ func (a *app) onExitCmd() *cobra.Command {
 			if _, err := a.client().SyncCosts(cmd.Context(), team, agent); err != nil {
 				fmt.Fprintf(a.errOut, "record session usage: %v\n", err)
 			}
-			res, err := a.client().AgentExitedRun(cmd.Context(), team, agent, runID, code)
-			if err != nil {
+			// Retried while team-workerd restarts: a lost exit leaves the
+			// agent recorded as running until the reaper calls it interrupted.
+			var res model.AgentExit
+			if err := a.retryDaemon(cmd.Context(), "record exit", func() (err error) {
+				res, err = a.client().AgentExitedRun(cmd.Context(), team, agent, runID, code)
+				return err
+			}); err != nil {
 				return a.fail(err)
 			}
 			a.emit(res, func(w io.Writer) {
