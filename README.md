@@ -1,6 +1,6 @@
 # team-worker
 
-用 Go 重写的 [ClawTeam](https://github.com/HKUDS/ClawTeam) 多 Agent 协作工具，面向单机使用。仓库包含两个程序：
+用 Go 重写的 [ClawTeam](https://github.com/HKUDS/ClawTeam) 多 Agent 协作工具。daemon 和 Agent 运行在同一台机器上，可以直接装在本机，也可以用 Docker 镜像部署到服务器，再用 CLI 通过 HTTP 远程操作。仓库包含两个程序：
 
 - `team-workerd`：常驻服务，独占一个 SQLite 数据库，在 Unix socket 上提供 HTTP/JSON API。团队、成员、任务和收件箱都存在这个库里。
 - `team-worker`：命令行客户端，Agent 和人都通过它查任务、改状态、收发消息。命令结构沿用 ClawTeam 的 `team`、`task`、`inbox`，`--json` 输出的字段名与 ClawTeam 一致。
@@ -15,6 +15,19 @@ make install   # 安装到 GOBIN，未设置时为 GOPATH/bin
 ```
 
 两个程序要放在同一目录，或都在 `PATH` 中。
+
+## Docker 镜像
+
+`./docker/team-worker.sh build` 构建一个开箱即用的镜像，基于 `node:26-bookworm-slim`（Debian 12），team-worker 的三个二进制在宿主机编译后拷进去。镜像里还装了：
+
+- Agent CLI：Claude Code、Codex、pi、DeepSeek Harness（dsh）与 dsh-tui
+- 模型与密钥：Magpie（模型网关和管理界面，插件运行时 Bun）、OpenBao（密钥服务）
+- 容器与进程：Docker（DinD）、systemd、dbus、Nginx（一个端口转发看板、Magpie、OpenBao）
+- 浏览器与桌面：Playwright + Chromium；Xvfb、AT-SPI、Openbox 组成的虚拟桌面，加上 agent-desktop
+- 文档与媒体：LibreOffice（Writer、Calc、Impress）、ffmpeg、Noto CJK 与 DejaVu 字体
+- 命令行工具：git、tmux、python3、pnpm、ripgrep、fd、jq、make、sqlite3、curl、rsync、ssh 等
+
+各组件的版本、来源和可替换的构建参数见 [docker/README.md](docker/README.md#镜像里的第三方组件)，版本以 `docker/Dockerfile` 为准。
 
 ## 启动服务
 
