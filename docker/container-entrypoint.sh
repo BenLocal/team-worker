@@ -82,6 +82,11 @@ if [[ ${TEAM_WORKER_DIND:-0} != 1 ]]; then
     magpie web --addr 127.0.0.1:3430 --no-open &
     magpie_pid=$!
     pids+=("$magpie_pid")
+    # systemd mode runs team-worker-desktop.service instead. The desktop is
+    # optional, so it stays out of the services that stop the container.
+    if [[ ${TEAM_WORKER_DESKTOP:-0} == 1 ]]; then
+        (while true; do team-worker-desktop || true; sleep 3; done) &
+    fi
     # systemd mode runs openbao.service and openbao-agent.service instead.
     if [[ ${TEAM_WORKER_OPENBAO:-0} == 1 ]]; then
         mkdir -p -m 700 "$HOME/.openbao/data"

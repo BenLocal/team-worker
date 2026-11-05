@@ -102,6 +102,7 @@ team-worker 读取 Agent CLI 的会话和用量文件时，按这些变量找目
 | `TEAM_WORKER_MASKING` | home 卷首次启动时打开 Magpie 的 Privacy masking；设为 `0` 跳过这一步 | 打开 |
 | `TEAM_WORKER_OPENBAO` | 设为 `1` 时启动 OpenBao 服务端和 OpenBao Agent；`0` 时都不启动，看板也不显示 OpenBao 链接 | `1`（镜像设定） |
 | `TEAM_WORKER_OPENBAO_AUTO_UNSEAL` | 设为 `1` 时首次启动自动初始化、之后每次自动解封，解封密钥和 root 令牌存在 `~/.openbao/init.json`；`0` 时由人工初始化和解封 | `1`（镜像设定） |
+| `TEAM_WORKER_DESKTOP` | 设为 `1` 时启动虚拟桌面（Xvfb、D-Bus 会话和 AT-SPI、Openbox），成员用 agent-desktop 操作其中的图形程序；`0` 时不启动 | `1`（镜像设定） |
 | `TEAM_WORKER_MAGPIE_SESSION_LOGIN` | 设为 `1` 时登录看板即可进入 Magpie；没有看板会话时跳到看板登录页 | 不启用 |
 | `TEAM_WORKER_OPENBAO_SESSION_LOGIN` | 设为 `1` 时从看板点 OpenBao 自动登录 OpenBao 界面；需要自动初始化留下的 root 令牌，人工模式仍手动登录 | 不启用 |
 
@@ -144,6 +145,10 @@ Dockerfile 用 ENV 设好、一般不需要改的变量：
 | `DISABLE_AUTOUPDATER` | `1` | 关闭 Claude Code 自动更新，版本随镜像固定 |
 | `NARB_DISABLE_NATIVE_CACHE` | `1` | 让 dsh 直接从 `node_modules` 加载原生扩展，不复制到 `/tmp`（systemd 模式下 `/tmp` 是 noexec） |
 | `PLAYWRIGHT_BROWSERS_PATH` | `/opt/ms-playwright` | 预装 Chromium 的位置 |
+| `DISPLAY` | `:99` | 虚拟桌面的 X 显示，成员启动的图形程序显示在这里 |
+| `DBUS_SESSION_BUS_ADDRESS` | `unix:path=/tmp/team-worker-desktop/bus` | 虚拟桌面的 D-Bus 会话总线，agent-desktop 经它的 AT-SPI 读取界面 |
+| `SAL_USE_VCLPLUGIN` | `gtk3` | 让 LibreOffice 用 GTK3 界面，agent-desktop 才能读到它的控件 |
+| `LANG` | `C.UTF-8` | 程序按 UTF-8 读取中文文件名和窗口标题；不设时是 POSIX，LibreOffice 会把中文文件名显示成乱码 |
 
 此外，入口脚本运行时设置 `MAGPIE_WEB_KEY`（从 `~/.config/magpie/web.key` 读取，首次启动时生成）和 `MAGPIE_WEB_URL`（`<TEAM_WORKER_WEB_URL>/magpie`），供 Magpie 和 `team-worker-ops` 使用。
 
@@ -162,7 +167,7 @@ Dockerfile 用 ENV 设好、一般不需要改的变量：
 | `TEAM_WORKER_CONFIG_DIR` | 配置目录，从中挂载 `providers.yaml`、`skills.yaml`、`prompt.yaml`、`mcp.yaml`、`plugin.yaml`，以及可选的 `openbao.yaml`、`openbao.token`、`gitconfig` | `docker/magpie-config` |
 | `TEAM_WORKER_PROVIDERS_FILE`、`TEAM_WORKER_SKILLS_FILE`、`TEAM_WORKER_PROMPT_FILE` 等 | 宿主机上的单个配置文件，优先于配置目录里的同名文件 | 配置目录里的文件 |
 
-`start` 会把宿主机上已设置的以下变量原样传进容器：`ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_BASE_URL`、`TEAM_WORKER_MODEL`、`TEAM_WORKER_WEB_URL`、`TEAM_WORKER_API_KEY`、`TEAM_WORKER_HTTP_ADDR`、`TEAM_WORKER_OPENBAO`、`TEAM_WORKER_OPENBAO_AUTO_UNSEAL`、`TEAM_WORKER_MAGPIE_SESSION_LOGIN`、`TEAM_WORKER_OPENBAO_SESSION_LOGIN` 和各代理变量。`TEAM_WORKER_DIND=1` 时以 privileged、systemd 模式启动。Magpie 接管模型路由时，入口脚本会清掉 `ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_BASE_URL`、`ANTHROPIC_MODEL`。
+`start` 会把宿主机上已设置的以下变量原样传进容器：`ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_BASE_URL`、`TEAM_WORKER_MODEL`、`TEAM_WORKER_WEB_URL`、`TEAM_WORKER_API_KEY`、`TEAM_WORKER_HTTP_ADDR`、`TEAM_WORKER_OPENBAO`、`TEAM_WORKER_OPENBAO_AUTO_UNSEAL`、`TEAM_WORKER_MAGPIE_SESSION_LOGIN`、`TEAM_WORKER_OPENBAO_SESSION_LOGIN`、`TEAM_WORKER_DESKTOP` 和各代理变量。`TEAM_WORKER_DIND=1` 时以 privileged、systemd 模式启动。Magpie 接管模型路由时，入口脚本会清掉 `ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_BASE_URL`、`ANTHROPIC_MODEL`。
 
 ## 镜像构建参数
 
@@ -174,7 +179,7 @@ Dockerfile 用 ENV 设好、一般不需要改的变量：
 | `DSH_VERSION`、`DSH_TUI_VERSION` | dsh 与 dsh-tui 的 npm 版本 |
 | `MAGPIE_VERSION` | Magpie 镜像 tag |
 | `OPENBAO_VERSION` | OpenBao 版本 |
-| `BUN_VERSION`、`PNPM_VERSION`、`PLAYWRIGHT_VERSION`、`DOCKER_VERSION` | 其他工具版本 |
+| `BUN_VERSION`、`PNPM_VERSION`、`PLAYWRIGHT_VERSION`、`DOCKER_VERSION`、`AGENT_DESKTOP_VERSION` | 其他工具版本 |
 | `DEBIAN_MIRROR`、`NPM_REGISTRY`、`PIP_INDEX_URL`、`BUN_DOWNLOAD_BASE`、`PLAYWRIGHT_DOWNLOAD_HOST` | 下载源，国内网络可换成镜像源 |
 | `GOPROXY` | 宿主机编译二进制时的 Go 模块代理 |
 | `HTTP_PROXY`、`HTTPS_PROXY`、`NO_PROXY` | 构建时的代理；代理在本机回环地址时脚本自动加 `--network host` |

@@ -83,6 +83,25 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libreoffice-writer libreoffice-calc libreoffice-impress ffmpeg fonts-noto-cjk fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/* \
     && soffice --version && ffmpeg -hide_banner -encoders | grep -E 'libx264|libx265|libvpx-vp9'
+# A virtual desktop agents operate with agent-desktop (computer use through
+# the accessibility tree): Xvfb, the AT-SPI accessibility bus, Openbox, and
+# LibreOffice's GTK3 frontend, whose windows expose their controls over
+# AT-SPI. team-worker-desktop starts it; DISPLAY and the session bus address
+# come from ENV below. The binary carries version-matched skills, exported
+# here as skill folders that skills.yaml installs into Magpie.
+ARG AGENT_DESKTOP_VERSION=1.2.0
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    xvfb at-spi2-core openbox libreoffice-gtk3 \
+    && rm -rf /var/lib/apt/lists/* \
+    && npm_config_registry="$NPM_REGISTRY" npm install -g "agent-desktop@${AGENT_DESKTOP_VERSION}" \
+    && for skill in agent-desktop agent-desktop-linux; do \
+        dir="/opt/agent-desktop/skills/$skill" && mkdir -p "$dir/references" \
+        && agent-desktop skills get "$skill" | jq -er .data.content > "$dir/SKILL.md" \
+        && for ref in $(agent-desktop skills list | jq -r --arg s "$skill" '.data.skills[] | select(.name == $s) | .references[]'); do \
+            agent-desktop skills get "$skill" "$ref" | jq -er .data.content > "$dir/$ref" || exit 1; \
+        done || exit 1; \
+    done \
+    && chmod -R a+rX /opt/agent-desktop
 # NARB_DISABLE_NATIVE_CACHE: dsh loads native addons from node_modules instead of
 # copying them into /tmp, which the systemd mode mounts as a noexec tmpfs.
 # /opt/team-worker/bin comes first: team-worker.sh mounts freshly built
@@ -91,6 +110,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # The TEAM_WORKER_HTTP_ADDR, _BOARD, _BOARD_LINKS and _WEB_BASE_PATH settings
 # configure team-workerd, which the first CLI call starts: whichever process
 # starts it, it serves the API and the board that Nginx publishes.
+# DISPLAY and DBUS_SESSION_BUS_ADDRESS point every agent at the virtual
+# desktop; SAL_USE_VCLPLUGIN gives LibreOffice the GTK3 frontend
+# agent-desktop can read. TEAM_WORKER_DESKTOP=0 leaves the desktop off.
+# LANG=C.UTF-8 (built into Debian) makes programs read Chinese file names and
+# window titles as UTF-8 instead of Latin-1.
 ENV PATH="/opt/team-worker/bin:/opt/venv/bin:${PATH}" HOME=/home/node TERM=xterm-256color \
     TEAM_WORKER_DATA_DIR=/home/node/.team-worker MAGPIE_ADDR=127.0.0.1:3425 \
     TEAM_WORKER_HTTP_ADDR=127.0.0.1:8082 TEAM_WORKER_BOARD=1 TEAM_WORKER_WEB_BASE_PATH=/team-worker \
@@ -98,7 +122,9 @@ ENV PATH="/opt/team-worker/bin:/opt/venv/bin:${PATH}" HOME=/home/node TERM=xterm
     TEAM_WORKER_OPENBAO=1 TEAM_WORKER_OPENBAO_AUTO_UNSEAL=1 \
     TEAM_WORKER_PROVIDERS_FILE=/etc/team-worker/providers.yaml \
     DISABLE_AUTOUPDATER=1 MAGPIE_BUN=/usr/local/bin/bun \
-    NARB_DISABLE_NATIVE_CACHE=1
+    NARB_DISABLE_NATIVE_CACHE=1 \
+    TEAM_WORKER_DESKTOP=1 DISPLAY=:99 DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/team-worker-desktop/bus \
+    SAL_USE_VCLPLUGIN=gtk3 LANG=C.UTF-8
 COPY --from=magpie /magpie /usr/local/bin/magpie
 COPY --from=openbao /usr/bin/bao /usr/local/bin/bao
 COPY --from=docker /usr/local/bin/docker /usr/local/bin/dockerd \
@@ -117,7 +143,8 @@ COPY docker/nginx-magpie-session.conf docker/nginx-openbao-session.conf /etc/ngi
 COPY docker/openbao.hcl /etc/openbao/openbao.hcl
 COPY docker/subpath.js /etc/nginx/subpath.js
 COPY docker/systemd/ /etc/systemd/system/
-RUN systemctl enable docker.service magpie.service openbao.service openbao-agent.service team-worker.service team-worker-skills-update.timer \
+RUN systemctl enable docker.service magpie.service openbao.service openbao-agent.service team-worker.service \
+       team-worker-desktop.service team-worker-skills-update.timer \
     && systemctl mask getty.target console-getty.service systemd-udevd.service \
        systemd-udevd-control.socket systemd-udevd-kernel.socket systemd-logind.service \
     && truncate -s 0 /etc/machine-id \
@@ -126,6 +153,7 @@ RUN systemctl enable docker.service magpie.service openbao.service openbao-agent
 COPY docker/magpie-config/ /etc/team-worker/
 COPY --chmod=755 docker/container-entrypoint.sh /usr/local/bin/container-entrypoint
 COPY --chmod=755 docker/docker-entrypoint.sh /usr/local/bin/team-worker-docker-entrypoint
+COPY --chmod=755 docker/desktop.sh /usr/local/bin/team-worker-desktop
 USER node
 WORKDIR /workspace
 EXPOSE 8080

@@ -66,7 +66,7 @@ fi
 
 echo "building binaries for $rev"
 "$ROOT/docker/team-worker.sh" bins >/dev/null
-cp "$ROOT/docker/container-entrypoint.sh" "$ROOT/docker/docker-entrypoint.sh" "$ROOT/bin/docker/"
+cp "$ROOT/docker/container-entrypoint.sh" "$ROOT/docker/docker-entrypoint.sh" "$ROOT/docker/desktop.sh" "$ROOT/bin/docker/"
 rm -rf "$ROOT/bin/docker/systemd" && cp -r "$ROOT/docker/systemd" "$ROOT/bin/docker/systemd"
 rm -rf "$ROOT/bin/docker/nginx" && mkdir "$ROOT/bin/docker/nginx"
 cp "$ROOT/docker/nginx.conf" "$ROOT/bin/docker/nginx/team-worker.conf"
@@ -90,9 +90,10 @@ USER root
 COPY team-worker team-workerd team-worker-ops /usr/local/bin/
 COPY container-entrypoint.sh /usr/local/bin/container-entrypoint
 COPY docker-entrypoint.sh /usr/local/bin/team-worker-docker-entrypoint
+COPY desktop.sh /usr/local/bin/team-worker-desktop
 COPY systemd/ /etc/systemd/system/
 COPY nginx/ /etc/nginx/
-RUN chmod 755 /usr/local/bin/container-entrypoint /usr/local/bin/team-worker-docker-entrypoint
+RUN chmod 755 /usr/local/bin/container-entrypoint /usr/local/bin/team-worker-docker-entrypoint /usr/local/bin/team-worker-desktop
 ENV $daemon_env
 USER node
 DOCKERFILE

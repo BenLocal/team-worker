@@ -1,0 +1,19 @@
+[Unit]
+Description=Virtual desktop for agent-desktop (enabled by default; TEAM_WORKER_DESKTOP=0 disables it)
+Before=team-worker.service
+
+[Service]
+Type=exec
+User=node
+Group=node
+EnvironmentFile=/run/team-worker/agent.env
+ExecCondition=/bin/sh -c 'test "$${TEAM_WORKER_DESKTOP:-0}" = 1'
+ExecStart=/usr/local/bin/team-worker-desktop
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

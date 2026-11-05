@@ -2,4 +2,8 @@
 # sources:
 #   - source: /workspace/aiclass-skills/skills
 #     agents: [claude]
-sources: []
+# The image exports agent-desktop's version-matched skills here, so every
+# agent can operate the container's virtual desktop.
+sources:
+  - source: /opt/agent-desktop/skills
+    agents: [claude, codex, dsh, pi]

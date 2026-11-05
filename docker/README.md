@@ -110,6 +110,7 @@ team-workerd 由第一条 CLI 命令自动拉起，日志写到 home 卷里的 `
 | `TEAM_WORKER_MODEL` | Magpie 模型路由，优先于 `providers.yaml` 的 `claude.model` |
 | `TEAM_WORKER_DIND` | 设为 `1` 启用 Docker in Docker（systemd 模式） |
 | `TEAM_WORKER_MASKING` | 默认在 home 卷首次启动时打开 Magpie 的 Privacy masking（发给模型供应商的密钥、密码、token 换成占位符）；之后在 Magpie 里关掉会保持关闭。设为 `0` 跳过 |
+| `TEAM_WORKER_DESKTOP` | 默认 `1`，启动虚拟桌面供 agent-desktop 操作（见下文《虚拟桌面》）；设为 `0` 不启动 |
 | `TEAM_WORKER_OPENBAO` | 默认 `1`，安装并启动 OpenBao；设为 `0` 关闭启动 |
 | `TEAM_WORKER_OPENBAO_AUTO_UNSEAL` | 默认 `1`，自动初始化、解封并导入配置；设为 `0` 改为手动初始化、解封 |
 | `TEAM_WORKER_MAGPIE_SESSION_LOGIN` | 默认不启用；设为 `1` 后登录看板即可进入 `/magpie/`，不用再输 Magpie Web Key，没有看板会话时跳到看板登录页 |
@@ -120,6 +121,18 @@ team-workerd 由第一条 CLI 命令自动拉起，日志写到 home 卷里的 `
 `TEAM_WORKER_DATA_DIR` 固定为 home 卷里的 `/home/node/.team-worker`，团队、任务和消息的 SQLite 库在这里，容器重建后保留。
 
 env-file 也可以放部署者自己的变量（Docker env-file 的 `KEY=value` 格式），会进入 Leader、Worker 和 `docker exec` 打开的 shell。成员使用的密钥建议放进 OpenBao，不要写进 env-file。修改 env-file 后要重建容器；`docker start` / `docker restart` 沿用创建时的环境变量，`providers.yaml` 则每次启动重新读取。
+
+## 虚拟桌面（agent-desktop）
+
+镜像装有 [agent-desktop](https://github.com/vercel-labs/agent-desktop)（`AGENT_DESKTOP_VERSION`），让成员通过无障碍接口（AT-SPI）读取和操作图形程序，例如 LibreOffice：读出界面元素树，点按钮、填表单、选菜单，再读一次核对结果。容器启动时 `team-worker-desktop` 拉起一个虚拟桌面：Xvfb（`DISPLAY=:99`，1920×1080）、D-Bus 会话总线（`DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/team-worker-desktop/bus`）并打开无障碍开关，再加 Openbox 窗口管理器。这两个变量写在镜像的 ENV 里，所有成员都会继承；`SAL_USE_VCLPLUGIN=gtk3` 让 LibreOffice 用 GTK3 界面，agent-desktop 才读得到它的控件。非 systemd 模式由入口脚本启动并在退出后 3 秒重启，systemd 模式由 `team-worker-desktop.service` 启动；`TEAM_WORKER_DESKTOP=0` 时都不启动。
+
+agent-desktop 自带与版本匹配的使用说明。构建镜像时把其中的 `agent-desktop`（通用流程）和 `agent-desktop-linux`（Linux 平台说明）连同引用文件导出到 `/opt/agent-desktop/skills/`，默认 `skills.yaml` 把这个目录装给 claude、codex、dsh、pi。自定义 `skills.yaml` 时要保留这一项，成员才有这两份 skill。
+
+要点（细节见 skill）：
+
+- 先 `agent-desktop status`：`accessibility` 应为 `granted`，`supported_surfaces` 不为空；否则桌面没起来，查 `pgrep -a Xvfb`、systemd 模式下 `journalctl -u team-worker-desktop`。
+- 默认只用无障碍接口操作，不模拟真实键鼠；需要点击坐标、按键输入时加全局参数 `--headed`（Xvfb 支持）。LibreOffice 里能编辑的是段落，不是文档本身。
+- 虚拟桌面没有画面输出，人看不到；截图（`agent-desktop screenshot`）和界面元素树可能含敏感内容，不要贴到公开的地方。
 
 ## Docker in Docker
 
@@ -223,6 +236,8 @@ cd docker/ops && go test ./...
 | pnpm | 12.16.1（`PNPM_VERSION`） | npm | 安装 dsh 插件 |
 | Magpie | 0.1.2925（`MAGPIE_VERSION`） | 镜像 `ghcr.io/yetone/magpie` | 模型网关和管理界面，统一给各个 Agent 配模型 |
 | Bun | 1.4.4（`BUN_VERSION`） | GitHub release，校验 SHA256 | Magpie 插件运行时 |
+| agent-desktop | 1.2.0（`AGENT_DESKTOP_VERSION`） | npm `agent-desktop` | 成员操作虚拟桌面里的图形程序（见《虚拟桌面》） |
+| Xvfb、AT-SPI、Openbox | Debian 12 软件包 | apt `xvfb`、`at-spi2-core`、`openbox`、`libreoffice-gtk3` | 虚拟桌面 |
 | OpenBao | 2.7.2（`OPENBAO_VERSION`） | 镜像 `quay.io/openbao/openbao` | 密钥服务，渲染成员使用的凭据文件 |
 | Docker（dockerd、CLI、插件） | 29.9.2（`DOCKER_VERSION`） | 镜像 `docker:<版本>-dind` | 容器内的 Docker（DinD），供成员构建和运行服务 |
 | Playwright + Chromium | 1.64.1（`PLAYWRIGHT_VERSION`） | pip `playwright`，浏览器装在 `/opt/ms-playwright` | 浏览器测试 |
@@ -239,7 +254,7 @@ team-worker 自己的 `team-worker`、`team-workerd`、`team-worker-ops` 在宿�
 
 ```bash
 GOPROXY=https://goproxy.cn,direct CLAUDE_VERSION=<npm版本> CODEX_VERSION=<npm版本> PI_VERSION=<npm版本> \
-  BUN_VERSION=<版本> DSH_VERSION=<npm版本> DSH_TUI_VERSION=<npm版本> \
+  BUN_VERSION=<版本> DSH_VERSION=<npm版本> DSH_TUI_VERSION=<npm版本> AGENT_DESKTOP_VERSION=<npm版本> \
   PLAYWRIGHT_VERSION=<pip版本> OPENBAO_VERSION=<版本> MAGPIE_VERSION=<镜像tag> \
   ./docker/team-worker.sh build
 ```
