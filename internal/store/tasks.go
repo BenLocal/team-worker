@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"slices"
 	"sort"
@@ -188,6 +189,7 @@ func (s *Store) UpdateTask(ctx context.Context, team, id string, in UpdateTaskIn
 				t.Blocks = append(t.Blocks, b)
 			}
 		}
+		unblocked := false
 		for _, b := range dedupe(in.RemoveBlockedBy) {
 			if !slices.Contains(t.BlockedBy, b) {
 				return invalidf("Task '%s' is not blocked by '%s'", t.ID, b)
@@ -200,6 +202,7 @@ func (s *Store) UpdateTask(ctx context.Context, team, id string, in UpdateTaskIn
 		}
 		if len(in.RemoveBlockedBy) > 0 && len(t.BlockedBy) == 0 && t.Status == model.StatusBlocked {
 			t.Status = model.StatusPending
+			unblocked = true
 		}
 		var newDeps []string
 		for _, b := range dedupe(in.AddBlockedBy) {
@@ -229,6 +232,12 @@ func (s *Store) UpdateTask(ctx context.Context, team, id string, in UpdateTaskIn
 
 		if err := saveTask(ctx, tx, team, t); err != nil {
 			return err
+		}
+		// The owner that dropped the last blocker itself already knows.
+		if unblocked && t.Status == model.StatusPending && t.Owner != in.Caller {
+			if err := notifyUnblocked(ctx, tx, team, t.ID, t.Subject, t.Owner, now); err != nil {
+				return err
+			}
 		}
 		if t.Status == model.StatusCompleted {
 			if err := resolveDependents(ctx, tx, team, t.ID, now); err != nil {
@@ -526,42 +535,82 @@ func addDeps(ctx context.Context, q queryer, team, id string, deps []string) err
 }
 
 // resolveDependents drops the completed task from every blocker list and
-// moves blocked tasks with no remaining blockers back to pending.
-func resolveDependents(ctx context.Context, q queryer, team, completedID, now string) error {
-	rows, err := q.QueryContext(ctx,
-		"SELECT task_id FROM task_deps WHERE team = ? AND blocked_by = ?", team, completedID)
+// moves blocked tasks with no remaining blockers back to pending, telling
+// their owners.
+func resolveDependents(ctx context.Context, tx *sql.Tx, team, completedID, now string) error {
+	rows, err := tx.QueryContext(ctx,
+		`SELECT d.task_id, t.status FROM task_deps d JOIN tasks t ON t.team = d.team AND t.id = d.task_id
+		 WHERE d.team = ? AND d.blocked_by = ?`, team, completedID)
 	if err != nil {
 		return err
 	}
-	var dependents []string
+	type dependent struct {
+		id     string
+		status model.TaskStatus
+	}
+	var dependents []dependent
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		var d dependent
+		if err := rows.Scan(&d.id, &d.status); err != nil {
 			rows.Close()
 			return err
 		}
-		dependents = append(dependents, id)
+		dependents = append(dependents, d)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil || len(dependents) == 0 {
 		return err
 	}
-	if _, err := q.ExecContext(ctx,
+	if _, err := tx.ExecContext(ctx,
 		"DELETE FROM task_deps WHERE team = ? AND blocked_by = ?", team, completedID); err != nil {
 		return err
 	}
-	for _, id := range dependents {
-		if _, err := q.ExecContext(ctx,
+	for _, d := range dependents {
+		var status model.TaskStatus
+		var owner, subject string
+		if err := tx.QueryRowContext(ctx,
 			`UPDATE tasks SET updated_at = ?,
 			   status = CASE WHEN status = 'blocked' AND NOT EXISTS (
 			     SELECT 1 FROM task_deps d WHERE d.team = tasks.team AND d.task_id = tasks.id
 			   ) THEN 'pending' ELSE status END
-			 WHERE team = ? AND id = ?`,
-			now, team, id); err != nil {
+			 WHERE team = ? AND id = ? RETURNING status, owner, subject`,
+			now, team, d.id).Scan(&status, &owner, &subject); err != nil {
 			return err
+		}
+		if d.status == model.StatusBlocked && status == model.StatusPending {
+			if err := notifyUnblocked(ctx, tx, team, d.id, subject, owner, now); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
+}
+
+// notifyUnblocked tells a task's owner that the task no longer waits for
+// anything. An owner idle at its prompt hears of it no other way: the
+// Nudger only follows in-progress tasks and the Announcer unowned ones.
+func notifyUnblocked(ctx context.Context, tx *sql.Tx, team, id, subject, owner, now string) error {
+	if owner == "" {
+		return nil
+	}
+	inbox, err := resolveInbox(ctx, tx, team, owner, "")
+	if KindOf(err) == KindInvalid {
+		// Owners are free text; one no inbox can have must not stop the
+		// task change itself.
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return deliver(ctx, tx, team, inbox, model.Message{
+		Type: "message",
+		From: "team-worker",
+		To:   inbox,
+		Content: fmt.Sprintf("Task %s %q is no longer blocked and is pending for you. Start it with "+
+			"`team-worker task update %s %s --status in_progress`.", id, subject, team, id),
+		RequestID: randomHex(12),
+		Timestamp: now,
+	})
 }
 
 func dedupe(items []string) []string {

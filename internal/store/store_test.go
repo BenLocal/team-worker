@@ -518,3 +518,48 @@ func TestRemoveBlockedByReleasesTheTask(t *testing.T) {
 		t.Fatalf("no blocker left: %s, stored %s blocked by %v", c.Status, got.Status, got.BlockedBy)
 	}
 }
+
+func TestOwnerIsToldWhenItsTaskIsUnblocked(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	newTeam(t, s, "alice")
+	create := func(in CreateTaskInput) model.Task {
+		t.Helper()
+		task, err := s.CreateTask(ctx, "demo", in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return task
+	}
+	first := create(CreateTaskInput{Subject: "first"})
+	other := create(CreateTaskInput{Subject: "other"})
+	next := create(CreateTaskInput{Subject: "next", Owner: "alice", BlockedBy: []string{first.ID}})
+	create(CreateTaskInput{Subject: "unowned", BlockedBy: []string{first.ID}})
+	create(CreateTaskInput{Subject: "free text owner", Owner: "not a name", BlockedBy: []string{first.ID}})
+	later := create(CreateTaskInput{Subject: "later", Owner: "alice", BlockedBy: []string{first.ID, other.ID}})
+	inbox := func() []model.Message {
+		t.Helper()
+		msgs, err := s.Receive(ctx, "demo", "alice", "", 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return msgs
+	}
+
+	if _, err := s.UpdateTask(ctx, "demo", first.ID, UpdateTaskInput{Status: ptr(model.StatusCompleted)}); err != nil {
+		t.Fatal(err)
+	}
+	// Only next became pending; later still waits for other.
+	msgs := inbox()
+	if len(msgs) != 1 || !strings.Contains(msgs[0].Content, next.ID) || msgs[0].From != "team-worker" {
+		t.Fatalf("after completing first: %+v", msgs)
+	}
+
+	// Dropping the last blocker by hand tells the owner too.
+	if _, err := s.UpdateTask(ctx, "demo", later.ID, UpdateTaskInput{RemoveBlockedBy: []string{other.ID}, Caller: "leader"}); err != nil {
+		t.Fatal(err)
+	}
+	if msgs := inbox(); len(msgs) != 1 || !strings.Contains(msgs[0].Content, later.ID) {
+		t.Fatalf("after removing the blocker: %+v", msgs)
+	}
+}

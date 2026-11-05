@@ -87,7 +87,7 @@ blocked_by = ["design"]       # 依赖的任务，填其他任务的 key
 ## 写好模板的几点建议
 
 - **leader 要负责收尾。** 写清楚 leader 什么时候算完成，例如：用 `team-worker task wait {team_name}` 等所有任务完成，核对 worker 交付的结果，汇总后报告给用户，最后用 `team-worker lifecycle request-shutdown` 让 worker 退出。
-- **任务的颗粒度以能独立交付为准。** 每个任务要有明确的负责人和完成标准，有先后顺序的用 `blocked_by` 连起来。依赖的任务完成后，被阻塞的任务会自动变回 `pending`。
+- **任务的颗粒度以能独立交付为准。** 每个任务要有明确的负责人和完成标准，有先后顺序的用 `blocked_by` 连起来。依赖的任务完成后，被阻塞的任务会自动变回 `pending`，有负责人的会给负责人发一条消息，让它开始做。
 - **写明交付方式。** 比如结果写到哪个文件、提交到哪个分支、用什么格式发给谁。例如 `team-worker inbox send {team_name} {leader_name} "FINDINGS: ..."`。
 - **不同角色可以用不同的 CLI。** 在单个 Agent 下写 `command` 即可。`launch` 在 `--` 后面给出的命令，会覆盖所有 Agent 的 `command`。
 

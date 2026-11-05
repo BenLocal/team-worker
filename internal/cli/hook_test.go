@@ -91,7 +91,8 @@ func TestStopHookWakesOnNewWork(t *testing.T) {
 	}()
 	start := time.Now()
 	res, _ := h.hook(`{}`, "stop", "--team", "demo", "--agent", "alice", "--wait", "10")
-	if res.Decision != "block" || !strings.Contains(res.Reason, "New work") || !strings.Contains(res.Reason, "implement") {
+	// The owner's unblock notice, or the task list, wakes it.
+	if res.Decision != "block" || !strings.Contains(res.Reason, "implement") {
 		t.Fatalf("unblocked task should wake the worker: %+v", res)
 	}
 	if time.Since(start) > 5*time.Second {
