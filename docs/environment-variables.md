@@ -114,7 +114,7 @@ team-worker 读取 Agent CLI 的会话和用量文件时，按这些变量找目
 
 | 变量 | 文件 | 默认值 |
 |---|---|---|
-| `TEAM_WORKER_PROVIDERS_FILE` | Magpie 模型供应商 | `/etc/team-worker/providers.yaml` |
+| `TEAM_WORKER_PROVIDERS_FILE` | Magpie 模型供应商（格式见 [providers.md](providers.md)） | `/etc/team-worker/providers.yaml` |
 | `TEAM_WORKER_SKILLS_FILE` | 要安装的 skill | `/etc/team-worker/skills.yaml` |
 | `TEAM_WORKER_MCP_FILE` | MCP 服务器 | `/etc/team-worker/mcp.yaml` |
 | `TEAM_WORKER_PROMPT_FILE` | 团队提示词 | `/etc/team-worker/prompt.yaml` |

@@ -186,7 +186,7 @@ volumes:
   team-worker-home:
 ```
 
-- **providers.yaml**：按 ID 创建或更新 provider 和路由组，`claude.model` 选默认模型；`key` / `key_env`、`url` / `url_env` 各选一个，需要凭据的供应商设 `key_required: true`，Key 为空时 Leader 等待配置。`stays: "off"` 要加引号。
+- **providers.yaml**：按 ID 创建或更新 provider 和路由组，`claude.model` 选默认模型；`key` / `key_env`、`url` / `url_env` 各选一个，需要凭据的供应商设 `key_required: true`，Key 为空时 Leader 等待配置。`stays: "off"` 要加引号。字段、路由方式和常见做法见 [providers.yaml 使用说明](../docs/providers.md)。
 - **skills.yaml**：启动时通过 Magpie Library 安装来源中的新技能并同步；已有同名技能保留。DinD 模式下 `team-worker-skills-update.timer` 每小时更新 Git 来源的技能；非 systemd 模式可手动运行 `docker exec --user node team-worker team-worker-ops skills --update`。
 - **prompt.yaml**：导入 Magpie Instructions，只更新文件中写明的字段。
 - **mcp.yaml**：按名称创建或更新 MCP 服务，`install` 可声明安装和检查命令（参数列表，不经 Shell）。
