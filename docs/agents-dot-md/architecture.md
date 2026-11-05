@@ -91,7 +91,7 @@ team-worker board serve ──> internal/board (同一看板的独立进程，�
 
 ## 六、外部依赖与集成
 
-默认通过本机 socket 访问；可选 HTTP 监听支持远程 API 调用，Key 通过环境变量提供。远程客户端不自动拉起 daemon，也不回退到本地 socket。spawn / proc / tmux 仍由运行 CLI 的机器执行。外部进程关系有两类：
+默认通过本机 socket 访问；可选 HTTP 监听支持远程 API 调用，Key 默认由 daemon 生成并存进 SQLite，`TEAM_WORKER_API_KEY` 可覆盖。远程客户端不自动拉起 daemon，也不回退到本地 socket。spawn / proc / tmux 都由 daemon 在它所在的机器上执行（见上文「依赖方向硬规则」）。外部进程关系有两类：
 
 - agent 进程：依赖 `tmux` 或直接起子进程，见上文 spawn 链路；`proc` 负责探测存活与停止。
 - 服务进程：CLI 拉起 `team-workerd`，先找 CLI 同目录下的二进制，再查 `PATH`，`Setsid` 脱离终端，日志写 `team-workerd.log`，5 秒内健康检查不通则报错。

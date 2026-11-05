@@ -7,13 +7,13 @@
 
 - 手工调试时用独立数据目录，别动 `~/.team-worker` 里的真实数据：`TEAM_WORKER_DATA_DIR=$(mktemp -d) bin/team-worker ...`。
 - 数据目录路径较长时 socket 路径会超过约 100 字符的上限，用 `TEAM_WORKER_SOCKET` 把 socket 放到短路径下。
-- 调试完记得停掉自动拉起的 `team-workerd`：先用 `pgrep -af team-workerd` 确认 PID，再 `kill <pid>`。
+- 调试完记得停掉自动拉起的 `team-workerd`：用 `ps -o pid,command -p $(pgrep -x team-workerd)` 按 `--data-dir` 认出自己起的那个，再 `kill <pid>`。别用 `pgrep -f`：它会匹配到命令行里带这个词的 shell，macOS 上 `-a` 的含义也和 Linux 不同。
 
 ## Git 推送 / 拉取
-主分支为 `main`。目前仓库还没有配置远端。
+主分支为 `main`，远端 `origin` 在 GitHub，提交直接推到 `main`。
 
 ## 发布 / 部署
-本机安装：`make install`。没有发布流水线。
+本机安装：`make install`。CI（`.github/workflows/ci.yml`）在推送时跑格式、vet、`go test -race`、交叉编译和 `scripts/check-sensitive.sh`；`docker.yml` 在推送 `main` 和 `v*` 标签时构建镜像推到 GHCR。部署主机的更新见 `scripts/deploy-compose.sh` 和 `docs/memory/deploy-server.md`。
 
 ## 数据库升级与恢复
 

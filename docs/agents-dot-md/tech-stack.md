@@ -6,7 +6,7 @@
 
 ## 一、项目概览
 
-- 定位：用 Go 重写的 [ClawTeam](https://github.com/HKUDS/ClawTeam) 多 Agent 协作工具，单机使用，给 Agent 和人用的团队 / 任务 / 收件箱 CLI。
+- 定位：用 Go 重写的 [ClawTeam](https://github.com/HKUDS/ClawTeam) 多 Agent 协作工具，给 Agent 和人用的团队 / 任务 / 收件箱 CLI；daemon 和 Agent 在同一台机器上运行，CLI 可在本机走 socket，也可走 HTTP 远程操作。
 - 仓库形态：单 Go module `github.com/benlocal/team-worker`，两个入口 `cmd/team-worker`、`cmd/team-workerd`；`skills/teamworker` 是随仓库分发的远程操作 skill；Agent 的协作规则在 `internal/spawn/prompt.md`（嵌入二进制，作为第一条提示词）。
 - 主要语言与版本：Go 1.26（`go.mod` 中 `go 1.26.0`）。
 - 结构总览：见 `architecture.md`。
@@ -42,7 +42,7 @@
 
 ## 四、配置管理
 
-- 只有环境变量 `TEAM_WORKER_*`（见 `docs/reference.md`《配置》）和可选的 `~/.team-worker/config.json`（`data_dir`、`user`、`server_url`），读取逻辑集中在 `internal/config`。Web 与 CLI HTTP 共用的 Key 默认由 daemon 生成并保存到 SQLite；`TEAM_WORKER_API_KEY` 可在启动时覆盖并持久化。
+- 只有环境变量 `TEAM_WORKER_*`（见 `docs/reference.md`《配置》）和可选的 `~/.team-worker/config.json`（字段见 `docs/reference.md`），读取逻辑集中在 `internal/config`。Web 与 CLI HTTP 共用的 Key 默认由 daemon 生成并保存到 SQLite；`TEAM_WORKER_API_KEY` 可在启动时覆盖并持久化。
 - 新配置项加到 `internal/config`，并同步 `docs/reference.md` 的配置表。
 
 ## 五、构建与验证命令
@@ -64,7 +64,7 @@ go test -race ./...   # 改了 Hub、长轮询、daemon 生命周期等并发路
 
 ## 六、部署方式
 
-本机使用，无服务端部署：`make install` 把两个二进制装到 `GOBIN`（未设置时为 `GOPATH/bin`）。CLI 首次调用会自动拉起 `team-workerd`。
+本机：`make install` 把两个二进制装到 `GOBIN`（未设置时为 `GOPATH/bin`），CLI 首次调用会自动拉起 `team-workerd`。服务器：用 `docker/` 的镜像部署（见 `docker/README.md`），CI 构建镜像推到 GHCR；更新流程见 `environment.md`《发布 / 部署》。
 
 ## 七、其他约定
 
