@@ -23,7 +23,7 @@ team-worker spawn tmux --team my-team -n alice --keepalive --max-restarts 3 --re
 
 keepalive 适用于 tmux 和 subprocess，正常退出和异常退出均受重试上限约束；默认最多连续重启 3 次，等待时间逐次加倍、最长 1 分钟，一次运行达到 1 分钟后重置连续次数。原生会话 ID 缺失时停止恢复并报错。每轮进程使用独立 `run_id`，旧进程的退出回报不会修改新一轮的状态。退出时任务仍退回 pending，恢复后需重新检查任务归属并领取。
 
-`agent stop`、批准 shutdown 和 `team cleanup` 会先保存停止意图，阻止后续重启。整个 tmux pane 或 supervisor 被结束后不会自动创建新 pane，可使用 `agent resume` 手动恢复。
+`agent stop`、批准 shutdown 和 `team cleanup` 会先保存停止意图，阻止后续重启。整个 tmux pane 或 supervisor 被结束后，daemon 运行期间不会自动创建新 pane，可使用 `agent resume` 手动恢复；但这记为中断退出，daemon 下次启动时会自动续接。要让成员一直停着，用 `agent stop`，不要直接关掉它的 tmux 窗口。
 
 daemon 启动时会自动续接上次关停（比如机器或容器重启）时还在运行的 Agent，所有团队都算：没有停止意图、进程已不在、保存了会话 ID，并且记录为运行中或"中断退出"（退出码 -1：supervisor 被关停信号结束，或 daemon 发现进程已消失）的成员，按保存的命令和 keepalive 设置续接，上下文保留。被 `agent stop` 停下、`--replace` 替换、`team cleanup` 清理、批准关停的会先记录停止意图，不会续接；keepalive 放弃重试时记录的是子进程自己的退出码，也不会续接。子进程被崩溃类信号（SIGSEGV、SIGABRT 等）结束时，记录的退出码是 128 加信号值，和 shell 的约定一样，也不会续接；被 SIGTERM、SIGHUP、SIGINT、SIGKILL 结束时记中断退出，因为关停时 supervisor 和子进程会一起收到这些信号，先看到子进程退出也不能让它失去续接资格。代价是被内存不足杀掉（SIGKILL）的成员会在 daemon 下次启动时续接。supervisor 收到 SIGTERM、SIGHUP、SIGINT 只记中断退出，不算停止意图，所以容器停止时关掉 tmux 不会让成员失去续接资格。
 

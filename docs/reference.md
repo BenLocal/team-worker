@@ -173,7 +173,7 @@ team-workerd 记录这些事件：
 | `POST /v1/teams/{team}/agents/{name}/terminate` | 停掉成员：补存会话 ID、登记停止意图（keepalive 不再重启）、结束进程、释放任务 |
 | `GET /v1/teams/{team}/agents/{name}/screen?lines=N` | 成员终端（或 subprocess 日志）当前的内容 |
 | `POST /v1/teams/{team}/costs/sync?agent=...` | 从 daemon 那台机器上的原生会话文件记录 token 用量 |
-| `POST /v1/agents/restore` | 续接所有团队里没有停止意图、记录为运行中或中断退出（退出码 -1）、进程已不在、保存了会话的成员（daemon 启动时自动执行一次），返回每个成员的结果 `model.RestoredAgent` |
+| `POST /v1/agents/restore` | 续接所有团队里没有停止意图、记录为运行中或中断退出（退出码 -1，手动关掉的 tmux 窗口也算）、进程已不在、保存了会话的成员（daemon 启动时自动执行一次），返回每个成员的结果 `model.RestoredAgent` |
 | `POST /v1/launch` | 按模板建团队并启动全部成员（`model.LaunchRequest`；`templateText` 是客户端读出的模板文件内容） |
 | `GET/PUT /v1/profiles` | 读取 / 整体保存 daemon `config.json` 里的运行配置和端点预设（`profile`、`preset` 命令用它） |
 | `POST /v1/profile-doctor/{client}` | 在 daemon 机器上修复客户端的本地状态，目前只支持 `claude`：在 `~/.claude.json` 里设置 `hasCompletedOnboarding`，保留其他内容 |
