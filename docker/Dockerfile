@@ -56,8 +56,10 @@ RUN case "${TARGETARCH:-amd64}" in \
         *) echo "unsupported architecture: $TARGETARCH" >&2; exit 1 ;; \
     esac \
     && bun_base="${BUN_DOWNLOAD_BASE}/bun-v${BUN_VERSION}" \
-    && curl -fsSL -o /tmp/bun.zip "$bun_base/bun-$bun_target.zip" \
-    && curl -fsSL "$bun_base/SHASUMS256.txt" \
+    # A stalled connection otherwise holds the build forever; give up and retry.
+    && fetch="curl -fsSL --connect-timeout 20 --speed-time 60 --speed-limit 1024 --retry 5 --retry-all-errors" \
+    && $fetch -o /tmp/bun.zip "$bun_base/bun-$bun_target.zip" \
+    && $fetch "$bun_base/SHASUMS256.txt" \
         | awk -v f="bun-$bun_target.zip" '$2 == f { print $1 "  /tmp/bun.zip" }' \
         | grep . | sha256sum -c - \
     && python3 -c 'import sys, zipfile; sys.stdout.buffer.write(zipfile.ZipFile("/tmp/bun.zip").read(sys.argv[1]))' \
