@@ -21,8 +21,9 @@
 - [x] 修复 Codex 自动捕获会话 ID 时的工作目录别名匹配。按文件系统身份识别同一目录；macOS 下传入 `/tmp/...`、原生记录为 `/private/tmp/...` 时，会话 ID 自动捕获、真实续接和无工具暗号回忆均通过。
 - [x] OpenCode（1.18.29）自动捕获会话 ID：daemon 只读查询 `opencode.db`，按工作目录（含 `/var` 与 `/private/var` 别名）、Agent 身份和启动时间匹配顶层会话。2026-11-04 用真实 daemon 和 opencode 实测：会话 ID 自动保存，`agent resume --dry-run` 生成 `opencode run --format json --session <id>`。
 - [ ] OpenCode 续接后的前文记忆：2026-11-04 本机没有可用模型（默认模型已停用，OpenCode Go key 过期，免费模型额度用完），待有模型后用验收脚本补测。Gemini、Kimi、Qwen 不再验证。
+- [ ] 逐个验证 Codex、dsh、pi、OpenCode 在 tmux 后端下的原生交互，以及 keepalive 退出后自动续接同一会话。
 
-上述补测使用 `scripts/verify-native-sessions.py`；尚未逐个验证这些 CLI 的原生 tmux 交互与 keepalive 自动续接。
+上述补测使用 `scripts/verify-native-sessions.py`，只覆盖 subprocess 启动和手动 `agent resume`。
 
 ### 2. `plan` 审批
 
