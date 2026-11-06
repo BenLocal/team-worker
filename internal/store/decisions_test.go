@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/benlocal/team-worker/internal/model"
 )
@@ -139,16 +140,16 @@ func TestOperatorOverridesOnlyAutoDecisions(t *testing.T) {
 	human, _ := s.CreateDecisionRequest(ctx, "demo", CreateDecisionInput{From: "leader", Summary: "Wipe the disk?", HumanOnly: true})
 
 	queue, err := s.AutoReviewQueue(ctx)
-	if err != nil || len(queue) != 1 || queue[0].Request.ID != r.ID || queue[0].Model != "group/x" {
+	if err != nil || len(queue) != 1 || queue[0].Request.ID != r.ID || queue[0].Setting.Model != "group/x" {
 		t.Fatalf("queue = %+v, %v", queue, err)
 	}
-	if ok, err := s.ClaimAutoReview(ctx, "demo", human.ID); err != nil || ok {
+	if ok, err := s.ClaimAutoReview(ctx, "demo", human.ID, time.Now()); err != nil || ok {
 		t.Fatalf("claimed a human-only request: %v %v", ok, err)
 	}
-	if ok, _ := s.ClaimAutoReview(ctx, "demo", r.ID); !ok {
+	if ok, _ := s.ClaimAutoReview(ctx, "demo", r.ID, time.Now()); !ok {
 		t.Fatal("claim failed")
 	}
-	if ok, _ := s.ClaimAutoReview(ctx, "demo", r.ID); ok {
+	if ok, _ := s.ClaimAutoReview(ctx, "demo", r.ID, time.Now()); ok {
 		t.Fatal("claimed twice")
 	}
 	if queue, _ := s.AutoReviewQueue(ctx); len(queue) != 0 {
@@ -194,7 +195,7 @@ func TestOperatorOverridesOnlyAutoDecisions(t *testing.T) {
 	}
 	s.SetAutoReview(ctx, "demo", model.AutoReview{})
 	later, _ := s.CreateDecisionRequest(ctx, "demo", abcRequest())
-	if ok, _ := s.ClaimAutoReview(ctx, "demo", later.ID); ok {
+	if ok, _ := s.ClaimAutoReview(ctx, "demo", later.ID, time.Now()); ok {
 		t.Error("claimed with auto review off")
 	}
 	if a, err := s.AutoReviewSetting(ctx, "demo"); err != nil || a.Enabled || a.Model != "" {
@@ -202,5 +203,60 @@ func TestOperatorOverridesOnlyAutoDecisions(t *testing.T) {
 	}
 	if _, err := s.SetAutoReview(ctx, "nope", model.AutoReview{Enabled: true}); KindOf(err) != KindNotFound {
 		t.Errorf("unknown team: %v", err)
+	}
+}
+
+func TestAutoReviewWindow(t *testing.T) {
+	s := newTestStore(t)
+	newTeam(t, s)
+	ctx := context.Background()
+	for _, bad := range []struct {
+		a    model.AutoReview
+		want string
+	}{
+		{model.AutoReview{Enabled: true, From: "22:00"}, "Set both from and to"},
+		{model.AutoReview{Enabled: true, To: "08:00"}, "Set both from and to"},
+		{model.AutoReview{Enabled: true, From: "8:00", To: "09:00"}, "From: invalid time"},
+		{model.AutoReview{Enabled: true, From: "08:00", To: "24:00"}, "To: invalid time"},
+		{model.AutoReview{Enabled: true, From: "08:00", To: "08:00"}, "must differ"},
+		{model.AutoReview{Enabled: true, From: "22:00", To: "08:00", TimeZone: "Nowhere/City"}, "Unknown time zone"},
+		{model.AutoReview{Enabled: true, TimeZone: "Asia/Shanghai"}, "needs a window"},
+	} {
+		if _, err := s.SetAutoReview(ctx, "demo", bad.a); KindOf(err) != KindInvalid || !strings.Contains(err.Error(), bad.want) {
+			t.Errorf("SetAutoReview(%+v) = %v, want %q", bad.a, err, bad.want)
+		}
+	}
+	night := model.AutoReview{Enabled: true, Model: "m", From: " 22:00", To: "08:00 ", TimeZone: "Asia/Shanghai"}
+	if got, err := s.SetAutoReview(ctx, "demo", night); err != nil || got.From != "22:00" || got.To != "08:00" {
+		t.Fatalf("set window: %+v %v", got, err)
+	}
+	want := model.AutoReview{Enabled: true, Model: "m", From: "22:00", To: "08:00", TimeZone: "Asia/Shanghai"}
+	if got, err := s.AutoReviewSetting(ctx, "demo"); err != nil || got != want {
+		t.Fatalf("setting = %+v %v", got, err)
+	}
+
+	r, _ := s.CreateDecisionRequest(ctx, "demo", abcRequest())
+	// The queue keeps requests outside the window; the reviewer skips them.
+	queue, err := s.AutoReviewQueue(ctx)
+	if err != nil || len(queue) != 1 || queue[0].Setting != want {
+		t.Fatalf("queue = %+v, %v", queue, err)
+	}
+	noon := time.Date(2026, 11, 6, 4, 0, 0, 0, time.UTC) // 12:00 in Shanghai
+	if ok, err := s.ClaimAutoReview(ctx, "demo", r.ID, noon); err != nil || ok {
+		t.Fatalf("claimed outside the window: %v %v", ok, err)
+	}
+	if queue, _ := s.AutoReviewQueue(ctx); len(queue) != 1 {
+		t.Fatalf("refused claim left the queue: %+v", queue)
+	}
+	night23 := time.Date(2026, 11, 6, 15, 0, 0, 0, time.UTC) // 23:00 in Shanghai
+	if ok, err := s.ClaimAutoReview(ctx, "demo", r.ID, night23); err != nil || !ok {
+		t.Fatalf("claim inside the window: %v %v", ok, err)
+	}
+
+	if got, err := s.SetAutoReview(ctx, "demo", model.AutoReview{Enabled: true}); err != nil || got.HasWindow() {
+		t.Fatalf("clear window: %+v %v", got, err)
+	}
+	if got, _ := s.AutoReviewSetting(ctx, "demo"); got.From != "" || got.To != "" || got.TimeZone != "" || got.Model != "" {
+		t.Errorf("cleared setting = %+v", got)
 	}
 }

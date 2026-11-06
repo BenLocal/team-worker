@@ -11,6 +11,9 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	// Embedded zone data, so auto review windows in an IANA time zone work
+	// on hosts and images without zoneinfo.
+	_ "time/tzdata"
 
 	"github.com/benlocal/team-worker/internal/board"
 	"github.com/benlocal/team-worker/internal/config"

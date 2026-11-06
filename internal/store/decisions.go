@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/benlocal/team-worker/internal/model"
@@ -368,22 +370,34 @@ func (s *Store) AutoReviewSetting(ctx context.Context, team string) (model.AutoR
 	if err := validate(team, "team name"); err != nil {
 		return model.AutoReview{}, err
 	}
-	var a model.AutoReview
-	err := s.db.QueryRowContext(ctx, "SELECT auto_review, auto_review_model FROM teams WHERE name = ?", team).Scan(&a.Enabled, &a.Model)
+	a, err := scanAutoReview(s.db.QueryRowContext(ctx, "SELECT "+autoReviewColumns+" FROM teams WHERE name = ?", team))
 	if errors.Is(err, sql.ErrNoRows) {
 		return a, notFoundf("Team '%s' not found", team)
 	}
 	return a, err
 }
 
-// SetAutoReview turns a team's AI auto review on or off.
+const autoReviewColumns = "auto_review, auto_review_model, auto_review_from, auto_review_to, auto_review_time_zone"
+
+func scanAutoReview(row scanner) (model.AutoReview, error) {
+	var a model.AutoReview
+	err := row.Scan(&a.Enabled, &a.Model, &a.From, &a.To, &a.TimeZone)
+	return a, err
+}
+
+// SetAutoReview replaces a team's AI auto review setting.
 func (s *Store) SetAutoReview(ctx context.Context, team string, a model.AutoReview) (model.AutoReview, error) {
 	a.Model = strings.TrimSpace(a.Model)
 	if len(a.Model) > 200 || strings.ContainsAny(a.Model, " \t\r\n") {
 		return a, invalidf("Model must be a name of at most 200 characters without spaces")
 	}
+	if err := validateAutoReviewWindow(&a); err != nil {
+		return a, err
+	}
 	err := s.write(ctx, func(tx *sql.Tx) error {
-		res, err := tx.ExecContext(ctx, "UPDATE teams SET auto_review = ?, auto_review_model = ? WHERE name = ?", a.Enabled, a.Model, team)
+		res, err := tx.ExecContext(ctx, `UPDATE teams SET auto_review = ?, auto_review_model = ?,
+			auto_review_from = ?, auto_review_to = ?, auto_review_time_zone = ? WHERE name = ?`,
+			a.Enabled, a.Model, a.From, a.To, a.TimeZone, team)
 		if err != nil {
 			return err
 		}
@@ -395,18 +409,47 @@ func (s *Store) SetAutoReview(ctx context.Context, team string, a model.AutoRevi
 	return a, err
 }
 
-// AutoReviewItem is a request waiting for the AI auto reviewer, with the
-// model its team set.
+// validateAutoReviewWindow trims the window fields of a and checks them.
+func validateAutoReviewWindow(a *model.AutoReview) error {
+	a.From, a.To, a.TimeZone = strings.TrimSpace(a.From), strings.TrimSpace(a.To), strings.TrimSpace(a.TimeZone)
+	if !a.HasWindow() {
+		if a.TimeZone != "" {
+			return invalidf("A time zone needs a window: set both from and to")
+		}
+		return nil
+	}
+	if a.From == "" || a.To == "" {
+		return invalidf("Set both from and to for a window, or neither to review all day")
+	}
+	from, err := model.ParseClock(a.From)
+	if err != nil {
+		return invalidf("From: %v", err)
+	}
+	to, err := model.ParseClock(a.To)
+	if err != nil {
+		return invalidf("To: %v", err)
+	}
+	if from == to {
+		return invalidf("From and to must differ; leave both empty to review all day")
+	}
+	if _, err := a.Location(); err != nil {
+		return invalidf("Unknown time zone %q: use an IANA name like Asia/Shanghai", a.TimeZone)
+	}
+	return nil
+}
+
+// AutoReviewItem is a request waiting for the AI auto reviewer, with its
+// team's setting.
 type AutoReviewItem struct {
 	Request model.DecisionRequest
-	Model   string
+	Setting model.AutoReview
 }
 
 // AutoReviewQueue returns, oldest first, the pending requests the AI auto
-// reviewer has not looked at in teams that turned auto review on. Human-only
-// requests are left out.
+// reviewer has not looked at in teams that turned auto review on, whatever
+// their window. Human-only requests are left out.
 func (s *Store) AutoReviewQueue(ctx context.Context) ([]AutoReviewItem, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT t.auto_review_model, `+prefixed("d.", decisionColumns)+`
+	rows, err := s.db.QueryContext(ctx, `SELECT `+prefixed("t.", autoReviewColumns)+`, `+prefixed("d.", decisionColumns)+`
 		FROM decision_requests d JOIN teams t ON t.name = d.team
 		WHERE t.auto_review = 1 AND d.status = 'pending' AND d.human_only = 0 AND d.auto_attempted = 0
 		ORDER BY d.created_at, d.id`)
@@ -417,7 +460,8 @@ func (s *Store) AutoReviewQueue(ctx context.Context) ([]AutoReviewItem, error) {
 	var out []AutoReviewItem
 	for rows.Next() {
 		var item AutoReviewItem
-		if item.Request, err = scanDecision(prefixScanner{rows, &item.Model}); err != nil {
+		a := &item.Setting
+		if item.Request, err = scanDecision(prefixScanner{rows, []any{&a.Enabled, &a.Model, &a.From, &a.To, &a.TimeZone}}); err != nil {
 			return nil, err
 		}
 		out = append(out, item)
@@ -425,15 +469,15 @@ func (s *Store) AutoReviewQueue(ctx context.Context) ([]AutoReviewItem, error) {
 	return out, rows.Err()
 }
 
-// prefixScanner scans one leading column into first, then the rest as the
+// prefixScanner scans the leading columns into first, then the rest as the
 // wrapped row's caller asks.
 type prefixScanner struct {
 	row   scanner
-	first *string
+	first []any
 }
 
 func (p prefixScanner) Scan(dest ...any) error {
-	return p.row.Scan(append([]any{p.first}, dest...)...)
+	return p.row.Scan(append(slices.Clip(p.first), dest...)...)
 }
 
 func prefixed(prefix, columns string) string {
@@ -446,14 +490,22 @@ func prefixed(prefix, columns string) string {
 
 // ClaimAutoReview marks a pending request as looked at by the AI auto
 // reviewer and reports whether this call claimed it, so a request is
-// reviewed at most once. Nothing is claimed once the team turned auto
-// review off.
-func (s *Store) ClaimAutoReview(ctx context.Context, team, id string) (bool, error) {
+// reviewed at most once. Nothing is claimed while the team's auto review is
+// off or outside its window at now.
+func (s *Store) ClaimAutoReview(ctx context.Context, team, id string, now time.Time) (bool, error) {
 	var claimed bool
 	err := s.write(ctx, func(tx *sql.Tx) error {
+		a, err := scanAutoReview(tx.QueryRowContext(ctx, "SELECT "+autoReviewColumns+" FROM teams WHERE name = ?", team))
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			return nil
+		case err != nil:
+			return err
+		case !a.Active(now):
+			return nil
+		}
 		res, err := tx.ExecContext(ctx, `UPDATE decision_requests SET auto_attempted = 1
-			WHERE team = ? AND id = ? AND status = 'pending' AND human_only = 0 AND auto_attempted = 0
-			AND EXISTS(SELECT 1 FROM teams WHERE teams.name = decision_requests.team AND teams.auto_review = 1)`, team, id)
+			WHERE team = ? AND id = ? AND status = 'pending' AND human_only = 0 AND auto_attempted = 0`, team, id)
 		if err != nil {
 			return err
 		}

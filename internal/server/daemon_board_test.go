@@ -120,12 +120,30 @@ func TestDaemonServesBoardBesideAPI(t *testing.T) {
 		t.Fatalf("board decide: %d %s", code, body)
 	}
 	if code, body := send("PUT", "/api/teams/demo/auto-review", "application/json", "", `{"enabled":true,"model":"m1"}`); code != 200 ||
-		!strings.Contains(body, `"enabled":true`) {
+		!strings.Contains(body, `"enabled":true`) || !strings.Contains(body, `"active":true`) {
 		t.Fatalf("board auto review: %d %s", code, body)
 	}
+	// A window of the whole day but the minute after now is active now; one
+	// minute far from now is not.
+	now := time.Now().In(time.UTC)
+	from, to := now.Add(2*time.Minute).Format("15:04"), now.Add(time.Minute).Format("15:04")
+	window := `"from":"` + from + `","to":"` + to + `","timeZone":"UTC"`
+	if code, body := send("PUT", "/api/teams/demo/auto-review", "application/json", "", `{"enabled":true,"model":"m1",`+window+`}`); code != 200 ||
+		!strings.Contains(body, window+`,"active":true,"daemonZone":"`) {
+		t.Fatalf("board auto review window: %d %s", code, body)
+	}
 	if code, body := get("/api/teams/demo/oversight", key); code != 200 || !strings.Contains(body, `"requests":[{"id":"`+decision.ID) ||
-		!strings.Contains(body, `"autoReview":{"enabled":true,"model":"m1"}`) {
+		!strings.Contains(body, `"autoReview":{"enabled":true,"model":"m1",`+window+`,"active":true,"daemonZone":"`) {
 		t.Fatalf("board oversight: %d %.300s", code, body)
+	}
+	far := `"from":"` + now.Add(2*time.Hour).Format("15:04") + `","to":"` + now.Add(2*time.Hour+time.Minute).Format("15:04") + `","timeZone":"UTC"`
+	if code, body := send("PUT", "/api/teams/demo/auto-review", "application/json", "", `{"enabled":true,`+far+`}`); code != 200 ||
+		!strings.Contains(body, far+`,"active":false`) {
+		t.Fatalf("board auto review outside the window: %d %s", code, body)
+	}
+	if code, body := send("PUT", "/api/teams/demo/auto-review", "application/json", "", `{"enabled":true,"from":"22:00","to":"22:00"}`); code != 400 ||
+		!strings.Contains(body, "must differ") {
+		t.Fatalf("board auto review empty window: %d %s", code, body)
 	}
 	if code, _ := get("/v1/teams", ""); code != 401 {
 		t.Fatalf("API without a key: %d", code)

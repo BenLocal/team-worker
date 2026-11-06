@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/benlocal/team-worker/internal/client"
 	"github.com/benlocal/team-worker/internal/model"
@@ -60,8 +61,18 @@ func TestDecisionRequestRoutes(t *testing.T) {
 	if a, err := c.SetAutoReview(ctx, "demo", model.AutoReview{Enabled: true, Model: "m1"}); err != nil || !a.Enabled {
 		t.Fatalf("set auto review: %+v %v", a, err)
 	}
-	if a, err := c.AutoReview(ctx, "demo"); err != nil || !a.Enabled || a.Model != "m1" {
+	if a, err := c.AutoReview(ctx, "demo"); err != nil || !a.Enabled || a.Model != "m1" || !a.Active || a.DaemonZone == "" {
 		t.Fatalf("auto review: %+v %v", a, err)
+	}
+	// A window that never covers now is reported as not active.
+	now := time.Now().UTC()
+	from, to := now.Add(2*time.Hour).Format("15:04"), now.Add(3*time.Hour).Format("15:04")
+	if a, err := c.SetAutoReview(ctx, "demo", model.AutoReview{Enabled: true, From: from, To: to, TimeZone: "UTC"}); err != nil ||
+		a.Active || a.From != from || a.To != to || a.TimeZone != "UTC" || a.Model != "" {
+		t.Fatalf("set window: %+v %v", a, err)
+	}
+	if _, err := c.SetAutoReview(ctx, "demo", model.AutoReview{Enabled: true, From: "22:00"}); !errors.As(err, &apiErr) || apiErr.Status != 400 {
+		t.Fatalf("half a window: %v", err)
 	}
 }
 
@@ -203,6 +214,56 @@ func TestAutoReviewerSkipsHumanOnlyAndDisabledTeams(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAutoReviewerWaitsForTheWindow(t *testing.T) {
+	for _, c := range []struct {
+		name, from, to  string
+		outside, inside time.Time
+	}{
+		// Times are in Asia/Shanghai, UTC+8.
+		{"same day", "09:00", "18:00", shanghaiTime(8, 59), shanghaiTime(9, 0)},
+		{"cross midnight before midnight", "22:00", "08:00", shanghaiTime(12, 0), shanghaiTime(23, 30)},
+		{"cross midnight after midnight", "22:00", "08:00", shanghaiTime(8, 0), shanghaiTime(7, 59)},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			a, st, _ := newReviewFixture(t, true)
+			ctx := context.Background()
+			if _, err := st.SetAutoReview(ctx, "demo", model.AutoReview{Enabled: true, From: c.from, To: c.to, TimeZone: "Asia/Shanghai"}); err != nil {
+				t.Fatal(err)
+			}
+			r := createABC(t, st, false)
+			now := c.outside
+			a.Now = func() time.Time { return now }
+			calls := 0
+			a.Review = func(context.Context, string, string) (string, error) {
+				calls++
+				return `{"decision":"approve","choice":"C","reason":"allowed refactor"}`, nil
+			}
+			if err := a.Drain(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if calls != 0 {
+				t.Fatal("reviewed outside the window")
+			}
+			// Not marked as looked at: still queued for when the window opens.
+			if queue, _ := st.AutoReviewQueue(ctx); len(queue) != 1 || queue[0].Request.ID != r.ID {
+				t.Fatalf("queue outside the window = %+v", queue)
+			}
+			now = c.inside
+			if err := a.Drain(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if got, _ := st.GetDecisionRequest(ctx, "demo", r.ID); calls != 1 || got.Status != model.DecisionApproved || got.Choice != "C" {
+				t.Fatalf("after the window opened: %d calls, %+v", calls, got)
+			}
+		})
+	}
+}
+
+// shanghaiTime is hh:mm on a fixed day in Asia/Shanghai, as a UTC time.
+func shanghaiTime(hh, mm int) time.Time {
+	return time.Date(2026, 11, 6, hh, mm, 0, 0, time.FixedZone("CST", 8*3600)).UTC()
 }
 
 func TestAutoReviewerDropsDecisionsTheOperatorMadeMeanwhile(t *testing.T) {

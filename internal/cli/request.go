@@ -209,27 +209,59 @@ func (a *app) decider() string {
 }
 
 func (a *app) requestAutoCmd() *cobra.Command {
-	var modelName string
+	var modelName, from, to, timeZone string
+	var allDay bool
 	cmd := &cobra.Command{
 		Use:   "auto TEAM [on|off]",
 		Short: "Show or switch the AI auto review of a team's decision requests (human-only requests are always left to a person)",
-		Args:  cobra.RangeArgs(1, 2),
+		Long: `Show or switch the AI auto review of a team's decision requests.
+
+With --from and --to the review only runs inside a daily window that
+includes --from and excludes --to; an end before the start crosses
+midnight (22:00-08:00 is 22:00 today until 08:00 tomorrow). Requests made
+outside the window wait and are reviewed once it opens. Switching on or off
+keeps the model and the window set earlier unless they are given.`,
+		Example: `  team-worker request auto my-team on --from 22:00 --to 08:00 --tz Asia/Shanghai
+  team-worker request auto my-team on --all-day
+  team-worker request auto my-team`,
+		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c := a.client()
-			var setting model.AutoReview
+			flags := cmd.Flags()
+			changed := flags.Changed("model") || flags.Changed("from") || flags.Changed("to") || flags.Changed("tz") || allDay
+			if allDay && (flags.Changed("from") || flags.Changed("to") || flags.Changed("tz")) {
+				return a.fail(fmt.Errorf("--all-day clears the window; do not combine it with --from, --to or --tz"))
+			}
+			var setting model.AutoReviewStatus
 			var err error
 			switch {
 			case len(args) == 1:
+				if changed {
+					return a.fail(fmt.Errorf("give on or off with --model, --from, --to, --tz or --all-day"))
+				}
 				setting, err = c.AutoReview(cmd.Context(), args[0])
 			case args[1] == "on" || args[1] == "off":
-				next := model.AutoReview{Enabled: args[1] == "on", Model: modelName}
-				if !cmd.Flags().Changed("model") {
-					// Switching on or off keeps the model set earlier.
-					current, err := c.AutoReview(cmd.Context(), args[0])
-					if err != nil {
-						return a.fail(err)
-					}
-					next.Model = current.Model
+				// Switching on or off keeps the model and window set earlier.
+				var current model.AutoReviewStatus
+				if current, err = c.AutoReview(cmd.Context(), args[0]); err != nil {
+					return a.fail(err)
+				}
+				next := current.AutoReview
+				next.Enabled = args[1] == "on"
+				if flags.Changed("model") {
+					next.Model = modelName
+				}
+				if flags.Changed("from") {
+					next.From = from
+				}
+				if flags.Changed("to") {
+					next.To = to
+				}
+				if flags.Changed("tz") {
+					next.TimeZone = timeZone
+				}
+				if allDay {
+					next.From, next.To, next.TimeZone = "", "", ""
 				}
 				setting, err = c.SetAutoReview(cmd.Context(), args[0], next)
 			default:
@@ -239,19 +271,43 @@ func (a *app) requestAutoCmd() *cobra.Command {
 				return a.fail(err)
 			}
 			a.emit(setting, func(w io.Writer) {
-				state := "off"
-				if setting.Enabled {
-					state = "on"
-				}
-				m := setting.Model
-				if m == "" {
-					m = "default"
-				}
-				fmt.Fprintf(w, "Auto review for %s: %s (model: %s)\n", args[0], state, m)
+				fmt.Fprintf(w, "Auto review for %s: %s\n", args[0], describeAutoReview(setting))
 			})
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&modelName, "model", "", "Model the reviewer runs with; \"\" for the reviewer command's default (default: keep the current one)")
+	cmd.Flags().StringVar(&from, "from", "", "Start of the daily review window, HH:MM 24-hour (default: keep the current one)")
+	cmd.Flags().StringVar(&to, "to", "", "End of the daily review window, HH:MM 24-hour, excluded; before --from crosses midnight (default: keep the current one)")
+	cmd.Flags().StringVar(&timeZone, "tz", "", "IANA time zone of the window, e.g. Asia/Shanghai; \"\" for the daemon's local time (default: keep the current one)")
+	cmd.Flags().BoolVar(&allDay, "all-day", false, "Clear the window and review all day")
 	return cmd
+}
+
+// describeAutoReview is the one-line state of an auto review setting, e.g.
+// "on (model: default), 22:00-08:00 Asia/Shanghai, active now".
+func describeAutoReview(s model.AutoReviewStatus) string {
+	state := "off"
+	if s.Enabled {
+		state = "on"
+	}
+	m := s.Model
+	if m == "" {
+		m = "default"
+	}
+	text := fmt.Sprintf("%s (model: %s)", state, m)
+	if s.HasWindow() {
+		zone := s.TimeZone
+		if zone == "" {
+			zone = "daemon time (" + s.DaemonZone + ")"
+		}
+		text += fmt.Sprintf(", %s-%s %s", s.From, s.To, zone)
+	}
+	switch {
+	case s.Active:
+		text += ", active now"
+	case s.Enabled:
+		text += ", outside the window now"
+	}
+	return text
 }

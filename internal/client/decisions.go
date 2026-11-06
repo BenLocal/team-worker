@@ -34,12 +34,12 @@ func (c *Client) DecideRequest(ctx context.Context, team, id string, in store.De
 	return out, c.do(ctx, http.MethodPost, teamPath(team, "requests", id, "decide"), nil, in, &out)
 }
 
-func (c *Client) AutoReview(ctx context.Context, team string) (model.AutoReview, error) {
-	var out model.AutoReview
+func (c *Client) AutoReview(ctx context.Context, team string) (model.AutoReviewStatus, error) {
+	var out model.AutoReviewStatus
 	return out, c.do(ctx, http.MethodGet, teamPath(team, "auto-review"), nil, nil, &out)
 }
 
-func (c *Client) SetAutoReview(ctx context.Context, team string, in model.AutoReview) (model.AutoReview, error) {
-	var out model.AutoReview
+func (c *Client) SetAutoReview(ctx context.Context, team string, in model.AutoReview) (model.AutoReviewStatus, error) {
+	var out model.AutoReviewStatus
 	return out, c.do(ctx, http.MethodPut, teamPath(team, "auto-review"), nil, in, &out)
 }

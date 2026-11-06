@@ -111,7 +111,7 @@ Web 看板由 team-workerd 直接提供：`--board`（环境变量 `TEAM_WORKER_
 
 Web 看板访问需使用与 CLI HTTP 调用相同的 Key，`board serve` 默认只监听 127.0.0.1；连远程 daemon 时，登录用的就是配置里这个远程的 API Key。默认 Key 自动生成并保存在 SQLite 中，重启复用；可在本机通过 `team-worker key show` 查看。页面登录后，`Service keys` 可查看 Magpie Web Key 和 OpenBao 登录 Token，默认遮挡并支持显示、复制。 `team-workerd --board-link NAME=URL` 或 `board serve --link NAME=URL`（可重复）在页面顶部显示到其他服务的链接按钮，例如 `--board-link Docs=https://example.com`；daemon 也可以用环境变量 `TEAM_WORKER_BOARD_LINKS`（逗号分隔）。反向代理把看板放在子路径下时，用 `TEAM_WORKER_WEB_BASE_PATH` 指定前缀，例如 `/team-worker`。
 
-`Approvals` 视图分三个子页：`Requests`（请示，默认）、`Plans`（计划审批）和 `Join requests`（加入申请），视图标签上的数字是三者待处理的总数。`Requests` 页顶部是 AI 自动审核开关和模型输入框；每条请示可以点选项按钮批准（可附说明）、`Reject`（必须写原因）或 `Reply`（文字答复），AI 做出的决定显示理由，并可用 `Override` 覆盖。这些写操作走 `POST /api/teams/{team}/requests/{id}/decide`（`action`、`choice`、`reply`）和 `PUT /api/teams/{team}/auto-review`（`enabled`、`model`），以 `operator` 的身份提交；和其余 `/api` 一样需要登录会话或 Key，跨站请求会被拒绝，请求体必须是 `application/json`。
+`Approvals` 视图分三个子页：`Requests`（请示，默认）、`Plans`（计划审批）和 `Join requests`（加入申请），视图标签上的数字是三者待处理的总数。`Requests` 页顶部是 AI 自动审核开关、模型输入框和每日时间窗口（`From`、`To` 和时区，时区留空按 daemon 本地时区，填好后点 `Save window` 保存），旁边显示此刻是否在审核（`Active now`，或窗口外的 `Outside the window (next starts HH:MM)`）；每条请示可以点选项按钮批准（可附说明）、`Reject`（必须写原因）或 `Reply`（文字答复），AI 做出的决定显示理由，并可用 `Override` 覆盖。这些写操作走 `POST /api/teams/{team}/requests/{id}/decide`（`action`、`choice`、`reply`）和 `PUT /api/teams/{team}/auto-review`（`enabled`、`model`、`from`、`to`、`timeZone`，每次提交完整设置），以 `operator` 的身份提交；和其余 `/api` 一样需要登录会话或 Key，跨站请求会被拒绝，请求体必须是 `application/json`。
 
 团队标题旁的 `Team prompt` 按钮显示团队公共提示词。每个 Agent 终端卡片的 `Prompt` 按钮和侧栏成员菜单的 `Show prompt` 显示该成员的专属提示词，未启动或已退出的成员也能查看。内容从 store 按需读取，未设置时显示空状态；弹窗支持长文本滚动及 Escape 关闭。
 
@@ -158,7 +158,7 @@ team-workerd 记录这些事件：
 | `GET/POST /v1/teams/{team}/requests` | 列出请示（`status`，pending 在前、再按时间倒序）/ 创建请示（`from`、`summary`、`body`、`options`、`recommended`、`humanOnly`），同时给收件箱 `operator` 发 `decision_request` |
 | `GET /v1/teams/{team}/requests/{id}` | 查询请示 |
 | `POST /v1/teams/{team}/requests/{id}/decide` | 决定请示：`action` 为 `approve`（有选项时带 `choice`）、`reject`（`reply` 写原因）或 `answer`（`reply` 写答复）；`decidedBy` 默认 `operator`，不能是团队成员或 `auto`；AI 决定过的可以再决定一次（覆盖） |
-| `GET/PUT /v1/teams/{team}/auto-review` | 读取 / 设置请示的 AI 自动审核（`enabled`、`model`） |
+| `GET/PUT /v1/teams/{team}/auto-review` | 读取 / 设置请示的 AI 自动审核（`enabled`、`model`，每日窗口 `from`、`to` 为 `HH:MM`，含开始不含结束，结束早于开始表示跨午夜，都为空表示全天；`timeZone` 为 IANA 时区名，空为 daemon 本地时区）。PUT 整体替换设置；两者都返回设置以及 `active`（此刻是否在审核）和 `daemonZone`（daemon 本地时区，如 `CST +08:00`） |
 | `GET/POST /v1/teams/{team}/tasks` | 列出（`status`、`owner`、`priority`、`sort=priority`）/ 创建任务 |
 | `GET /v1/teams/{team}/tasks/stats` | 任务统计 |
 | `GET/PATCH /v1/teams/{team}/tasks/{id}` | 任务详情 / 更新任务 |

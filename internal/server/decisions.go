@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/benlocal/team-worker/internal/model"
 	"github.com/benlocal/team-worker/internal/store"
@@ -62,7 +63,7 @@ func (s *Server) decideRequest(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getAutoReview(w http.ResponseWriter, r *http.Request) {
 	a, err := s.store.AutoReviewSetting(r.Context(), r.PathValue("team"))
-	respond(w, a, err)
+	respond(w, model.NewAutoReviewStatus(a, time.Now()), err)
 }
 
 func (s *Server) setAutoReview(w http.ResponseWriter, r *http.Request) {
@@ -73,7 +74,8 @@ func (s *Server) setAutoReview(w http.ResponseWriter, r *http.Request) {
 	team := r.PathValue("team")
 	a, err := s.store.SetAutoReview(r.Context(), team, in)
 	if err == nil {
-		s.log.Info("auto review changed", "team", team, "enabled", a.Enabled, "model", a.Model)
+		s.log.Info("auto review changed", "team", team, "enabled", a.Enabled, "model", a.Model,
+			"from", a.From, "to", a.To, "timeZone", a.TimeZone)
 	}
-	respond(w, a, err)
+	respond(w, model.NewAutoReviewStatus(a, time.Now()), err)
 }

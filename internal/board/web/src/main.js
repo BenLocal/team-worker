@@ -24,7 +24,7 @@ const state = {
   doneShown: DONE_PAGE, open: new Set(), oversight: {}, openPlans: new Set(), approvalsTab: "requests",
   // Decision request cards: open bodies, the action being written per
   // request, requests being sent, their errors and AI decisions being overridden.
-  req: { open: new Set(), form: {}, busy: new Set(), errors: {}, overriding: new Set(), autoBusy: false, autoError: "" },
+  req: { open: new Set(), form: {}, busy: new Set(), errors: {}, overriding: new Set(), autoBusy: false, autoError: "", autoWindow: null },
   msgShown: MSG_PAGE, range: null, selected: null, follow: true,
   keys: {}, links: [],
   // Terminals show one member at a time unless the grid was chosen; the
@@ -535,7 +535,7 @@ function renderApprovals() {
   const box = $("approvals");
   // Redrawing would take the focus and caret from a note being typed; the
   // next refresh draws it once the field is left.
-  if (box.contains(document.activeElement) && document.activeElement.matches("textarea, input[type=text]")) return;
+  if (box.contains(document.activeElement) && document.activeElement.matches("textarea, input[type=text], input[type=time]")) return;
   const rq = state.req;
   if (!changed("approvals", [team, ov && [ov.requests, ov.autoReview, ov.plans, ov.joinRequests], [...state.openPlans],
     state.approvalsTab, [...rq.open], Object.entries(rq.form).map(([id, f]) => [id, f.mode, f.choice]), [...rq.busy],
@@ -601,26 +601,53 @@ function renderRequests(team, ov, requests) {
 }
 function autoReviewBox(team, auto) {
   const rq = state.req;
-  const save = async (enabled, model) => {
+  const saved = { from: auto.from || "", to: auto.to || "", timeZone: auto.timeZone || "" };
+  // rq.autoWindow is the window being edited, until it is saved.
+  const win = rq.autoWindow || saved;
+  const sameWindow = (a, b) => a.from === b.from && a.to === b.to && a.timeZone === b.timeZone;
+  const save = async (next, savesWindow) => {
     rq.autoBusy = true; rq.autoError = "";
     rerenderApprovals();
     try {
-      state.oversight[team].autoReview = await send("PUT", "api/teams/" + encodeURIComponent(team) + "/auto-review", { enabled, model });
+      state.oversight[team].autoReview = await send("PUT", "api/teams/" + encodeURIComponent(team) + "/auto-review", next);
+      if (savesWindow) rq.autoWindow = null;
     } catch (e) { rq.autoError = "Cannot change auto review: " + e.message; }
     rq.autoBusy = false;
     rerenderApprovals();
     refreshOversight();
   };
+  // Every save sends the whole setting: the saved window unless it is the
+  // window being saved.
+  const setting = (over) => ({ enabled: auto.enabled, model: auto.model || "", ...saved, ...over });
   const model = el("input", { type: "text", class: "auto-model", placeholder: "default model", value: auto.model || "",
     "aria-label": "Model for auto review", disabled: rq.autoBusy, spellcheck: "false",
     onkeydown: (e) => { if (e.key === "Enter") e.target.blur(); },
-    onchange: (e) => save(auto.enabled, e.target.value.trim()) });
+    onchange: (e) => save(setting({ model: e.target.value.trim() })) });
+  const saveWindow = () => save(setting({ model: model.value.trim(), ...(rq.autoWindow || saved) }), true);
+  const saveBtn = el("button", { type: "button", class: "quiet-btn", disabled: rq.autoBusy || sameWindow(win, saved),
+    onclick: saveWindow }, "Save window");
+  const edit = (key) => (e) => {
+    rq.autoWindow = { ...(rq.autoWindow || saved), [key]: e.target.value.trim() };
+    saveBtn.disabled = rq.autoBusy || sameWindow(rq.autoWindow, saved);
+  };
+  const time = (key, label) => el("label", { class: "auto-time" }, el("span", {}, label),
+    el("input", { type: "time", value: win[key], disabled: rq.autoBusy, "aria-label": label + " of the auto review window", oninput: edit(key) }));
+  const zone = el("input", { type: "text", class: "auto-model auto-zone", value: win.timeZone, disabled: rq.autoBusy, spellcheck: "false",
+    placeholder: auto.daemonZone ? `daemon time (${auto.daemonZone})` : "daemon local time", "aria-label": "Time zone of the auto review window",
+    oninput: edit("timeZone"), onkeydown: (e) => { if (e.key === "Enter" && !saveBtn.disabled) saveWindow(); } });
+  const status = auto.active ? el("span", { class: "auto-state on" }, "Active now")
+    : auto.enabled && auto.from ? el("span", { class: "auto-state" }, `Outside the window (next starts ${auto.from})`) : null;
   return el("div", { class: "auto-review" + (auto.enabled ? " on" : "") },
     el("label", { class: "auto-toggle" },
       el("input", { type: "checkbox", checked: auto.enabled, disabled: rq.autoBusy,
-        onchange: (e) => save(e.target.checked, model.value.trim()) }),
+        onchange: (e) => save(setting({ enabled: e.target.checked, model: model.value.trim() })) }),
       el("span", {}, "Auto review (AI)")),
     model,
+    status,
+    el("div", { class: "auto-window", role: "group", "aria-label": "Daily auto review window" },
+      time("from", "From"), time("to", "To"), zone, saveBtn),
+    el("p", { class: "hint" }, "Leave both empty to review all day; an end before the start crosses midnight. "
+      + "Requests made outside the window wait until it opens."),
     el("p", { class: "hint" }, "When on, an AI model decides pending requests for you and escalates risky ones (destructive, "
       + "outside the team instructions, cost, not enough information). Each request is reviewed once; you can override its decision. "
       + "Requests marked human only are always left for a person."),
@@ -962,7 +989,7 @@ function selectTeam(name) {
   renderRail();
   if (state.boards[name]) { buildMain(); update(); } else showNotice("Loading " + name + "…");
   state.openPlans.clear();
-  Object.assign(state.req, { open: new Set(), form: {}, busy: new Set(), errors: {}, overriding: new Set(), autoBusy: false, autoError: "" });
+  Object.assign(state.req, { open: new Set(), form: {}, busy: new Set(), errors: {}, overriding: new Set(), autoBusy: false, autoError: "", autoWindow: null });
   refreshSelected();
   refreshOversight();
 }

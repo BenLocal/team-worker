@@ -12,7 +12,7 @@ import (
 // oversightView is everything the page shows about approvals and spending.
 type oversightView struct {
 	Requests     []model.DecisionRequest `json:"requests"`
-	AutoReview   model.AutoReview        `json:"autoReview"`
+	AutoReview   model.AutoReviewStatus  `json:"autoReview"`
 	Plans        []model.Plan            `json:"plans"`
 	JoinRequests []model.JoinRequest     `json:"joinRequests"`
 	Budget       model.Budget            `json:"budget"`

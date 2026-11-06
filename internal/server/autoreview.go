@@ -34,19 +34,23 @@ const (
 type ReviewFunc func(ctx context.Context, model, prompt string) (string, error)
 
 // AutoReviewer decides decision requests on the operator's behalf in teams
-// that turned auto review on. It looks at each request once: when the model
-// escalates, fails or answers with something unusable, the request stays
-// pending with a note for the operator.
+// that turned auto review on, while inside their window. It looks at each
+// request once: when the model escalates, fails or answers with something
+// unusable, the request stays pending with a note for the operator.
+// Requests created outside the window wait, untouched, until it opens; the
+// poll picks them up then.
 type AutoReviewer struct {
 	Store *store.Store
 	Hub   *Hub
 	Log   *slog.Logger
 	// Review runs the model; tests replace it.
 	Review ReviewFunc
+	// Now is the clock the window is checked against; tests replace it.
+	Now func() time.Time
 }
 
 func NewAutoReviewer(st *store.Store, hub *Hub, log *slog.Logger) *AutoReviewer {
-	return &AutoReviewer{Store: st, Hub: hub, Log: log, Review: RunReviewCommand}
+	return &AutoReviewer{Store: st, Hub: hub, Log: log, Review: RunReviewCommand, Now: time.Now}
 }
 
 // Run reviews new requests until ctx ends.
@@ -68,7 +72,8 @@ func (a *AutoReviewer) Run(ctx context.Context) {
 	}
 }
 
-// Drain reviews every request waiting for the reviewer, oldest first.
+// Drain reviews every request waiting for the reviewer whose team is
+// inside its window, oldest first.
 func (a *AutoReviewer) Drain(ctx context.Context) error {
 	items, err := a.Store.AutoReviewQueue(ctx)
 	if err != nil {
@@ -77,6 +82,9 @@ func (a *AutoReviewer) Drain(ctx context.Context) error {
 	for _, item := range items {
 		if ctx.Err() != nil {
 			return nil
+		}
+		if !item.Setting.Active(a.Now()) {
+			continue
 		}
 		if err := a.review(ctx, item); err != nil {
 			return err
@@ -97,7 +105,7 @@ func (a *AutoReviewer) review(ctx context.Context, item store.AutoReviewItem) er
 	r := item.Request
 	// Claimed before the model runs, so a failure or a restart never
 	// reviews the same request again.
-	claimed, err := a.Store.ClaimAutoReview(ctx, r.Team, r.ID)
+	claimed, err := a.Store.ClaimAutoReview(ctx, r.Team, r.ID, a.Now())
 	if err != nil || !claimed {
 		return err
 	}
@@ -111,7 +119,7 @@ func (a *AutoReviewer) review(ctx context.Context, item store.AutoReviewItem) er
 		return note("AI review could not read the team context: " + err.Error())
 	}
 	start := time.Now()
-	out, err := a.Review(ctx, item.Model, prompt)
+	out, err := a.Review(ctx, item.Setting.Model, prompt)
 	if ctx.Err() != nil {
 		return note("AI review was interrupted by a daemon shutdown")
 	}
@@ -126,8 +134,8 @@ func (a *AutoReviewer) review(ctx context.Context, item store.AutoReviewItem) er
 		return note("AI escalated: " + v.Reason)
 	}
 	reviewer := model.AutoReviewer
-	if item.Model != "" {
-		reviewer += ":" + item.Model
+	if item.Setting.Model != "" {
+		reviewer += ":" + item.Setting.Model
 	}
 	decided, err := a.Store.AutoDecideRequest(ctx, r.Team, r.ID,
 		store.DecideInput{Action: v.Decision, Choice: v.Choice, Reply: v.Reply, DecidedBy: reviewer}, v.Reason)

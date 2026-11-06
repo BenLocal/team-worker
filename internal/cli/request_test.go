@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/benlocal/team-worker/internal/model"
 )
@@ -66,16 +67,56 @@ func TestDecisionRequestFlow(t *testing.T) {
 		t.Fatalf("leader inbox: %+v", leaderInbox)
 	}
 
-	var setting model.AutoReview
+	var setting model.AutoReviewStatus
 	h.json(&setting, "request", "auto", "demo", "on", "--model", "group/x")
-	if !setting.Enabled || setting.Model != "group/x" {
+	if !setting.Enabled || setting.Model != "group/x" || !setting.Active {
 		t.Fatalf("auto on: %+v", setting)
 	}
 	h.json(&setting, "request", "auto", "demo", "off")
-	if setting.Enabled || setting.Model != "group/x" {
+	if setting.Enabled || setting.Model != "group/x" || setting.Active {
 		t.Fatalf("auto off keeps the model: %+v", setting)
 	}
-	if out, ok := h.run("request", "auto", "demo"); !ok || !strings.Contains(out, "off (model: group/x)") {
+	if out, ok := h.run("request", "auto", "demo"); !ok || !strings.Contains(out, "Auto review for demo: off (model: group/x)\n") {
 		t.Fatalf("auto show: %s", out)
+	}
+
+	// A window that covers the whole day but one minute: the minute after now
+	// is excluded, so it is active whatever the clock says.
+	now := time.Now().UTC()
+	from, to := now.Add(2*time.Minute).Format("15:04"), now.Add(time.Minute).Format("15:04")
+	h.json(&setting, "request", "auto", "demo", "on", "--from", from, "--to", to, "--tz", "UTC")
+	if !setting.Enabled || setting.Model != "group/x" || setting.From != from || setting.To != to || setting.TimeZone != "UTC" {
+		t.Fatalf("auto on with a window: %+v", setting)
+	}
+	if out, ok := h.run("request", "auto", "demo", "off"); !ok ||
+		!strings.Contains(out, "Auto review for demo: off (model: group/x), "+from+"-"+to+" UTC\n") {
+		t.Fatalf("auto off keeps the window: %s", out)
+	}
+	if out, ok := h.run("request", "auto", "demo", "on", "--model", ""); !ok ||
+		!strings.Contains(out, "Auto review for demo: on (model: default), "+from+"-"+to+" UTC, ") {
+		t.Fatalf("auto on keeps the window: %s", out)
+	}
+	// A window of one minute that is never now.
+	far, farEnd := now.Add(2*time.Hour).Format("15:04"), now.Add(2*time.Hour+time.Minute).Format("15:04")
+	if out, ok := h.run("request", "auto", "demo", "on", "--from", far, "--to", farEnd); !ok ||
+		!strings.Contains(out, far+"-"+farEnd+" UTC, outside the window now") {
+		t.Fatalf("outside the window: %s", out)
+	}
+	if out, ok := h.run("--json", "request", "auto", "demo", "on", "--from", "22:00", "--to", "22:00"); ok || !strings.Contains(out, "must differ") {
+		t.Fatalf("empty window: ok=%v %s", ok, out)
+	}
+	if out, ok := h.run("--json", "request", "auto", "demo", "on", "--all-day", "--from", "22:00"); ok || !strings.Contains(out, "--all-day clears the window") {
+		t.Fatalf("all day with a window: ok=%v %s", ok, out)
+	}
+	if out, ok := h.run("--json", "request", "auto", "demo", "--from", "22:00"); ok || !strings.Contains(out, "give on or off") {
+		t.Fatalf("window without a state: ok=%v %s", ok, out)
+	}
+	setting = model.AutoReviewStatus{}
+	h.json(&setting, "request", "auto", "demo", "on", "--all-day")
+	if setting.HasWindow() || setting.TimeZone != "" || !setting.Active {
+		t.Fatalf("all day: %+v", setting)
+	}
+	if out, ok := h.run("request", "auto", "demo"); !ok || !strings.Contains(out, "Auto review for demo: on (model: default), active now\n") {
+		t.Fatalf("all day show: %s", out)
 	}
 }
