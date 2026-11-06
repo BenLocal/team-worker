@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -315,5 +316,84 @@ func TestMagpieModelItCannotApplyOnlyWarns(t *testing.T) {
 				t.Fatalf("providers and the model must still be tried: %v", calls)
 			}
 		})
+	}
+}
+
+func TestMagpieModelAPIIsWrittenAndOwnedByTheFile(t *testing.T) {
+	config := providersConfig()
+	relay := config["providers"].([]any)[0].(map[string]any)
+	relay["api"] = "anthropic"
+	relay["urls"] = map[string]any{"openai": "http://gateway:8000/compatible/v1"}
+	relay["model_api"] = "openai"
+	home, path := setupMagpieHome(t, config)
+	log := fakeMagpie(t, false)
+	settingsPath := filepath.Join(home, ".config/magpie/settings.json")
+	os.MkdirAll(filepath.Dir(settingsPath), 0o700)
+	os.WriteFile(settingsPath, []byte(`{"theme":"dark","modelAPIs":{"relay/old-model":"responses","other/m":"chat"}}`), 0o640)
+	env := map[string]string{"TEST_BASE": "http://gateway:8000/anthropic", "TEST_KEY": "secret"}
+
+	if _, err := configureMagpie(path, env, runMagpie); err != nil {
+		t.Fatal(err)
+	}
+	calls := magpieCalls(t, log)
+	if !slices.Contains(calls[0], "anthropic=http://gateway:8000/anthropic") || !slices.Contains(calls[0], "url=http://gateway:8000/compatible/v1") {
+		t.Fatalf("provider call = %v", calls[0])
+	}
+	readSettings := func() map[string]any {
+		var s map[string]any
+		data, _ := os.ReadFile(settingsPath)
+		if err := json.Unmarshal(data, &s); err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	s := readSettings()
+	apis := s["modelAPIs"].(map[string]any)
+	if s["theme"] != "dark" || len(apis) != 2 || apis["relay/test-model"] != "chat" || apis["other/m"] != "chat" {
+		t.Fatalf("settings = %v", s)
+	}
+	if info, _ := os.Stat(settingsPath); info.Mode().Perm() != 0o640 {
+		t.Fatalf("mode = %v", info.Mode())
+	}
+
+	// Taking model_api out of the file takes the provider's setting out of Magpie.
+	delete(relay, "model_api")
+	data, _ := json.Marshal(config)
+	os.WriteFile(path, data, 0o600)
+	if _, err := configureMagpie(path, env, runMagpie); err != nil {
+		t.Fatal(err)
+	}
+	s = readSettings()
+	if apis := s["modelAPIs"].(map[string]any); len(apis) != 1 || apis["other/m"] != "chat" {
+		t.Fatalf("settings after removal = %v", s)
+	}
+}
+
+func TestMagpieModelAPINeedsAURLForIt(t *testing.T) {
+	env := map[string]string{"TEST_BASE": "http://gateway/v1", "TEST_KEY": "k"}
+	for _, tc := range []struct {
+		name   string
+		fields map[string]any
+		want   string
+	}{
+		{"model_api without its URL", map[string]any{"model_api": "anthropic"}, "model_api"},
+		{"unknown model_api", map[string]any{"model_api": "grpc"}, "model_api"},
+		{"urls repeats the api", map[string]any{"urls": map[string]any{"openai": "http://other/v1"}}, "urls"},
+		{"urls unknown api", map[string]any{"urls": map[string]any{"grpc": "http://other/v1"}}, "urls"},
+		{"urls with credentials", map[string]any{"urls": map[string]any{"anthropic": "http://u:p@other/v1"}}, "urls"},
+		{"urls not a map", map[string]any{"urls": "http://other/v1"}, "urls"},
+	} {
+		config := providersConfig()
+		maps.Copy(config["providers"].([]any)[0].(map[string]any), tc.fields)
+		_, err := validateProviders(toYAMLValue(t, config), env)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v", tc.name, err)
+		}
+	}
+	config := providersConfig()
+	maps.Copy(config["providers"].([]any)[0].(map[string]any),
+		map[string]any{"urls": map[string]any{"anthropic": "http://other/anthropic"}, "model_api": "anthropic"})
+	if _, err := validateProviders(toYAMLValue(t, config), env); err != nil {
+		t.Errorf("valid urls and model_api: %v", err)
 	}
 }

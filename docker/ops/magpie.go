@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -22,6 +24,15 @@ var providerID = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 // providerAPIs maps providers.yaml api values to Magpie provider options.
 var providerAPIs = map[string]string{
 	"openai":    "url",
+	"anthropic": "anthropic",
+	"responses": "responses",
+	"gemini":    "gemini",
+}
+
+// modelAPINames maps providers.yaml api values to the API names Magpie's
+// modelAPIs setting takes.
+var modelAPINames = map[string]string{
+	"openai":    "chat",
 	"anthropic": "anthropic",
 	"responses": "responses",
 	"gemini":    "gemini",
@@ -128,7 +139,7 @@ func validateProviders(raw any, env map[string]string) (magpieConfig, error) {
 		entries []map[string]any
 		fields  []string
 	}{
-		{c.providers, []string{"id", "api", "url", "url_env", "key", "key_env", "key_required", "models"}},
+		{c.providers, []string{"id", "api", "url", "url_env", "urls", "model_api", "key", "key_env", "key_required", "models"}},
 		{c.groups, []string{"id", "models", "routing", "stays"}},
 	} {
 		seen := map[string]bool{}
@@ -170,17 +181,33 @@ func validateProviders(raw any, env map[string]string) (magpieConfig, error) {
 			}
 			rawURL = value
 		}
-		s, isString := rawURL.(string)
-		if !isString {
-			return c, errors.New("provider url must be a string")
-		}
-		u, err := url.Parse(s)
-		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil {
+		if s, isString := rawURL.(string); !isString || !validURL(s) {
 			return c, errors.New("provider url must be an HTTP(S) address without credentials")
 		}
 		api, isString := stringOr(entry, "api", "openai")
 		if _, known := providerAPIs[api]; !isString || !known {
 			return c, errors.New("provider api must be one of openai, anthropic, responses, gemini")
+		}
+		// urls adds the provider's other APIs; the api's own is url.
+		apis := map[string]bool{api: true}
+		if v, present := entry["urls"]; present {
+			urls, isMap := asMap(v)
+			if !isMap {
+				return c, fmt.Errorf("provider %s urls must map an api to a URL", id)
+			}
+			for other, u := range urls {
+				s, isString := u.(string)
+				if _, known := providerAPIs[other]; !known || other == api || !isString || !validURL(s) {
+					return c, fmt.Errorf("provider %s urls must map other apis (openai, anthropic, responses, gemini) to HTTP(S) addresses without credentials", id)
+				}
+				apis[other] = true
+			}
+		}
+		if v, present := entry["model_api"]; present {
+			s, isString := v.(string)
+			if !isString || !apis[s] {
+				return c, fmt.Errorf("provider %s model_api must be an api it has a URL for (api or urls)", id)
+			}
 		}
 		_, hasKey := entry["key"]
 		_, hasKeyEnv := entry["key_env"]
@@ -248,6 +275,12 @@ func validateProviders(raw any, env map[string]string) (magpieConfig, error) {
 	return c, nil
 }
 
+// validURL reports whether s is an HTTP(S) address without credentials.
+func validURL(s string) bool {
+	u, err := url.Parse(s)
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Hostname() != "" && u.User == nil
+}
+
 func isList(v any) bool {
 	_, ok := v.([]any)
 	return ok
@@ -296,6 +329,10 @@ func configureMagpie(path string, env map[string]string, magpie func(...string) 
 			"key=" + key,
 			"models=" + joinModels(entry["models"]),
 		}
+		urls, _ := asMap(entry["urls"])
+		for _, other := range slices.Sorted(maps.Keys(urls)) {
+			options = append(options, providerAPIs[other]+"="+urls[other].(string))
+		}
 		if existing[id] {
 			err = magpie(append([]string{"provider", "set", id}, options...)...)
 		} else {
@@ -305,6 +342,9 @@ func configureMagpie(path string, env map[string]string, magpie func(...string) 
 			return "", err
 		}
 		fmt.Fprintf(os.Stderr, "configured Magpie provider: %s\n", id)
+	}
+	if err := setModelAPIs(c.providers); err != nil {
+		return "", err
 	}
 	for _, entry := range c.groups {
 		routing, _ := stringOr(entry, "routing", "order")
@@ -374,6 +414,59 @@ func configureMagpie(path string, env map[string]string, magpie func(...string) 
 		return "", err
 	}
 	return model, nil
+}
+
+// setModelAPIs writes each provider's model_api into Magpie's modelAPIs
+// setting, which says the API a model is asked on; the gateway reads it on
+// every request. The file owns the providers it lists: their earlier entries
+// are replaced, so taking model_api out of the file takes the setting out of
+// Magpie. Magpie 0.1.2925 has no command for this setting, so its
+// settings.json is edited.
+func setModelAPIs(providers []map[string]any) error {
+	path := filepath.Join(configHome(), "magpie/settings.json")
+	settings, err := readJSONFile(path)
+	if err != nil {
+		return err
+	}
+	current, _ := asMap(settings["modelAPIs"])
+	next := map[string]any{}
+	for ref, api := range current {
+		next[ref] = api
+	}
+	for _, entry := range providers {
+		id := entry["id"].(string)
+		for ref := range next {
+			if strings.HasPrefix(ref, id+"/") {
+				delete(next, ref)
+			}
+		}
+		if api, ok := entry["model_api"].(string); ok {
+			for _, m := range entry["models"].([]any) {
+				next[id+"/"+m.(string)] = modelAPINames[api]
+			}
+		}
+	}
+	if maps.Equal(current, next) {
+		return nil
+	}
+	if len(next) == 0 {
+		delete(settings, "modelAPIs")
+	} else {
+		settings["modelAPIs"] = next
+	}
+	data, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return err
+	}
+	mode := os.FileMode(0o600)
+	if info, err := os.Stat(path); err == nil {
+		mode = info.Mode().Perm()
+	}
+	if err := writeAtomic(path, append(data, '\n'), mode); err != nil {
+		return err
+	}
+	fmt.Fprintln(os.Stderr, "configured Magpie model APIs")
+	return nil
 }
 
 // magpieClaudeModel returns the model Magpie gives Claude now, or "" when

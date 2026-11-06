@@ -63,7 +63,9 @@ codex:
 | --- | --- | --- |
 | `id` | 是 | 供应商 ID，只能用小写字母、数字和连字符，文件内不能重复。Agent 选模型时写成 `<id>/<模型>` |
 | `api` | 否 | 接口类型：`openai`（默认，OpenAI 兼容的 chat 接口）、`anthropic`、`responses`、`gemini`。每个供应商只能写一种 |
-| `url` / `url_env` | 二选一 | 接口地址，或存放地址的环境变量名。必须是 `http(s)://` 地址，不能带用户名密码 |
+| `url` / `url_env` | 二选一 | `api` 对应的接口地址，或存放地址的环境变量名。必须是 `http(s)://` 地址，不能带用户名密码 |
+| `urls` | 否 | 同一个供应商的其他接口地址，按接口类型写：`{openai: <地址>, anthropic: <地址>}`。不能再写 `api` 那一种，规则同 `url` |
+| `model_api` | 否 | 这个供应商的所有模型实际走哪种接口：`openai`、`anthropic`、`responses`、`gemini`，必须是 `api` 或 `urls` 里有地址的那种。不写时由 Magpie 自己挑（Claude Code 通常走 `anthropic`）。见下文“指定模型走哪种接口”|
 | `key` / `key_env` | 最多一个 | API Key，或存放 Key 的环境变量名。都不写或 `key: ""` 表示不需要认证 |
 | `key_required` | 否 | `true` 表示这个供应商必须有 Key；Key 为空时 Magpie 先存一个占位值，并让带 keepalive 的 Leader 等 Key 配好再启动（见下文） |
 | `models` | 是 | 开放给 Agent 的模型列表，至少一个；模型名里不能有逗号 |
@@ -108,7 +110,7 @@ Magpie 还支持 `drain`、`cheap`、`expiring` 等路由方式，但 `team-work
 每次容器启动（包括重启），`team-worker-ops magpie` 依次：
 
 1. **校验整个文件**。有任何错误就什么都不改，并让启动失败（容器会按重启策略重试）。为了不泄露 Key，格式错误只报"检查格式、模型和环境变量"，不回显文件内容。
-2. **逐个配置供应商**：Magpie 里没有的用 `magpie provider add` 新建；已有的用 `magpie provider set` 更新**文件里写到的字段**（`api` 对应的地址、Key、模型列表），其他设置保持不变。
+2. **逐个配置供应商**：Magpie 里没有的用 `magpie provider add` 新建；已有的用 `magpie provider set` 更新**文件里写到的字段**（`api` 和 `urls` 对应的地址、Key、模型列表），其他设置保持不变。随后把各供应商的 `model_api` 写进 Magpie 的 `settings.json`（`modelAPIs`）：文件里列出的供应商以文件为准，删掉 `model_api` 也会删掉 Magpie 里这个供应商的设置；文件里没有的供应商不动。
 3. **逐个配置分组**：`magpie group add`，同名分组会被整体替换。
 4. **设置模型**：Claude Code 设为 `claude.model`，dsh 跟它一致；Codex 设为 `codex.model` 或沿用前者。模型设置失败（比如供应商在 Magpie 面板里被停用）只打 warning，Agent 保持原来的模型，不会让容器反复重启。
 
@@ -135,7 +137,24 @@ docker exec -u node <容器名> magpie provider <id>          # 看地址、Key�
 
 **删除供应商**：从文件里删掉不会删除 Magpie 里已有的供应商，还要执行 `magpie provider rm <id>`。删之前确认没有 Agent 或分组在用它的模型（`magpie agents`、`magpie group <id>`）。
 
-**一个供应商同时提供多种接口**：文件里只能写一种接口地址。其他地址（比如同时要 OpenAI 兼容和 Anthropic 接口）在 Magpie 里补设，例如 `magpie provider set <id> url=<OpenAI 兼容地址>`；之后导入只更新文件里写到的那一种，补设的地址会保留。但如果在 Magpie 里删掉这个供应商再重新导入，需要重新补设。
+**一个供应商同时提供多种接口**：主接口写在 `api` / `url`，其他接口写在 `urls`，导入时一起设进 Magpie。以前在 Magpie 里用 `magpie provider set <id> url=…` 补设、文件里没写的地址，导入时仍会保留；写进 `urls` 后由文件统一管理。
+
+**指定模型走哪种接口**：供应商有多种接口时，Magpie 默认按调用方挑，Claude Code 的请求走 Anthropic 接口并原样转发。有些厂商的 Anthropic 兼容接口不认 Claude Code 的新内容块（比如延迟加载工具时插入的 `tool_addition`），整个请求返回一句笼统的 400。这时用 `model_api` 让它改走别的接口，比如 OpenAI 兼容的 chat 接口：Magpie 走 chat 接口时会重新组装消息，丢掉这些块。
+
+```yaml
+providers:
+  - id: dashscope
+    api: anthropic
+    url: https://dashscope.aliyuncs.com/apps/anthropic
+    urls:
+      openai: https://dashscope.aliyuncs.com/compatible-mode/v1
+    model_api: openai        # 所有模型改走 chat 接口
+    key_env: DASHSCOPE_API_KEY
+    models:
+      - deepseek-v4.1-flash-1017
+```
+
+`model_api` 写进 Magpie 的 `~/.config/magpie/settings.json`（`modelAPIs`，按 `<供应商>/<模型>` 记），网关每个请求都读，改完重新导入即可生效。用 `magpie usage --csv --last 10m` 的 `endpoint` 列确认，例如 `/v1/messages → /v1/chat/completions`。
 
 **Key 还没配好就启动**：给供应商写 `key_required: true` 并留空 Key。启动时 Magpie 先存一个占位 Key，并写出 `/tmp/team-worker-provider-pending`；带 keepalive 的 Agent 会一直等到这个文件消失才启动。是否等待按文件里的 Key 判断：把真实 Key 写进文件（或设好 `key_env` 指向的环境变量）后重新导入，没有缺 Key 的供应商时这个文件就会被删掉；只在 Magpie 面板里改 Key 不会解除等待。
 
