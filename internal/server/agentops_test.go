@@ -162,3 +162,31 @@ func TestSessionReadFillsInTheDshSessionID(t *testing.T) {
 		t.Fatalf("the id must be saved for resume: %+v %v", saved, err)
 	}
 }
+
+func TestRemoveMemberWaitsForTheAgentToStop(t *testing.T) {
+	srv, st, cmd, _ := subprocessAgent(t)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/v1/teams/demo/members/alice", nil))
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "agent stop") {
+		t.Fatalf("a running agent must be stopped first: %d %s", rec.Code, rec.Body)
+	}
+	rec = httptest.NewRecorder()
+	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/teams/demo/agents/alice/terminate", strings.NewReader("{}")))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	cmd.Wait()
+	rec = httptest.NewRecorder()
+	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/v1/teams/demo/members/alice", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"removed":true`) {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	if _, err := st.GetAgent(context.Background(), "demo", "alice"); store.KindOf(err) != store.KindNotFound {
+		t.Fatalf("the agent record must be gone: %v", err)
+	}
+	rec = httptest.NewRecorder()
+	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/v1/teams/demo/members/leader", nil))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("the leader cannot be removed: %d %s", rec.Code, rec.Body)
+	}
+}

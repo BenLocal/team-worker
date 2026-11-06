@@ -16,7 +16,7 @@ import (
 
 func (a *app) teamCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "team", Short: "Team management"}
-	cmd.AddCommand(a.teamSpawnCmd(), a.teamAddMemberCmd(), a.teamDiscoverCmd(), a.teamStatusCmd(),
+	cmd.AddCommand(a.teamSpawnCmd(), a.teamAddMemberCmd(), a.teamRemoveMemberCmd(), a.teamDiscoverCmd(), a.teamStatusCmd(),
 		a.teamCleanupCmd(), a.teamPromptCmd(), a.teamReposCmd())
 	cmd.AddCommand(a.joinCmds()...)
 	cmd.AddCommand(a.snapshotCmds()...)
@@ -129,6 +129,41 @@ func (a *app) teamAddMemberCmd() *cobra.Command {
 	cmd.Flags().StringVar(&agentType, "agent-type", "general-purpose", "Agent type")
 	cmd.Flags().StringVar(&agentID, "agent-id", "", "Agent ID (default: auto-generated)")
 	cmd.Flags().BoolVar(&planRequired, "plan-required", false, "Require an approved plan before the member starts or completes tasks")
+	return cmd
+}
+
+func (a *app) teamRemoveMemberCmd() *cobra.Command {
+	var force bool
+	cmd := &cobra.Command{
+		Use:   "remove-member TEAM NAME",
+		Short: "Remove a stopped member that owns no unfinished tasks",
+		Long: "Remove a member together with its agent record and saved sessions. The leader cannot be\n" +
+			"removed; stop the member's agent first ('agent stop') and reassign its unfinished tasks.",
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			team, name := args[0], args[1]
+			if !force && !a.jsonOut && !a.confirm(fmt.Sprintf("Remove member '%s' from team '%s'?", name, team)) {
+				return a.fail(errors.New("aborted"))
+			}
+			removed, err := a.client().RemoveMember(cmd.Context(), team, name)
+			if err != nil {
+				return a.fail(err)
+			}
+			status := "removed"
+			if !removed {
+				status = "not_found"
+			}
+			a.emit(map[string]string{"status": status, "team": team, "member": name}, func(w io.Writer) {
+				if removed {
+					fmt.Fprintf(w, "OK Removed member '%s' from team '%s'\n", name, team)
+				} else {
+					fmt.Fprintf(w, "Member '%s' not found in team '%s'\n", name, team)
+				}
+			})
+			return nil
+		},
+	}
+	cmd.Flags().BoolVarP(&force, "force", "f", false, "Skip confirmation")
 	return cmd
 }
 

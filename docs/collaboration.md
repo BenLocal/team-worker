@@ -19,6 +19,10 @@ team-worker team reject-join my-team <申请ID> -r "人数已满"
 
 申请记录保存在数据库里，状态为 pending、approved 或 rejected。申请时 leader 收件箱会收到 `join_request` 消息。只有 leader 能批准或拒绝，而且只能处理仍在 pending 的申请；同一个名字已有待处理申请或已是成员时，再次申请会报冲突。批准时成员加入和 `join_approved` 通知在同一个事务里完成，新成员的收件箱会收到分配的名字和 Agent ID，申请者需要把它们设为 `TEAM_WORKER_AGENT_NAME`、`TEAM_WORKER_AGENT_ID`。被拒绝的申请者还不是成员，没有收件箱，`request-join` 等待中或 `join-status` 直接读取保存的拒绝原因；`request-join` 等到拒绝时退出码为 1。
 
+## 移除成员
+
+`team remove-member TEAM NAME` 删除成员，连同它的 Agent 记录和保存的会话，看板和 `agent list` 里不再出现。以下情况会被拒绝（冲突）：要删的是 leader；它的进程可能还在运行，先 `agent stop`；它名下还有未完成的任务，先改派。已完成任务的负责人字段和历史消息保留不动。交互执行时会先确认，`-f` 跳过确认。
+
 ## 计划审批
 
 成员可以先把计划交给 leader 审批再动手：

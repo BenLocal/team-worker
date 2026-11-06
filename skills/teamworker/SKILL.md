@@ -108,4 +108,4 @@ tw agent resume <team> <成员> --keepalive           # 服务器停掉当前进
 - `spawn`、`launch`、`harness conduct`、`team cleanup` 会在服务器上启动或删除东西，只在用户明确要求时执行。路径参数（`--cwd` 等）指服务器上的路径；`--task-file`、`--team-prompt-file` 和模板文件由本机读出内容发过去。`harness conduct` 立刻返回，由服务器调度到这一轮结束，`--stop` 停止调度。
 - `inbox receive` / `inbox watch` 不带 `--agent` 时取的是操作员自己的收件箱，可以用；带 `--agent <其他成员>` 会取走那个成员的消息，不要这样用。
 
-`agent screen` 看服务器上成员的终端，`agent stop` 由服务器直接停掉进程。`team cleanup` 会停掉团队的成员并删除任务和消息，只在用户明确要求时执行。
+`agent screen` 看服务器上成员的终端，`agent stop` 由服务器直接停掉进程。`team cleanup` 会停掉团队的成员并删除任务和消息，只在用户明确要求时执行。`team remove-member` 只在用户要求删除某个成员时用：先 `agent stop` 并把它未完成的任务改派，否则会被拒绝。

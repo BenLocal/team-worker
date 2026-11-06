@@ -151,6 +151,7 @@ func (s *Server) routes() {
 	m.HandleFunc("DELETE /v1/teams/{team}", s.deleteTeam)
 	m.HandleFunc("PUT /v1/teams/{team}/repos", s.setTeamRepos)
 	m.HandleFunc("POST /v1/teams/{team}/members", s.addMember)
+	m.HandleFunc("DELETE /v1/teams/{team}/members/{name}", s.removeMember)
 	m.HandleFunc("GET /v1/teams/{team}/leader", s.leader)
 
 	m.HandleFunc("GET /v1/teams/{team}/tasks", s.listTasks)
@@ -326,6 +327,14 @@ func (s *Server) addMember(w http.ResponseWriter, r *http.Request) {
 		s.log.Info("member added", "team", r.PathValue("team"), "member", member.Name, "type", member.AgentType)
 	}
 	respond(w, member, err)
+}
+
+func (s *Server) removeMember(w http.ResponseWriter, r *http.Request) {
+	removed, err := s.store.RemoveMember(r.Context(), r.PathValue("team"), r.PathValue("name"))
+	if removed {
+		s.log.Info("member removed", "team", r.PathValue("team"), "member", r.PathValue("name"))
+	}
+	respond(w, map[string]bool{"removed": removed}, err)
 }
 
 func (s *Server) leader(w http.ResponseWriter, r *http.Request) {

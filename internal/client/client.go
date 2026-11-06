@@ -271,6 +271,13 @@ func (c *Client) AddMember(ctx context.Context, team string, in store.AddMemberI
 	return out, c.do(ctx, http.MethodPost, teamPath(team, "members"), nil, in, &out)
 }
 
+func (c *Client) RemoveMember(ctx context.Context, team, name string) (bool, error) {
+	var out struct {
+		Removed bool `json:"removed"`
+	}
+	return out.Removed, c.do(ctx, http.MethodDelete, teamPath(team, "members", name), nil, nil, &out)
+}
+
 func (c *Client) Leader(ctx context.Context, team string) (model.Member, error) {
 	var out model.Member
 	return out, c.do(ctx, http.MethodGet, teamPath(team, "leader"), nil, nil, &out)

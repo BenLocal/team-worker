@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 
 	"github.com/benlocal/team-worker/internal/model"
 )
@@ -251,9 +252,15 @@ func (s *Store) AddMember(ctx context.Context, team string, in AddMemberInput) (
 	return m, err
 }
 
+// RemoveMember deletes a member together with its agent record and saved
+// sessions. It refuses the leader, a member whose process may still be
+// running, and a member that still owns unfinished tasks.
 func (s *Store) RemoveMember(ctx context.Context, team, name string) (bool, error) {
 	var removed bool
 	err := s.write(ctx, func(tx *sql.Tx) error {
+		if err := s.checkRemovable(ctx, tx, team, name); err != nil {
+			return err
+		}
 		res, err := tx.ExecContext(ctx, "DELETE FROM members WHERE team = ? AND name = ?", team, name)
 		if err != nil {
 			return err
@@ -263,9 +270,58 @@ func (s *Store) RemoveMember(ctx context.Context, team, name string) (bool, erro
 			return err
 		}
 		removed = true
+		if _, err := tx.ExecContext(ctx, "DELETE FROM agents WHERE team = ? AND name = ?", team, name); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, "DELETE FROM sessions WHERE team = ? AND agent = ?", team, name); err != nil {
+			return err
+		}
 		return s.emit(ctx, tx, team, "MemberLeft", map[string]any{"agent_name": name})
 	})
 	return removed, err
+}
+
+func (s *Store) checkRemovable(ctx context.Context, tx *sql.Tx, team, name string) error {
+	var leader int
+	err := tx.QueryRowContext(ctx, `SELECT 1 FROM members m JOIN teams t ON t.name = m.team
+		WHERE m.team = ? AND m.name = ? AND m.agent_id = t.lead_agent_id`, team, name).Scan(&leader)
+	if err == nil {
+		return conflictf("Cannot remove '%s': it is the leader of team '%s'", name, team)
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	a, err := getAgent(ctx, tx, team, name)
+	if err != nil && KindOf(err) != KindNotFound {
+		return err
+	}
+	if err == nil && a.Status == model.AgentRunning {
+		if alive, known := s.Probe(a); alive || !known {
+			return conflictf("Agent '%s' may still be running; stop it first with 'team-worker agent stop %s %s'",
+				name, team, name)
+		}
+	}
+	rows, err := tx.QueryContext(ctx, "SELECT id FROM tasks WHERE team = ? AND owner = ? AND status != ? ORDER BY id",
+		team, name, model.StatusCompleted)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	var open []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return err
+		}
+		open = append(open, id)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(open) > 0 {
+		return conflictf("Member '%s' still owns unfinished tasks %s; reassign them first", name, strings.Join(open, ", "))
+	}
+	return nil
 }
 
 func (s *Store) emitJoined(ctx context.Context, tx *sql.Tx, team string, m model.Member) error {
