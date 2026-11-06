@@ -411,7 +411,8 @@ body.rail-collapsed #rail-tools { display: none; }
 .auto-review .hint { flex-basis: 100%; margin: 0; }
 .auto-review .notice { flex-basis: 100%; padding: 8px 10px; }
 .auto-toggle { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; cursor: pointer; }
-.auto-toggle input { accent-color: var(--accent); width: 15px; height: 15px; margin: 0; }
+.auto-toggle input { accent-color: var(--accent); width: 15px; height: 15px; margin: 0; flex: none; }
+.auto-toggle.auto-human { flex-basis: 100%; font-weight: 500; }
 .auto-model, .request-text { border: 1px solid var(--line); background: var(--card-2); color: var(--fg); border-radius: 7px; font: inherit; }
 .auto-model { height: 28px; padding: 0 9px; width: min(240px, 100%); box-sizing: border-box; font-family: var(--mono); font-size: 12px; }
 .auto-state { font-size: 12px; color: var(--muted); }

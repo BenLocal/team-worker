@@ -210,25 +210,31 @@ func (a *app) decider() string {
 
 func (a *app) requestAutoCmd() *cobra.Command {
 	var modelName, from, to, timeZone string
-	var allDay bool
+	var allDay, includeHuman bool
 	cmd := &cobra.Command{
 		Use:   "auto TEAM [on|off]",
-		Short: "Show or switch the AI auto review of a team's decision requests (human-only requests are always left to a person)",
+		Short: "Show or switch the AI auto review of a team's decision requests",
 		Long: `Show or switch the AI auto review of a team's decision requests.
 
 With --from and --to the review only runs inside a daily window that
 includes --from and excludes --to; an end before the start crosses
 midnight (22:00-08:00 is 22:00 today until 08:00 tomorrow). Requests made
-outside the window wait and are reviewed once it opens. Switching on or off
-keeps the model and the window set earlier unless they are given.`,
+outside the window wait and are reviewed once it opens.
+
+Human-only requests are left to a person unless --include-human=true; the
+reviewer may then only approve them or leave them to the operator. Switching
+on or off keeps the model, the window and --include-human set earlier unless
+they are given.`,
 		Example: `  team-worker request auto my-team on --from 22:00 --to 08:00 --tz Asia/Shanghai
   team-worker request auto my-team on --all-day
+  team-worker request auto my-team on --include-human=true
   team-worker request auto my-team`,
 		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c := a.client()
 			flags := cmd.Flags()
-			changed := flags.Changed("model") || flags.Changed("from") || flags.Changed("to") || flags.Changed("tz") || allDay
+			changed := flags.Changed("model") || flags.Changed("from") || flags.Changed("to") || flags.Changed("tz") || allDay ||
+				flags.Changed("include-human")
 			if allDay && (flags.Changed("from") || flags.Changed("to") || flags.Changed("tz")) {
 				return a.fail(fmt.Errorf("--all-day clears the window; do not combine it with --from, --to or --tz"))
 			}
@@ -237,7 +243,7 @@ keeps the model and the window set earlier unless they are given.`,
 			switch {
 			case len(args) == 1:
 				if changed {
-					return a.fail(fmt.Errorf("give on or off with --model, --from, --to, --tz or --all-day"))
+					return a.fail(fmt.Errorf("give on or off with --model, --from, --to, --tz, --all-day or --include-human"))
 				}
 				setting, err = c.AutoReview(cmd.Context(), args[0])
 			case args[1] == "on" || args[1] == "off":
@@ -263,6 +269,9 @@ keeps the model and the window set earlier unless they are given.`,
 				if allDay {
 					next.From, next.To, next.TimeZone = "", "", ""
 				}
+				if flags.Changed("include-human") {
+					next.IncludeHuman = includeHuman
+				}
 				setting, err = c.SetAutoReview(cmd.Context(), args[0], next)
 			default:
 				return a.fail(fmt.Errorf("invalid state %q: use on or off", args[1]))
@@ -281,11 +290,14 @@ keeps the model and the window set earlier unless they are given.`,
 	cmd.Flags().StringVar(&to, "to", "", "End of the daily review window, HH:MM 24-hour, excluded; before --from crosses midnight (default: keep the current one)")
 	cmd.Flags().StringVar(&timeZone, "tz", "", "IANA time zone of the window, e.g. Asia/Shanghai; \"\" for the daemon's local time (default: keep the current one)")
 	cmd.Flags().BoolVar(&allDay, "all-day", false, "Clear the window and review all day")
+	cmd.Flags().BoolVar(&includeHuman, "include-human", false,
+		"Also review human-only requests, which the AI may only approve; --include-human=false leaves them to a person (default: keep the current one)")
 	return cmd
 }
 
 // describeAutoReview is the one-line state of an auto review setting, e.g.
-// "on (model: default), 22:00-08:00 Asia/Shanghai, active now".
+// "on (model: default), 22:00-08:00 Asia/Shanghai, human-only requests too,
+// active now".
 func describeAutoReview(s model.AutoReviewStatus) string {
 	state := "off"
 	if s.Enabled {
@@ -302,6 +314,9 @@ func describeAutoReview(s model.AutoReviewStatus) string {
 			zone = "daemon time (" + s.DaemonZone + ")"
 		}
 		text += fmt.Sprintf(", %s-%s %s", s.From, s.To, zone)
+	}
+	if s.IncludeHuman {
+		text += ", human-only requests too"
 	}
 	switch {
 	case s.Active:

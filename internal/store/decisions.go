@@ -170,7 +170,9 @@ func (s *Store) DecideRequest(ctx context.Context, team, id string, in DecideInp
 }
 
 // AutoDecideRequest records the AI auto reviewer's decision on a pending
-// request, with its rationale. in.DecidedBy must be the reviewer's name.
+// request, with its rationale. in.DecidedBy must be the reviewer's name. A
+// human-only request can only be approved, and only while the team's
+// setting includes human-only requests.
 func (s *Store) AutoDecideRequest(ctx context.Context, team, id string, in DecideInput, reason string) (model.DecisionRequest, error) {
 	if !model.IsAutoReviewer(in.DecidedBy) {
 		return model.DecisionRequest{}, invalidf("'%s' is not the AI auto reviewer", in.DecidedBy)
@@ -220,7 +222,13 @@ func (s *Store) decide(ctx context.Context, team, id string, in DecideInput, rea
 			return conflictf("Decision request '%s' is already %s by %s", id, r.Status, r.DecidedBy)
 		}
 		if auto && r.HumanOnly {
-			return conflictf("Decision request '%s' must be decided by a human", id)
+			a, err := scanAutoReview(tx.QueryRowContext(ctx, "SELECT "+autoReviewColumns+" FROM teams WHERE name = ?", team))
+			if err != nil {
+				return err
+			}
+			if !a.IncludeHuman || in.Action != "approve" {
+				return conflictf("Decision request '%s' must be decided by a human", id)
+			}
 		}
 		status, err := decisionStatus(r, in)
 		if err != nil {
@@ -296,6 +304,9 @@ func resultText(r, previous model.DecisionRequest, override bool) string {
 		b.WriteString(" (AI auto review on behalf of the operator)")
 	}
 	b.WriteString("\n")
+	if model.IsAutoReviewer(r.DecidedBy) && r.HumanOnly {
+		b.WriteString("You marked this request for a person; the AI approved it because the operator lets it review such requests. The operator may still override it.\n")
+	}
 	if r.Reply != "" {
 		label := "Note"
 		switch r.Status {
@@ -377,12 +388,18 @@ func (s *Store) AutoReviewSetting(ctx context.Context, team string) (model.AutoR
 	return a, err
 }
 
-const autoReviewColumns = "auto_review, auto_review_model, auto_review_from, auto_review_to, auto_review_time_zone"
+const autoReviewColumns = "auto_review, auto_review_model, auto_review_from, auto_review_to, auto_review_time_zone, " +
+	"auto_review_include_human"
 
 func scanAutoReview(row scanner) (model.AutoReview, error) {
 	var a model.AutoReview
-	err := row.Scan(&a.Enabled, &a.Model, &a.From, &a.To, &a.TimeZone)
+	err := row.Scan(autoReviewFields(&a)...)
 	return a, err
+}
+
+// autoReviewFields are the scan destinations for autoReviewColumns.
+func autoReviewFields(a *model.AutoReview) []any {
+	return []any{&a.Enabled, &a.Model, &a.From, &a.To, &a.TimeZone, &a.IncludeHuman}
 }
 
 // SetAutoReview replaces a team's AI auto review setting.
@@ -396,8 +413,9 @@ func (s *Store) SetAutoReview(ctx context.Context, team string, a model.AutoRevi
 	}
 	err := s.write(ctx, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx, `UPDATE teams SET auto_review = ?, auto_review_model = ?,
-			auto_review_from = ?, auto_review_to = ?, auto_review_time_zone = ? WHERE name = ?`,
-			a.Enabled, a.Model, a.From, a.To, a.TimeZone, team)
+			auto_review_from = ?, auto_review_to = ?, auto_review_time_zone = ?, auto_review_include_human = ?
+			WHERE name = ?`,
+			a.Enabled, a.Model, a.From, a.To, a.TimeZone, a.IncludeHuman, team)
 		if err != nil {
 			return err
 		}
@@ -447,11 +465,13 @@ type AutoReviewItem struct {
 
 // AutoReviewQueue returns, oldest first, the pending requests the AI auto
 // reviewer has not looked at in teams that turned auto review on, whatever
-// their window. Human-only requests are left out.
+// their window. Human-only requests are left out unless the team's setting
+// includes them.
 func (s *Store) AutoReviewQueue(ctx context.Context) ([]AutoReviewItem, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT `+prefixed("t.", autoReviewColumns)+`, `+prefixed("d.", decisionColumns)+`
 		FROM decision_requests d JOIN teams t ON t.name = d.team
-		WHERE t.auto_review = 1 AND d.status = 'pending' AND d.human_only = 0 AND d.auto_attempted = 0
+		WHERE t.auto_review = 1 AND d.status = 'pending' AND d.auto_attempted = 0
+			AND (d.human_only = 0 OR t.auto_review_include_human = 1)
 		ORDER BY d.created_at, d.id`)
 	if err != nil {
 		return nil, err
@@ -460,8 +480,7 @@ func (s *Store) AutoReviewQueue(ctx context.Context) ([]AutoReviewItem, error) {
 	var out []AutoReviewItem
 	for rows.Next() {
 		var item AutoReviewItem
-		a := &item.Setting
-		if item.Request, err = scanDecision(prefixScanner{rows, []any{&a.Enabled, &a.Model, &a.From, &a.To, &a.TimeZone}}); err != nil {
+		if item.Request, err = scanDecision(prefixScanner{rows, autoReviewFields(&item.Setting)}); err != nil {
 			return nil, err
 		}
 		out = append(out, item)
@@ -491,7 +510,8 @@ func prefixed(prefix, columns string) string {
 // ClaimAutoReview marks a pending request as looked at by the AI auto
 // reviewer and reports whether this call claimed it, so a request is
 // reviewed at most once. Nothing is claimed while the team's auto review is
-// off or outside its window at now.
+// off or outside its window at now, and a human-only request only while the
+// setting includes them.
 func (s *Store) ClaimAutoReview(ctx context.Context, team, id string, now time.Time) (bool, error) {
 	var claimed bool
 	err := s.write(ctx, func(tx *sql.Tx) error {
@@ -505,7 +525,8 @@ func (s *Store) ClaimAutoReview(ctx context.Context, team, id string, now time.T
 			return nil
 		}
 		res, err := tx.ExecContext(ctx, `UPDATE decision_requests SET auto_attempted = 1
-			WHERE team = ? AND id = ? AND status = 'pending' AND human_only = 0 AND auto_attempted = 0`, team, id)
+			WHERE team = ? AND id = ? AND status = 'pending' AND (human_only = 0 OR ?) AND auto_attempted = 0`,
+			team, id, a.IncludeHuman)
 		if err != nil {
 			return err
 		}

@@ -37,8 +37,9 @@ func IsAutoReviewer(name string) bool {
 }
 
 // DecisionRequest is a member's request for the operator to decide
-// something, and the decision. HumanOnly requests are never decided by the
-// AI auto reviewer.
+// something, and the decision. The AI auto reviewer leaves HumanOnly
+// requests alone unless the team's setting includes them, and then may only
+// approve them.
 type DecisionRequest struct {
 	ID          string           `json:"id"`
 	Team        string           `json:"team"`
@@ -74,12 +75,14 @@ func (r DecisionRequest) OptionLabel(key string) string {
 // From and To ("HH:MM") limit the review to a daily window that includes
 // From and excludes To; a To before From crosses midnight. Both empty means
 // all day. TimeZone is an IANA name, empty for the daemon's local time.
+// IncludeHuman lets the reviewer approve human-only requests too.
 type AutoReview struct {
-	Enabled  bool   `json:"enabled"`
-	Model    string `json:"model,omitempty"`
-	From     string `json:"from,omitempty"`
-	To       string `json:"to,omitempty"`
-	TimeZone string `json:"timeZone,omitempty"`
+	Enabled      bool   `json:"enabled"`
+	Model        string `json:"model,omitempty"`
+	From         string `json:"from,omitempty"`
+	To           string `json:"to,omitempty"`
+	TimeZone     string `json:"timeZone,omitempty"`
+	IncludeHuman bool   `json:"includeHuman,omitempty"`
 }
 
 // HasWindow reports whether the review is limited to a daily window.

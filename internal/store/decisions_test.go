@@ -206,6 +206,72 @@ func TestOperatorOverridesOnlyAutoDecisions(t *testing.T) {
 	}
 }
 
+func TestAutoReviewIncludeHuman(t *testing.T) {
+	s := newTestStore(t)
+	newTeam(t, s)
+	ctx := context.Background()
+	on := model.AutoReview{Enabled: true, Model: "group/x", IncludeHuman: true}
+	if got, err := s.SetAutoReview(ctx, "demo", on); err != nil || got != on {
+		t.Fatalf("set: %+v %v", got, err)
+	}
+	if got, err := s.AutoReviewSetting(ctx, "demo"); err != nil || got != on {
+		t.Fatalf("setting = %+v %v", got, err)
+	}
+	human := func() model.DecisionRequest {
+		r, err := s.CreateDecisionRequest(ctx, "demo", CreateDecisionInput{From: "leader", Summary: "Deploy?", HumanOnly: true,
+			Options: []model.DecisionOption{{Key: "A", Label: "now"}, {Key: "B", Label: "later"}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	r := human()
+	queue, err := s.AutoReviewQueue(ctx)
+	if err != nil || len(queue) != 1 || queue[0].Request.ID != r.ID || !queue[0].Setting.IncludeHuman {
+		t.Fatalf("queue = %+v, %v", queue, err)
+	}
+	if ok, err := s.ClaimAutoReview(ctx, "demo", r.ID, time.Now()); err != nil || !ok {
+		t.Fatalf("claim: %v %v", ok, err)
+	}
+	for _, in := range []DecideInput{
+		{Action: "reject", Reply: "no", DecidedBy: "auto"},
+		{Action: "answer", Reply: "later", DecidedBy: "auto"},
+	} {
+		if _, err := s.AutoDecideRequest(ctx, "demo", r.ID, in, "x"); KindOf(err) != KindConflict {
+			t.Errorf("auto %s on a human-only request: %v", in.Action, err)
+		}
+	}
+	got, err := s.AutoDecideRequest(ctx, "demo", r.ID, DecideInput{Action: "approve", Choice: "B", DecidedBy: "auto:group/x"}, "safe")
+	if err != nil || got.Status != model.DecisionApproved || got.DecidedBy != "auto:group/x" || got.AutoReason != "safe" {
+		t.Fatalf("approve: %+v %v", got, err)
+	}
+	msgs, _ := s.Receive(ctx, "demo", "leader", "", 10)
+	if len(msgs) != 1 || !strings.Contains(msgs[0].Content, "marked this request for a person") ||
+		!strings.Contains(msgs[0].Content, "may still override") {
+		t.Fatalf("leader got %+v", msgs)
+	}
+	if over, err := s.DecideRequest(ctx, "demo", r.ID, DecideInput{Action: "reject", Reply: "not now", DecidedBy: "operator"}); err != nil ||
+		over.Status != model.DecisionRejected {
+		t.Fatalf("override: %+v %v", over, err)
+	}
+
+	// Switched off: neither queued, claimed nor decided.
+	on.IncludeHuman = false
+	if _, err := s.SetAutoReview(ctx, "demo", on); err != nil {
+		t.Fatal(err)
+	}
+	later := human()
+	if queue, _ := s.AutoReviewQueue(ctx); len(queue) != 0 {
+		t.Fatalf("queued with include human off: %+v", queue)
+	}
+	if ok, err := s.ClaimAutoReview(ctx, "demo", later.ID, time.Now()); err != nil || ok {
+		t.Fatalf("claimed with include human off: %v %v", ok, err)
+	}
+	if _, err := s.AutoDecideRequest(ctx, "demo", later.ID, DecideInput{Action: "approve", Choice: "A", DecidedBy: "auto"}, "x"); KindOf(err) != KindConflict {
+		t.Errorf("auto approved with include human off: %v", err)
+	}
+}
+
 func TestAutoReviewWindow(t *testing.T) {
 	s := newTestStore(t)
 	newTeam(t, s)

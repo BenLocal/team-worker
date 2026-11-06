@@ -68,7 +68,7 @@ team-worker request decide my-team <请示ID> --reply "用 B，下周再拆"
 
 ### AI 自动审核
 
-按协作说明，leader 自己能定的事不再发请示，发出的请示都带 `--human`，AI 自动审核不会处理它们；它只处理不带 `--human` 的请示，比如团队说明另有约定、或手工创建的请示。
+按协作说明，leader 自己能定的事不再发请示，发出的请示都带 `--human`。AI 自动审核默认不处理它们，只处理不带 `--human` 的请示，比如团队说明另有约定、或手工创建的请示。想让 AI 也处理 `--human` 的请示，打开 `--include-human`（见下文）。
 
 ```bash
 team-worker request auto my-team on --model <模型名>   # 打开；不带 --model 时沿用之前设置的模型
@@ -78,13 +78,19 @@ team-worker request auto my-team                       # 查看当前设置
 # 只在每天 22:00 到次日 08:00（上海时间）自动审核
 team-worker request auto my-team on --from 22:00 --to 08:00 --tz Asia/Shanghai
 team-worker request auto my-team on --all-day          # 去掉时间窗口，全天审核
+
+# 连带 --human 的请示也交给 AI，AI 只能批准或上报
+team-worker request auto my-team on --include-human=true
+team-worker request auto my-team on --include-human=false   # 恢复默认：--human 的请示只由人决定
 ```
 
 `--from`、`--to` 设每天的审核时间窗口（24 小时制 `HH:MM`），包含开始时间、不含结束时间；结束早于开始表示跨午夜，`22:00`–`08:00` 是当天 22:00 到次日 08:00。两者要么都设、要么都不设（不设就全天审核），不能相同。`--tz` 是窗口的时区，用 IANA 名称（如 `Asia/Shanghai`），不设时按 daemon 所在机器的本地时区；daemon 二进制内置了时区数据，机器或镜像里没有 zoneinfo 也能用。和模型一样，开关时不带这几个参数就沿用之前的窗口；`--all-day` 清掉窗口和时区。查看时输出窗口和此刻是否在审核，例如 `Auto review for my-team: on (model: default), 22:00-08:00 Asia/Shanghai, active now`，窗口外显示 `outside the window now`。
 
 窗口外创建的请示不会被审，也不算审过，保持 pending；窗口打开后由 daemon 的定时轮询（30 秒一次）接着审。操作员在窗口外照常可以自己决定。
 
-打开后，daemon 在后台把团队里还没审过的 pending 请示交给模型决定（设了时间窗口时只在窗口内），`--human` 的请示不碰。每条请示只审一次：模型选择上报（escalate）、命令失败或输出无法解析时，请示保持 pending，看板显示「AI did not decide: …」（即 `autoNote`），等人决定，不会自动重试。决定人记为 `auto`，设了模型时为 `auto:<模型名>`，理由保存在 `autoReason`。
+打开后，daemon 在后台把团队里还没审过的 pending 请示交给模型决定（设了时间窗口时只在窗口内），`--human` 的请示默认不碰。每条请示只审一次：模型选择上报（escalate）、命令失败或输出无法解析时，请示保持 pending，看板显示「AI did not decide: …」（即 `autoNote`），等人决定，不会自动重试。决定人记为 `auto`，设了模型时为 `auto:<模型名>`，理由保存在 `autoReason`。
+
+`--include-human=true`（看板上的「Also review human-only requests」）让 AI 也审 `--human` 的请示，但只能批准或上报，不能拒绝或答复：提示词会告诉模型这条请示是请示人标给人决定的，上报规则要从严执行；模型给出拒绝或答复时 daemon 不采纳，请示保持 pending，`autoNote` 记为 `AI may only approve or escalate a human-only request; it answered <decision>: <理由>`。破坏性操作、超出团队说明授权等情况照样上报。AI 批准后，请示人收到的 `decision_result` 会写明这是一条标给人决定、由 AI 批准的请示，操作员仍可覆盖；操作员照常可以用 `Override` 或 `request decide` 改判。这个选项和模型、窗口一样，开关时不带就沿用之前的设置；打开时查看输出里带 `human-only requests too`。关掉后，还没审到的 `--human` 请示不再交给 AI，已经在审的那条也不会被 AI 决定。
 
 审核命令默认是 `claude -p --tools "" --no-session-persistence`：不给模型任何工具（审核只需要读提示词，避免团队消息里的文字诱导它读本机文件），也不保存会话。可以用 daemon 的环境变量 `TEAM_WORKER_AUTO_REVIEW_COMMAND` 换成别的命令（按空格切分，不经过 shell）；设了模型时在末尾追加 `--model <模型名>`。提示词从 stdin 传入，包含团队说明、请示内容、最近 30 条团队消息和未完成的任务；单次最长 5 分钟。提示词要求模型保守：不可逆或破坏性操作（删除或移动数据、清空、重刷、改凭据）、超出团队说明授权的范围、影响团队以外的人或系统、涉及费用，或者信息不足时一律上报；否则按团队说明和约束选最合适的选项。模型最后输出一个 JSON 对象：`{"decision":"approve|reject|answer|escalate","choice":"A","reply":"...","reason":"..."}`，daemon 取输出里最后一个带 `decision` 的 JSON 对象。
 

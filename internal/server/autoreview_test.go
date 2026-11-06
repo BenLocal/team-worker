@@ -216,6 +216,49 @@ func TestAutoReviewerSkipsHumanOnlyAndDisabledTeams(t *testing.T) {
 	}
 }
 
+func TestAutoReviewerIncludesHumanOnly(t *testing.T) {
+	cases := []struct {
+		name, out string
+		status    model.DecisionStatus
+		note      string
+	}{
+		{"approve", `{"decision":"approve","choice":"B","reason":"routine move"}`, model.DecisionApproved, ""},
+		{"reject", `{"decision":"reject","reply":"no","reason":"too early"}`, model.DecisionPending,
+			"AI may only approve or escalate a human-only request; it answered reject: too early"},
+		{"answer", `{"decision":"answer","reply":"later","reason":"unclear"}`, model.DecisionPending,
+			"AI may only approve or escalate a human-only request; it answered answer: unclear"},
+		{"escalate", `{"decision":"escalate","reason":"deletes data"}`, model.DecisionPending, "AI escalated: deletes data"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			a, st, prompts := newReviewFixture(t, true)
+			ctx := context.Background()
+			if _, err := st.SetAutoReview(ctx, "demo", model.AutoReview{Enabled: true, Model: "group/x", IncludeHuman: true}); err != nil {
+				t.Fatal(err)
+			}
+			r := createABC(t, st, true)
+			a.Review = func(_ context.Context, _, prompt string) (string, error) {
+				*prompts = append(*prompts, prompt)
+				return c.out, nil
+			}
+			if err := a.Drain(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if len(*prompts) != 1 || !strings.Contains((*prompts)[0], "marked this request as needing a person") ||
+				!strings.Contains((*prompts)[0], "only approve it or escalate it") {
+				t.Fatalf("prompts %q", *prompts)
+			}
+			got, _ := st.GetDecisionRequest(ctx, "demo", r.ID)
+			if got.Status != c.status || got.AutoNote != c.note {
+				t.Fatalf("got %+v, want %s with note %q", got, c.status, c.note)
+			}
+			if c.status == model.DecisionApproved && (got.Choice != "B" || got.DecidedBy != "auto:group/x" || got.AutoReason != "routine move") {
+				t.Fatalf("decided = %+v", got)
+			}
+		})
+	}
+}
+
 func TestAutoReviewerWaitsForTheWindow(t *testing.T) {
 	for _, c := range []struct {
 		name, from, to  string

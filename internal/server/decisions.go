@@ -75,7 +75,7 @@ func (s *Server) setAutoReview(w http.ResponseWriter, r *http.Request) {
 	a, err := s.store.SetAutoReview(r.Context(), team, in)
 	if err == nil {
 		s.log.Info("auto review changed", "team", team, "enabled", a.Enabled, "model", a.Model,
-			"from", a.From, "to", a.To, "timeZone", a.TimeZone)
+			"from", a.From, "to", a.To, "timeZone", a.TimeZone, "includeHuman", a.IncludeHuman)
 	}
 	respond(w, model.NewAutoReviewStatus(a, time.Now()), err)
 }

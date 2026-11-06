@@ -618,7 +618,7 @@ function autoReviewBox(team, auto) {
   };
   // Every save sends the whole setting: the saved window unless it is the
   // window being saved.
-  const setting = (over) => ({ enabled: auto.enabled, model: auto.model || "", ...saved, ...over });
+  const setting = (over) => ({ enabled: auto.enabled, model: auto.model || "", includeHuman: !!auto.includeHuman, ...saved, ...over });
   const model = el("input", { type: "text", class: "auto-model", placeholder: "default model", value: auto.model || "",
     "aria-label": "Model for auto review", disabled: rq.autoBusy, spellcheck: "false",
     onkeydown: (e) => { if (e.key === "Enter") e.target.blur(); },
@@ -650,7 +650,12 @@ function autoReviewBox(team, auto) {
       + "Requests made outside the window wait until it opens."),
     el("p", { class: "hint" }, "When on, an AI model decides pending requests for you and escalates risky ones (destructive, "
       + "outside the team instructions, cost, not enough information). Each request is reviewed once; you can override its decision. "
-      + "Requests marked human only are always left for a person."),
+      + "Requests marked human only are left for a person unless the option below is on."),
+    el("label", { class: "auto-toggle auto-human" },
+      el("input", { type: "checkbox", checked: !!auto.includeHuman, disabled: rq.autoBusy,
+        onchange: (e) => save(setting({ includeHuman: e.target.checked, model: model.value.trim() })) }),
+      el("span", {}, "Also review human-only requests")),
+    el("p", { class: "hint" }, "The AI may only approve them or leave them to you; destructive or unauthorized actions are still escalated."),
     rq.autoError ? el("p", { class: "notice error" }, rq.autoError) : null);
 }
 function decisionText(r) {
@@ -670,7 +675,7 @@ function requestCard(team, r) {
   return el("div", { class: "approval request " + r.status },
     el("div", { class: "join-line" },
       el("span", { class: "chip " + r.status }, r.status),
-      r.humanOnly ? el("span", { class: "chip human", title: "Only a person may decide this request" }, "human only") : null,
+      r.humanOnly ? el("span", { class: "chip human", title: "The requester marked this request for a person" }, "human only") : null,
       el("span", { class: "approval-title", title: r.summary }, r.summary),
       el("span", { class: "approval-meta" }, `${r.from}, ${when(r.createdAt)}`)),
     details,

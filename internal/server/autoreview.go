@@ -36,7 +36,9 @@ type ReviewFunc func(ctx context.Context, model, prompt string) (string, error)
 // AutoReviewer decides decision requests on the operator's behalf in teams
 // that turned auto review on, while inside their window. It looks at each
 // request once: when the model escalates, fails or answers with something
-// unusable, the request stays pending with a note for the operator.
+// unusable, the request stays pending with a note for the operator. A
+// human-only request, reviewed only when the team's setting includes them,
+// can only be approved or escalated.
 // Requests created outside the window wait, untouched, until it opens; the
 // poll picks them up then.
 type AutoReviewer struct {
@@ -133,6 +135,9 @@ func (a *AutoReviewer) review(ctx context.Context, item store.AutoReviewItem) er
 	if v.Decision == "escalate" {
 		return note("AI escalated: " + v.Reason)
 	}
+	if r.HumanOnly && v.Decision != "approve" {
+		return note(fmt.Sprintf("AI may only approve or escalate a human-only request; it answered %s: %s", v.Decision, v.Reason))
+	}
 	reviewer := model.AutoReviewer
 	if item.Setting.Model != "" {
 		reviewer += ":" + item.Setting.Model
@@ -212,6 +217,10 @@ Answer with exactly one JSON object and nothing after it:
 		b.WriteString(strings.TrimRight(teamPrompt, "\n") + "\n")
 	}
 	fmt.Fprintf(&b, "\n## Decision request %s from %s\n\nSummary: %s\n", r.ID, r.From, r.Summary)
+	if r.HumanOnly {
+		b.WriteString("\nThe requester marked this request as needing a person. You may only approve it or escalate it; never reject or answer it. " +
+			"Apply the escalation rules with extra caution: escalate whenever in doubt.\n")
+	}
 	if r.Body != "" {
 		fmt.Fprintf(&b, "\n%s\n", strings.TrimRight(r.Body, "\n"))
 	}
@@ -223,6 +232,8 @@ Answer with exactly one JSON object and nothing after it:
 		if r.Recommended != "" {
 			fmt.Fprintf(&b, "The requester recommends %s.\n", r.Recommended)
 		}
+	} else if r.HumanOnly {
+		b.WriteString("\nNo options: approve without a choice or escalate.\n")
 	} else {
 		b.WriteString("\nNo options: approve without a choice, reject, answer or escalate.\n")
 	}

@@ -119,4 +119,22 @@ func TestDecisionRequestFlow(t *testing.T) {
 	if out, ok := h.run("request", "auto", "demo"); !ok || !strings.Contains(out, "Auto review for demo: on (model: default), active now\n") {
 		t.Fatalf("all day show: %s", out)
 	}
+
+	setting = model.AutoReviewStatus{}
+	h.json(&setting, "request", "auto", "demo", "on", "--include-human=true")
+	if !setting.IncludeHuman || !setting.Enabled {
+		t.Fatalf("include human: %+v", setting)
+	}
+	if out, ok := h.run("request", "auto", "demo", "off"); !ok ||
+		!strings.Contains(out, "Auto review for demo: off (model: default), human-only requests too\n") {
+		t.Fatalf("auto off keeps include human: %s", out)
+	}
+	if out, ok := h.run("--json", "request", "auto", "demo", "--include-human=true"); ok || !strings.Contains(out, "give on or off") {
+		t.Fatalf("include human without a state: ok=%v %s", ok, out)
+	}
+	setting = model.AutoReviewStatus{}
+	h.json(&setting, "request", "auto", "demo", "on", "--include-human=false")
+	if setting.IncludeHuman || !setting.Enabled {
+		t.Fatalf("include human off: %+v", setting)
+	}
 }
