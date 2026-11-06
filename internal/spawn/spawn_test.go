@@ -228,15 +228,16 @@ func TestBuildPromptAddsPlanApprovalOnlyWhenRequired(t *testing.T) {
 func TestBuildPromptRoutesUserQuestionsThroughTheLeader(t *testing.T) {
 	leader := BuildPrompt(PromptParams{AgentName: "lead", Team: "demo", Leader: "lead"})
 	worker := BuildPrompt(PromptParams{AgentName: "alice", Team: "demo", Leader: "lead"})
-	for _, want := range []string{"### Asking the user", "--status blocked", "do not take silence as agreement",
+	for _, want := range []string{"### Deciding and asking the user", "Decide yourself whatever the team instructions authorize",
+		"--status blocked", "do not take silence as agreement",
 		"you are the only one who asks the user", "Never ask through an interactive question menu",
-		"`team-worker request create demo \"<one-line question>\"", "`--human`", "`decision_result`"} {
+		"`team-worker request create demo \"<one-line question>\"", "--recommend <key> --human`", "`decision_result`"} {
 		if !strings.Contains(leader, want) {
 			t.Errorf("leader prompt misses %q", want)
 		}
 	}
 	if !strings.Contains(worker, "send the leader the question, the options and your recommendation") ||
-		!strings.Contains(worker, "never open an interactive question menu") || strings.Contains(worker, "### Asking the user") ||
+		!strings.Contains(worker, "never open an interactive question menu") || strings.Contains(worker, "### Deciding and asking the user") ||
 		strings.Contains(worker, "request create") {
 		t.Errorf("worker prompt should send user questions to the leader:\n%s", worker)
 	}
