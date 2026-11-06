@@ -177,10 +177,12 @@ func wrapCommand(opts Options, args []string) string {
 
 var shellNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
-// writeEnvFile stores the environment in a file the pane sources and then
-// deletes; passing it inline would exceed tmux's command-length limit. The
-// file sets exactly these variables, so ones the adapter dropped stay unset.
-func writeEnvFile(dir string, env map[string]string) (string, error) {
+// writeLaunchFile stores the environment and the command in a file the pane
+// sources and then deletes; passing them inline would exceed tmux's
+// command-length limit, which a long first prompt or team instructions
+// reach. The file sets exactly these variables, so ones the adapter dropped
+// stay unset.
+func writeLaunchFile(dir string, env map[string]string, command string) (string, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}
@@ -195,7 +197,8 @@ func writeEnvFile(dir string, env map[string]string) (string, error) {
 			fmt.Fprintf(&sb, "export %s=%s\n", k, shellQuote(v))
 		}
 	}
-	fmt.Fprintf(&sb, "rm -f %s\n", shellQuote(path))
+	// The shell has the file open, so it reads the command after the rm.
+	fmt.Fprintf(&sb, "rm -f %s\n%s\n", shellQuote(path), command)
 	return path, os.WriteFile(path, []byte(sb.String()), 0o600)
 }
 
@@ -203,14 +206,13 @@ func (b Built) startTmux() (Result, error) {
 	if !tmux.Available() {
 		return Result{}, errors.New("tmux is not installed")
 	}
-	envFile, err := writeEnvFile(b.opts.RunDir, b.Env.Vars)
+	launchFile, err := writeLaunchFile(b.opts.RunDir, b.Env.Vars, wrapCommand(b.opts, b.Plan.Args))
 	if err != nil {
 		return Result{}, err
 	}
-	shellCmd := ". " + shellQuote(envFile) + "; " + wrapCommand(b.opts, b.Plan.Args)
-	pane, err := tmux.NewWindow(SessionName(b.opts.Team), b.opts.Agent, shellCmd)
+	pane, err := tmux.NewWindow(SessionName(b.opts.Team), b.opts.Agent, ". "+shellQuote(launchFile))
 	if err != nil {
-		os.Remove(envFile)
+		os.Remove(launchFile)
 		return Result{}, err
 	}
 	// Keep the leader's screen after it exits, and any agent's screen when it
