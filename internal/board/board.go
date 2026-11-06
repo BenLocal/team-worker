@@ -7,11 +7,14 @@ import (
 	"encoding/json"
 	"errors"
 	"io/fs"
+	"mime"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/benlocal/team-worker/internal/client"
+	"github.com/benlocal/team-worker/internal/model"
+	"github.com/benlocal/team-worker/internal/store"
 )
 
 // dist holds the Vite build of the page (`make web`, not committed); all:
@@ -94,6 +97,30 @@ func newHandler(c *client.Client, terminals http.Handler) http.Handler {
 		v, err := oversight(r.Context(), c, r.PathValue("team"))
 		reply(w, v, err)
 	})
+	// The board's writes act as the operator. Protect already refuses
+	// cross-origin requests; a JSON body is required on top, which a plain
+	// HTML form cannot send.
+	mux.HandleFunc("POST /api/teams/{team}/requests/{id}/decide", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Action string `json:"action"`
+			Choice string `json:"choice"`
+			Reply  string `json:"reply"`
+		}
+		if !decodeJSON(w, r, &in) {
+			return
+		}
+		req, err := c.DecideRequest(r.Context(), r.PathValue("team"), r.PathValue("id"),
+			store.DecideInput{Action: in.Action, Choice: in.Choice, Reply: in.Reply, DecidedBy: store.OperatorInbox})
+		reply(w, req, err)
+	})
+	mux.HandleFunc("PUT /api/teams/{team}/auto-review", func(w http.ResponseWriter, r *http.Request) {
+		var in model.AutoReview
+		if !decodeJSON(w, r, &in) {
+			return
+		}
+		a, err := c.SetAutoReview(r.Context(), r.PathValue("team"), in)
+		reply(w, a, err)
+	})
 	// The daemon reads the screen on its machine, wherever this board runs.
 	mux.HandleFunc("GET /api/teams/{team}/agents/{name}/screen", func(w http.ResponseWriter, r *http.Request) {
 		history, _ := strconv.Atoi(r.URL.Query().Get("history"))
@@ -101,6 +128,23 @@ func newHandler(c *client.Client, terminals http.Handler) http.Handler {
 		reply(w, map[string]string{"screen": text}, err)
 	})
 	return mux
+}
+
+// maxWriteBody caps the JSON body of the board's writes.
+const maxWriteBody = 1 << 21
+
+// decodeJSON reads a JSON request body, answering 415 for any other content
+// type and 400 for a body that does not decode.
+func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
+	if mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mediaType != "application/json" {
+		reply(w, nil, &client.APIError{Status: http.StatusUnsupportedMediaType, Msg: "Send the request as application/json"})
+		return false
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxWriteBody)).Decode(v); err != nil {
+		reply(w, nil, &client.APIError{Status: http.StatusBadRequest, Msg: "Invalid request body: " + err.Error()})
+		return false
+	}
+	return true
 }
 
 func reply(w http.ResponseWriter, v any, err error) {

@@ -35,6 +35,7 @@
 | `TEAM_WORKER_LOG_FILE` | 日志写入此文件并按大小轮转，代替 stderr（`--log-file`）；设置后 CLI 自动拉起 daemon 时不再传 `--log-file` | 不设；自动拉起时为 `<数据目录>/team-workerd.log` |
 | `TEAM_WORKER_LOG_MAX_SIZE` | 日志文件达到多少 MB 时轮转（`--log-max-size`） | `20` |
 | `TEAM_WORKER_LOG_MAX_FILES` | 保留几个轮转后的日志文件（`--log-max-files`） | `5` |
+| `TEAM_WORKER_AUTO_REVIEW_COMMAND` | 请示 AI 自动审核运行的命令，按空格切分、不经过 shell；提示词从 stdin 传入，团队设了模型时追加 `--model <模型名>`，单次最长 5 分钟（见 [collaboration.md](collaboration.md#ai-自动审核)） | `claude -p --tools "" --no-session-persistence`（不给工具、不保存会话） |
 | `TEAM_WORKER_MAGPIE_SESSION_LOGIN` | 设为 `1` 时开启 `GET /api/service-auth/magpie`：登录看板后进入 Magpie 不用再输 Web Key；未开启时该接口返回 404 | 不启用 |
 | `TEAM_WORKER_OPENBAO_SESSION_LOGIN` | 设为 `1` 时开启 `GET /api/openbao/login`：用保存的 root 令牌签发 12 小时子令牌，自动登录 OpenBao 界面；未开启时该接口返回 404 | 不启用 |
 

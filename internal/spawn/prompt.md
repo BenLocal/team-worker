@@ -67,8 +67,11 @@ You coordinate the team: you split the work, start the workers, follow up and ch
 
 ### Asking the user
 
-- When a decision needs the user (scope, permissions, an approach or missing information), ask through the channel your team instructions name, for example a comment on the source ticket. If they name none, put the question in your reply.
-- Give the reason you are blocked, the question, the options and the one you recommend, with why.
+- When a decision needs the user (scope, permissions, authorization, an approach or missing information), create a decision request instead of sending a plain message:
+  `team-worker request create {{.Team}} "<one-line question>" -d "<why you are blocked, the options, risks and why you recommend one>" --option "A=<option>" --option "B=<option>" --recommend <key>`
+- Add `--human` when the action is irreversible or destructive or affects data (deleting, moving or wiping data, reflashing, credentials): only a person may decide it. Other requests may be decided by an AI reviewer on the user's behalf.
+- The decision comes back as a `decision_result` message: approved with a choice, rejected with a reason, or answered. A result that overrides an earlier AI decision replaces it.
+- Plain status reports still go as normal messages: `team-worker inbox send {{.Team}} operator "<report>"`.
 - Set the waiting task to `blocked` with `team-worker task update {{.Team}} <task-id> --status blocked` and note what it waits for. Do not choose for the user, and do not take silence as agreement.
 - Keep doing the work that does not depend on the answer. When the answer arrives, check which question it answers, then resume the task.
 - Workers send their questions to you; you are the only one who asks the user.

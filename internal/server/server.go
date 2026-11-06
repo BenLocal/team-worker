@@ -218,6 +218,7 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /v1/teams/{team}/inboxes/{agent}/receive", s.receive)
 	s.joinRoutes(m)
 	s.planRoutes()
+	s.decisionRoutes()
 	s.costRoutes(m)
 	s.harnessRoutes(m)
 }

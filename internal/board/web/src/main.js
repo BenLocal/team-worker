@@ -21,7 +21,10 @@ const initialView = new URLSearchParams(location.search).get("view");
 const state = {
   teams: [], boards: {}, team: new URLSearchParams(location.search).get("team") || "", 
   view: VIEWS.some(([v]) => v === initialView) ? initialView : "board", railOpen: stored(RAIL_KEY) !== "closed",
-  doneShown: DONE_PAGE, open: new Set(), oversight: {}, openPlans: new Set(),
+  doneShown: DONE_PAGE, open: new Set(), oversight: {}, openPlans: new Set(), approvalsTab: "requests",
+  // Decision request cards: open bodies, the action being written per
+  // request, requests being sent, their errors and AI decisions being overridden.
+  req: { open: new Set(), form: {}, busy: new Set(), errors: {}, overriding: new Set(), autoBusy: false, autoError: "" },
   msgShown: MSG_PAGE, range: null, selected: null, follow: true,
   keys: {}, links: [],
   // Terminals show one member at a time unless the grid was chosen; the
@@ -503,56 +506,200 @@ function renderHarness() {
       : h.status === "running" && h.can_advance ? el("p", { class: "harness-gate ready" }, "Ready to move on; the conductor advances it on its next check.") : null);
 }
 
-/* ---------------- approvals: plans and join requests ---------------- */
-const STATUS_ORDER = { pending: 0, approved: 1, rejected: 2 };
+/* ---------------- approvals: decision requests, plans and join requests ---------------- */
+const STATUS_ORDER = { pending: 0, approved: 1, rejected: 2, answered: 3 };
+const APPROVAL_TABS = [["requests", "Requests"], ["plans", "Plans"], ["joins", "Join requests"]];
+const pendingOf = (list) => (list || []).filter((x) => x.status === "pending").length;
 function pendingCount(ov) {
-  return ov ? ov.plans.filter((p) => p.status === "pending").length + ov.joinRequests.filter((j) => j.status === "pending").length : 0;
+  return ov ? pendingOf(ov.requests) + pendingOf(ov.plans) + pendingOf(ov.joinRequests) : 0;
 }
 function renderApprovalsTab() {
   const n = pendingCount(state.oversight[state.team]);
   const tab = $("tab-approvals");
   if (tab) tab.textContent = n ? `Approvals ${n}` : "Approvals";
 }
+async function send(method, path, body) {
+  const res = await fetch(path, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const out = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(out.error || res.statusText);
+  return out;
+}
+// rerenderApprovals redraws the view now, e.g. after a click changed its state.
+function rerenderApprovals() {
+  delete state.keys.approvals;
+  if (state.view === "approvals") renderApprovals();
+}
 function renderApprovals() {
   const ov = state.oversight[state.team];
   const team = state.team;
-  if (!changed("approvals", [team, ov && [ov.plans, ov.joinRequests], [...state.openPlans]])) return;
   const box = $("approvals");
+  // Redrawing would take the focus and caret from a note being typed; the
+  // next refresh draws it once the field is left.
+  if (box.contains(document.activeElement) && document.activeElement.matches("textarea, input[type=text]")) return;
+  const rq = state.req;
+  if (!changed("approvals", [team, ov && [ov.requests, ov.autoReview, ov.plans, ov.joinRequests], [...state.openPlans],
+    state.approvalsTab, [...rq.open], Object.entries(rq.form).map(([id, f]) => [id, f.mode, f.choice]), [...rq.busy],
+    rq.errors, [...rq.overriding], rq.autoBusy, rq.autoError])) return;
   if (!ov) { box.replaceChildren(el("p", { class: "muted" }, "Loading approvals…")); return; }
-  const byStatus = (a, b) => (STATUS_ORDER[a.status] - STATUS_ORDER[b.status]) || (b.createdAt || "").localeCompare(a.createdAt || "");
-  const when = (ts) => ts ? new Date(ts).toLocaleString() : "";
-  const plans = [...ov.plans].sort(byStatus).map((p) => {
-    const card = el("details", { class: "approval " + p.status, open: state.openPlans.has(p.id) },
-      el("summary", {},
-        el("span", { class: "chip " + p.status }, p.status),
-        el("span", { class: "approval-title" }, p.summary || p.plan.split("\n")[0]),
-        el("span", { class: "approval-meta" }, `${p.agent}, ${when(p.createdAt)}`)),
-      el("div", { class: "approval-body" },
-        el("pre", { class: "plan-text" }, p.plan),
-        p.feedback ? el("p", { class: "feedback" }, `${p.status === "rejected" ? "Rejected" : "Approved"} by ${p.decidedBy || "the leader"}: ${p.feedback}`)
-          : p.decidedBy ? el("p", { class: "feedback" }, `${p.status === "rejected" ? "Rejected" : "Approved"} by ${p.decidedBy} ${when(p.decidedAt)}`) : null,
-        p.status === "pending" ? el("p", { class: "hint" }, "Decide from the leader's terminal: ",
-          el("code", {}, `team-worker plan approve ${team} ${p.id} ${p.agent}`), " or ",
-          el("code", {}, `team-worker plan reject ${team} ${p.id} ${p.agent} -f "<why>"`)) : null));
-    card.addEventListener("toggle", () => card.open ? state.openPlans.add(p.id) : state.openPlans.delete(p.id));
-    return card;
-  });
-  const joins = [...ov.joinRequests].sort(byStatus).map((j) => el("div", { class: "approval " + j.status },
+  const requests = ov.requests || [];
+  const counts = { requests: pendingOf(requests), plans: pendingOf(ov.plans), joins: pendingOf(ov.joinRequests) };
+  const tabs = el("div", { class: "views approval-tabs", role: "tablist", "aria-label": "Approvals" },
+    APPROVAL_TABS.map(([v, label]) => el("button", { type: "button", role: "tab", "aria-selected": String(state.approvalsTab === v),
+      onclick: () => { state.approvalsTab = v; rerenderApprovals(); } }, label, counts[v] ? el("em", {}, String(counts[v])) : null)));
+  let panel;
+  if (state.approvalsTab === "requests") panel = renderRequests(team, ov, requests);
+  else {
+    const byStatus = (a, b) => (STATUS_ORDER[a.status] - STATUS_ORDER[b.status]) || (b.createdAt || "").localeCompare(a.createdAt || "");
+    const when = (ts) => ts ? new Date(ts).toLocaleString() : "";
+    const plans = [...ov.plans].sort(byStatus).map((p) => {
+      const card = el("details", { class: "approval " + p.status, open: state.openPlans.has(p.id) },
+        el("summary", {},
+          el("span", { class: "chip " + p.status }, p.status),
+          el("span", { class: "approval-title" }, p.summary || p.plan.split("\n")[0]),
+          el("span", { class: "approval-meta" }, `${p.agent}, ${when(p.createdAt)}`)),
+        el("div", { class: "approval-body" },
+          el("pre", { class: "plan-text" }, p.plan),
+          p.feedback ? el("p", { class: "feedback" }, `${p.status === "rejected" ? "Rejected" : "Approved"} by ${p.decidedBy || "the leader"}: ${p.feedback}`)
+            : p.decidedBy ? el("p", { class: "feedback" }, `${p.status === "rejected" ? "Rejected" : "Approved"} by ${p.decidedBy} ${when(p.decidedAt)}`) : null,
+          p.status === "pending" ? el("p", { class: "hint" }, "Decide from the leader's terminal: ",
+            el("code", {}, `team-worker plan approve ${team} ${p.id} ${p.agent}`), " or ",
+            el("code", {}, `team-worker plan reject ${team} ${p.id} ${p.agent} -f "<why>"`)) : null));
+      card.addEventListener("toggle", () => card.open ? state.openPlans.add(p.id) : state.openPlans.delete(p.id));
+      return card;
+    });
+    const joins = [...ov.joinRequests].sort(byStatus).map((j) => el("div", { class: "approval " + j.status },
+      el("div", { class: "join-line" },
+        el("span", { class: "chip " + j.status }, j.status),
+        el("span", { class: "approval-title" }, j.assignedName && j.assignedName !== j.proposedName ? `${j.proposedName} → ${j.assignedName}` : j.proposedName),
+        el("span", { class: "approval-meta" }, when(j.createdAt))),
+      j.capabilities ? el("p", { class: "join-caps" }, j.capabilities) : null,
+      j.reason ? el("p", { class: "feedback" }, "Reason: " + j.reason) : null,
+      j.status === "pending" ? el("p", { class: "hint" }, el("code", {}, `team-worker team approve-join ${team} ${j.requestId}`), " or ",
+        el("code", {}, `team-worker team reject-join ${team} ${j.requestId} -r "<why>"`)) : null));
+    panel = state.approvalsTab === "plans"
+      ? el("section", { class: "approval-group", "aria-label": "Plans" },
+        el("h2", {}, "Plans", el("span", { class: "n" }, String(ov.plans.length))),
+        plans.length ? plans : el("p", { class: "muted" }, "No plans yet. Members started with --plan-required submit one before they start work."))
+      : el("section", { class: "approval-group", "aria-label": "Join requests" },
+        el("h2", {}, "Join requests", el("span", { class: "n" }, String(ov.joinRequests.length))),
+        joins.length ? joins : el("p", { class: "muted" }, "No join requests. Agents ask to join with team-worker team request-join."));
+  }
+  box.replaceChildren(tabs, panel);
+}
+
+/* decision requests: the leader asks the operator; the board decides as the operator */
+const when = (ts) => ts ? new Date(ts).toLocaleString() : "";
+const isAuto = (by) => by === "auto" || (by || "").startsWith("auto:");
+function renderRequests(team, ov, requests) {
+  const sorted = [...requests].sort((a, b) => ((a.status === "pending" ? 0 : 1) - (b.status === "pending" ? 0 : 1))
+    || (b.createdAt || "").localeCompare(a.createdAt || ""));
+  return el("section", { class: "approval-group requests", "aria-label": "Decision requests" },
+    autoReviewBox(team, ov.autoReview || { enabled: false }),
+    el("h2", {}, "Decision requests", el("span", { class: "n" }, String(requests.length))),
+    sorted.length ? sorted.map((r) => requestCard(team, r))
+      : el("p", { class: "muted" }, "No decision requests. The leader asks you to decide with team-worker request create."));
+}
+function autoReviewBox(team, auto) {
+  const rq = state.req;
+  const save = async (enabled, model) => {
+    rq.autoBusy = true; rq.autoError = "";
+    rerenderApprovals();
+    try {
+      state.oversight[team].autoReview = await send("PUT", "api/teams/" + encodeURIComponent(team) + "/auto-review", { enabled, model });
+    } catch (e) { rq.autoError = "Cannot change auto review: " + e.message; }
+    rq.autoBusy = false;
+    rerenderApprovals();
+    refreshOversight();
+  };
+  const model = el("input", { type: "text", class: "auto-model", placeholder: "default model", value: auto.model || "",
+    "aria-label": "Model for auto review", disabled: rq.autoBusy, spellcheck: "false",
+    onkeydown: (e) => { if (e.key === "Enter") e.target.blur(); },
+    onchange: (e) => save(auto.enabled, e.target.value.trim()) });
+  return el("div", { class: "auto-review" + (auto.enabled ? " on" : "") },
+    el("label", { class: "auto-toggle" },
+      el("input", { type: "checkbox", checked: auto.enabled, disabled: rq.autoBusy,
+        onchange: (e) => save(e.target.checked, model.value.trim()) }),
+      el("span", {}, "Auto review (AI)")),
+    model,
+    el("p", { class: "hint" }, "When on, an AI model decides pending requests for you and escalates risky ones (destructive, "
+      + "outside the team instructions, cost, not enough information). Each request is reviewed once; you can override its decision. "
+      + "Requests marked human only are always left for a person."),
+    rq.autoError ? el("p", { class: "notice error" }, rq.autoError) : null);
+}
+function decisionText(r) {
+  const label = (r.options || []).find((o) => o.key === r.choice)?.label;
+  const what = r.status === "approved" ? (r.choice ? `Approved ${r.choice}${label ? ` (${label})` : ""}` : "Approved")
+    : r.status === "rejected" ? "Rejected" : "Answered";
+  return `${what} by ${isAuto(r.decidedBy) ? r.decidedBy + " (AI)" : r.decidedBy}, ${when(r.decidedAt)}`;
+}
+function requestCard(team, r) {
+  const rq = state.req;
+  const pending = r.status === "pending";
+  const acting = pending || rq.overriding.has(r.id);
+  const replyLabel = r.status === "rejected" ? "Reason" : r.status === "answered" ? "Answer" : "Note";
+  const details = r.body ? el("details", { class: "request-body", open: rq.open.has(r.id) },
+    el("summary", {}, "Details"), el("pre", { class: "plan-text" }, r.body)) : null;
+  details?.addEventListener("toggle", () => details.open ? rq.open.add(r.id) : rq.open.delete(r.id));
+  return el("div", { class: "approval request " + r.status },
     el("div", { class: "join-line" },
-      el("span", { class: "chip " + j.status }, j.status),
-      el("span", { class: "approval-title" }, j.assignedName && j.assignedName !== j.proposedName ? `${j.proposedName} → ${j.assignedName}` : j.proposedName),
-      el("span", { class: "approval-meta" }, when(j.createdAt))),
-    j.capabilities ? el("p", { class: "join-caps" }, j.capabilities) : null,
-    j.reason ? el("p", { class: "feedback" }, "Reason: " + j.reason) : null,
-    j.status === "pending" ? el("p", { class: "hint" }, el("code", {}, `team-worker team approve-join ${team} ${j.requestId}`), " or ",
-      el("code", {}, `team-worker team reject-join ${team} ${j.requestId} -r "<why>"`)) : null));
-  box.replaceChildren(
-    el("section", { class: "approval-group", "aria-label": "Plans" },
-      el("h2", {}, "Plans", el("span", { class: "n" }, String(ov.plans.length))),
-      plans.length ? plans : el("p", { class: "muted" }, "No plans yet. Members started with --plan-required submit one before they start work.")),
-    el("section", { class: "approval-group", "aria-label": "Join requests" },
-      el("h2", {}, "Join requests", el("span", { class: "n" }, String(ov.joinRequests.length))),
-      joins.length ? joins : el("p", { class: "muted" }, "No join requests. Agents ask to join with team-worker team request-join.")));
+      el("span", { class: "chip " + r.status }, r.status),
+      r.humanOnly ? el("span", { class: "chip human", title: "Only a person may decide this request" }, "human only") : null,
+      el("span", { class: "approval-title", title: r.summary }, r.summary),
+      el("span", { class: "approval-meta" }, `${r.from}, ${when(r.createdAt)}`)),
+    details,
+    !pending ? el("p", { class: "feedback" }, decisionText(r)) : null,
+    !pending && r.reply ? el("p", { class: "feedback" }, `${replyLabel}: ${r.reply}`) : null,
+    !pending && r.autoReason ? el("p", { class: "feedback ai" }, (isAuto(r.decidedBy) ? "AI reason: " : "Earlier AI review: ") + r.autoReason) : null,
+    pending && r.autoNote ? el("p", { class: "feedback ai" }, "AI did not decide: " + r.autoNote) : null,
+    !pending && isAuto(r.decidedBy) ? el("div", { class: "request-actions" },
+      el("button", { type: "button", class: "quiet-btn", "aria-expanded": String(rq.overriding.has(r.id)), disabled: rq.busy.has(r.id),
+        onclick: () => { rq.overriding.has(r.id) ? rq.overriding.delete(r.id) : rq.overriding.add(r.id); delete rq.form[r.id]; rerenderApprovals(); } },
+      rq.overriding.has(r.id) ? "Cancel override" : "Override")) : null,
+    acting ? requestActions(team, r) : null,
+    rq.errors[r.id] ? el("p", { class: "notice error" }, rq.errors[r.id]) : null);
+}
+function requestActions(team, r) {
+  const rq = state.req;
+  const form = rq.form[r.id] || {};
+  const busy = rq.busy.has(r.id);
+  const open = (mode, choice = "") => { rq.form[r.id] = { mode, choice, text: "" }; delete rq.errors[r.id]; rerenderApprovals(); };
+  const options = r.options || [];
+  const choose = options.length
+    ? options.map((o) => el("button", { type: "button", class: "opt-btn" + (o.key === r.recommended ? " recommended" : ""),
+      "aria-pressed": String(form.mode === "approve" && form.choice === o.key), disabled: busy, onclick: () => open("approve", o.key),
+      title: o.key === r.recommended ? "Recommended by " + r.from : null },
+      el("b", {}, o.key), el("span", {}, o.label), o.key === r.recommended ? el("em", {}, "recommended") : null))
+    : [el("button", { type: "button", class: "opt-btn", "aria-pressed": String(form.mode === "approve"), disabled: busy,
+      onclick: () => open("approve") }, "Approve")];
+  const row = el("div", { class: "request-actions" }, choose,
+    el("button", { type: "button", class: "quiet-btn", "aria-pressed": String(form.mode === "reject"), disabled: busy, onclick: () => open("reject") }, "Reject"),
+    el("button", { type: "button", class: "quiet-btn", "aria-pressed": String(form.mode === "answer"), disabled: busy, onclick: () => open("answer") }, "Reply"));
+  if (!form.mode) return row;
+  const required = form.mode !== "approve";
+  const placeholder = { approve: "Optional note for " + r.from, reject: "Why it is rejected (required)", answer: "Your answer (required)" }[form.mode];
+  const verb = { approve: form.choice ? `Approve ${form.choice}` : "Approve", reject: "Reject", answer: "Send reply" }[form.mode];
+  const text = el("textarea", { class: "request-text", rows: 3, placeholder, disabled: busy, "aria-label": placeholder,
+    oninput: (e) => { form.text = e.target.value; } });
+  text.value = form.text || "";
+  const submit = async () => {
+    if (required && !text.value.trim()) { rq.errors[r.id] = form.mode === "reject" ? "Give a reason for the rejection." : "Write the answer first."; rerenderApprovals(); return; }
+    rq.busy.add(r.id); delete rq.errors[r.id];
+    rerenderApprovals();
+    try {
+      await send("POST", `api/teams/${encodeURIComponent(team)}/requests/${encodeURIComponent(r.id)}/decide`,
+        { action: form.mode, choice: form.choice || "", reply: text.value.trim() });
+      delete rq.form[r.id];
+      rq.overriding.delete(r.id);
+    } catch (e) { rq.errors[r.id] = "Cannot decide: " + e.message; }
+    rq.busy.delete(r.id);
+    rerenderApprovals();
+    refreshOversight();
+  };
+  return el("div", { class: "request-form" }, row, text,
+    el("div", { class: "request-actions" },
+      el("button", { type: "button", class: "primary-btn" + (form.mode === "reject" ? " danger" : ""), disabled: busy, onclick: submit },
+        busy ? "Sending…" : verb),
+      el("button", { type: "button", class: "quiet-btn", disabled: busy, onclick: () => { delete rq.form[r.id]; delete rq.errors[r.id]; rerenderApprovals(); } }, "Cancel")));
 }
 function sortTasks(status, tasks) {
   const newest = (f) => (a, b) => (b[f] || "").localeCompare(a[f] || "");
@@ -815,6 +962,7 @@ function selectTeam(name) {
   renderRail();
   if (state.boards[name]) { buildMain(); update(); } else showNotice("Loading " + name + "…");
   state.openPlans.clear();
+  Object.assign(state.req, { open: new Set(), form: {}, busy: new Set(), errors: {}, overriding: new Set(), autoBusy: false, autoError: "" });
   refreshSelected();
   refreshOversight();
 }

@@ -82,12 +82,13 @@ team-worker board serve ──> internal/board (同一看板的独立进程，�
 
 ## 五、数据流与存储
 
-- 权威数据源：`<数据目录>/team-worker.db`，只有 `team-workerd` 写。团队模板是 `~/.team-worker/templates/*.toml` 文件，不进数据库。表：`teams`、`members`、`tasks`、`task_deps`、`messages`、`events`、`agents`、`sessions`、`settings`、`workspaces`、`snapshots`、`event_hooks`、`event_outbox` 等。`snapshots` 不引用 `teams`，团队删除后快照仍在；恢复时整行更新 `teams`（不删除重建，避免级联删掉进程记录、worktree 和 harness 运行），其余各表按团队先删后写，只写当前表结构里有的列。
+- 权威数据源：`<数据目录>/team-worker.db`，只有 `team-workerd` 写。团队模板是 `~/.team-worker/templates/*.toml` 文件，不进数据库。表：`teams`、`members`、`tasks`、`task_deps`、`messages`、`events`、`agents`、`sessions`、`settings`、`workspaces`、`snapshots`、`event_hooks`、`event_outbox`、`decision_requests` 等。`snapshots` 不引用 `teams`，团队删除后快照仍在；恢复时整行更新 `teams`（不删除重建，避免级联删掉进程记录、worktree 和 harness 运行），其余各表按团队先删后写，只写当前表结构里有的列。
 - 团队公共提示词保存在 `teams.prompt`，成员专属提示词保存在 `members.prompt`，按 `(team, name, user_name)` 区分。模板渲染后的角色 `task` 和显式传入的 `spawn --task` 写入成员提示词；进程重新注册不覆盖它，启动和会话恢复钩子会重新读取。修改成员提示词与发送该成员的 inbox 通知在同一事务完成。
 - 迁移：`internal/store/migrations/*.sql` 用 `go:embed` 内置，Goose Provider 负责顺序执行和事务，进度记在 `goose_db_version`。旧库的 `PRAGMA user_version` 一次性接入 Goose 历史；各 SQL 仍同步更新 `user_version`，用于版本兼容检查。**已发布的迁移不改，只追加文件。**
 - 时间戳：字符串存储，格式对齐 Python `datetime.isoformat()`（`store.timestamp`），保持与 ClawTeam 输出一致。
 - 通知：没有消息队列；`Hub` 是进程内「关闭旧 channel、换新 channel」的广播。
 - 事件 hook：store 的写操作在同一个事务里调用 `s.emit`，把事件写进 `event_outbox`（只在有匹配的 `event_hooks` 时写，没有外键，团队删除时的 `TeamShutdown` 也能留下）。daemon 的 `HookRunner`（`internal/server/eventhooks.go`）在每次写入后被 `Hub` 唤醒，按顺序执行匹配的 shell hook，执行完再删除事件；删除不触发 `OnChange`，不会自己唤醒自己。新增事件类型：在 `model.EventTypes` 登记，在对应的 store 写操作里 `emit`。
+- 请示与 AI 自动审核：请示存在 `decision_requests`，创建和决定都在同一个事务里给 `operator` / 请示人投递消息。daemon 的 `AutoReviewer`（`internal/server/autoreview.go`）同样由 `Hub` 唤醒，从 `AutoReviewQueue` 取打开了 `teams.auto_review` 的团队里未审过的请示，先 `ClaimAutoReview` 标记已审（保证每条只审一次，重启也不重审），再运行审核命令（可替换的 `Review` 函数，测试用假的）；模型上报或失败只写 `auto_note`，请示保持 pending。
 
 ## 六、外部依赖与集成
 

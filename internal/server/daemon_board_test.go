@@ -13,6 +13,7 @@ import (
 
 	"github.com/benlocal/team-worker/internal/board"
 	"github.com/benlocal/team-worker/internal/client"
+	"github.com/benlocal/team-worker/internal/model"
 	"github.com/benlocal/team-worker/internal/store"
 )
 
@@ -84,6 +85,47 @@ func TestDaemonServesBoardBesideAPI(t *testing.T) {
 	}
 	if code, body := get("/api/links", key); code != 200 || !strings.Contains(body, "https://example.com") {
 		t.Fatalf("board links: %d %q", code, body)
+	}
+	send := func(method, path, contentType, origin, body string) (int, string) {
+		t.Helper()
+		req, _ := http.NewRequest(method, "http://"+address+path, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+key)
+		req.Header.Set("Content-Type", contentType)
+		if origin != "" {
+			req.Header.Set("Origin", origin)
+			req.Header.Set("Sec-Fetch-Site", "cross-site")
+		}
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		out, _ := io.ReadAll(res.Body)
+		return res.StatusCode, string(out)
+	}
+	decision, err := local.CreateDecisionRequest(ctx, "demo", store.CreateDecisionInput{From: "leader", Summary: "Pick",
+		Options: []model.DecisionOption{{Key: "A", Label: "a"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decide := "/api/teams/demo/requests/" + decision.ID + "/decide"
+	if code, _ := send("POST", decide, "text/plain", "", `{"action":"approve","choice":"A"}`); code != 415 {
+		t.Fatalf("board decide without JSON: %d", code)
+	}
+	if code, _ := send("POST", decide, "application/json", "http://evil.example", `{"action":"approve","choice":"A"}`); code != 403 {
+		t.Fatalf("board decide cross-origin: %d", code)
+	}
+	if code, body := send("POST", decide, "application/json", "", `{"action":"approve","choice":"A","decidedBy":"leader"}`); code != 200 ||
+		!strings.Contains(body, `"decidedBy":"operator"`) {
+		t.Fatalf("board decide: %d %s", code, body)
+	}
+	if code, body := send("PUT", "/api/teams/demo/auto-review", "application/json", "", `{"enabled":true,"model":"m1"}`); code != 200 ||
+		!strings.Contains(body, `"enabled":true`) {
+		t.Fatalf("board auto review: %d %s", code, body)
+	}
+	if code, body := get("/api/teams/demo/oversight", key); code != 200 || !strings.Contains(body, `"requests":[{"id":"`+decision.ID) ||
+		!strings.Contains(body, `"autoReview":{"enabled":true,"model":"m1"}`) {
+		t.Fatalf("board oversight: %d %.300s", code, body)
 	}
 	if code, _ := get("/v1/teams", ""); code != 401 {
 		t.Fatalf("API without a key: %d", code)

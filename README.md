@@ -72,7 +72,7 @@ team-worker config set user ann
 
 所有命令都支持 `--json`。`task update` 把任务改为 `in_progress` 时，会以调用者身份加锁；其他 Agent 再领取同一任务会报锁冲突，加 `--force` 可强制接管。
 
-加入审批、计划审批、团队说明与成员提示词、用量与预算、阶段编排（harness）、团队快照（`team snapshot/snapshots/restore/snapshot-delete`）和事件 hook（`event hook list/add/remove/test`）见 [docs/collaboration.md](docs/collaboration.md)。
+加入审批、计划审批、请示（`request create/list/show/decide/auto`，含 AI 自动审核）、团队说明与成员提示词、用量与预算、阶段编排（harness）、团队快照（`team snapshot/snapshots/restore/snapshot-delete`）和事件 hook（`event hook list/add/remove/test`）见 [docs/collaboration.md](docs/collaboration.md)。
 
 ## 启动 Agent
 

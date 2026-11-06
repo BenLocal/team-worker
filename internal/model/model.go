@@ -60,7 +60,7 @@ var messageTypes = map[MessageType]bool{
 	"message": true, "join_request": true, "join_approved": true, "join_rejected": true,
 	"plan_approval_request": true, "plan_approved": true, "plan_rejected": true,
 	"shutdown_request": true, "shutdown_approved": true, "shutdown_rejected": true,
-	"idle": true, "broadcast": true,
+	"idle": true, "broadcast": true, "decision_request": true, "decision_result": true,
 }
 
 func ParseMessageType(s string) (MessageType, error) {
@@ -163,6 +163,7 @@ type Message struct {
 	Reason       string      `json:"reason,omitempty"`
 	LastTask     string      `json:"lastTask,omitempty"`
 	Status       string      `json:"status,omitempty"`
+	Choice       string      `json:"choice,omitempty"`
 }
 
 type AgentStatus string

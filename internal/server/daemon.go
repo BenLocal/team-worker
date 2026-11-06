@@ -140,6 +140,7 @@ func Run(ctx context.Context, opts Options) error {
 	workers.Go(func() { NewAnnouncer(st, log).Run(baseCtx) })
 	workers.Go(func() { NewDeliverer(st, handler.hub, log).Run(baseCtx) })
 	workers.Go(func() { NewHookRunner(st, handler.hub, log).Run(baseCtx) })
+	workers.Go(func() { NewAutoReviewer(st, handler.hub, log).Run(baseCtx) })
 	log.Info("team-workerd started", "socket", opts.Socket, "db", config.DBPath(opts.DataDir), "pid", os.Getpid())
 
 	select {

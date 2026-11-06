@@ -11,10 +11,12 @@ import (
 
 // oversightView is everything the page shows about approvals and spending.
 type oversightView struct {
-	Plans        []model.Plan        `json:"plans"`
-	JoinRequests []model.JoinRequest `json:"joinRequests"`
-	Budget       model.Budget        `json:"budget"`
-	Cost         model.CostSummary   `json:"cost"`
+	Requests     []model.DecisionRequest `json:"requests"`
+	AutoReview   model.AutoReview        `json:"autoReview"`
+	Plans        []model.Plan            `json:"plans"`
+	JoinRequests []model.JoinRequest     `json:"joinRequests"`
+	Budget       model.Budget            `json:"budget"`
+	Cost         model.CostSummary       `json:"cost"`
 	// Harness is the team's latest run, or nil when it never started one.
 	Harness *model.HarnessStatus `json:"harness"`
 }
@@ -22,6 +24,12 @@ type oversightView struct {
 func oversight(ctx context.Context, c *client.Client, team string) (oversightView, error) {
 	var v oversightView
 	var err error
+	if v.Requests, err = c.ListDecisionRequests(ctx, team, ""); err != nil {
+		return v, err
+	}
+	if v.AutoReview, err = c.AutoReview(ctx, team); err != nil {
+		return v, err
+	}
 	if v.Plans, err = c.ListPlans(ctx, team, "", ""); err != nil {
 		return v, err
 	}
@@ -44,6 +52,9 @@ func oversight(ctx context.Context, c *client.Client, team string) (oversightVie
 	case errors.As(err, &apiErr) && apiErr.Status == http.StatusNotFound:
 	default:
 		return v, err
+	}
+	if v.Requests == nil {
+		v.Requests = []model.DecisionRequest{}
 	}
 	if v.Plans == nil {
 		v.Plans = []model.Plan{}

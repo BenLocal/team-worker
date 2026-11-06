@@ -111,6 +111,8 @@ Web 看板由 team-workerd 直接提供：`--board`（环境变量 `TEAM_WORKER_
 
 Web 看板访问需使用与 CLI HTTP 调用相同的 Key，`board serve` 默认只监听 127.0.0.1；连远程 daemon 时，登录用的就是配置里这个远程的 API Key。默认 Key 自动生成并保存在 SQLite 中，重启复用；可在本机通过 `team-worker key show` 查看。页面登录后，`Service keys` 可查看 Magpie Web Key 和 OpenBao 登录 Token，默认遮挡并支持显示、复制。 `team-workerd --board-link NAME=URL` 或 `board serve --link NAME=URL`（可重复）在页面顶部显示到其他服务的链接按钮，例如 `--board-link Docs=https://example.com`；daemon 也可以用环境变量 `TEAM_WORKER_BOARD_LINKS`（逗号分隔）。反向代理把看板放在子路径下时，用 `TEAM_WORKER_WEB_BASE_PATH` 指定前缀，例如 `/team-worker`。
 
+`Approvals` 视图分三个子页：`Requests`（请示，默认）、`Plans`（计划审批）和 `Join requests`（加入申请），视图标签上的数字是三者待处理的总数。`Requests` 页顶部是 AI 自动审核开关和模型输入框；每条请示可以点选项按钮批准（可附说明）、`Reject`（必须写原因）或 `Reply`（文字答复），AI 做出的决定显示理由，并可用 `Override` 覆盖。这些写操作走 `POST /api/teams/{team}/requests/{id}/decide`（`action`、`choice`、`reply`）和 `PUT /api/teams/{team}/auto-review`（`enabled`、`model`），以 `operator` 的身份提交；和其余 `/api` 一样需要登录会话或 Key，跨站请求会被拒绝，请求体必须是 `application/json`。
+
 团队标题旁的 `Team prompt` 按钮显示团队公共提示词。每个 Agent 终端卡片的 `Prompt` 按钮和侧栏成员菜单的 `Show prompt` 显示该成员的专属提示词，未启动或已退出的成员也能查看。内容从 store 按需读取，未设置时显示空状态；弹窗支持长文本滚动及 Escape 关闭。
 
 ## 日志
@@ -119,7 +121,7 @@ team-workerd 记录这些事件：
 
 - **状态变化**（info 级别）：团队创建和删除、成员加入、任务创建、任务的状态、负责人、锁或依赖发生变化（包括由谁修改）、团队说明更新、Agent 注册和退出、消息发送和广播。消息只记发件人、收件人、类型和字数，不记正文。
 - **请求**：出错的请求按 warn 记录（5xx 按 error），带上错误信息；超过 2 秒的请求也按 warn 记为慢请求，长轮询（带 `wait=` 参数的请求）除外。其余请求按 debug 记录。
-- **后台任务**：daemon 发现 Agent 已退出、往终端打字提醒空闲的 Agent。
+- **后台任务**：daemon 发现 Agent 已退出、往终端打字提醒空闲的 Agent、AI 自动审核决定或放下一条请示。
 
 | 参数 | 环境变量 | 默认 |
 |---|---|---|
@@ -153,6 +155,10 @@ team-workerd 记录这些事件：
 | `POST /v1/teams/{team}/plans/{id}/approve` | 批准计划（仅 leader，请求体带 `caller`、`agent`、可选 `feedback`） |
 | `POST /v1/teams/{team}/plans/{id}/reject` | 拒绝计划（仅 leader，请求体同上） |
 | `PUT /v1/teams/{team}/members/{name}/plan-required` | 打开或关闭成员的计划审批要求（`required`、`user`） |
+| `GET/POST /v1/teams/{team}/requests` | 列出请示（`status`，pending 在前、再按时间倒序）/ 创建请示（`from`、`summary`、`body`、`options`、`recommended`、`humanOnly`），同时给收件箱 `operator` 发 `decision_request` |
+| `GET /v1/teams/{team}/requests/{id}` | 查询请示 |
+| `POST /v1/teams/{team}/requests/{id}/decide` | 决定请示：`action` 为 `approve`（有选项时带 `choice`）、`reject`（`reply` 写原因）或 `answer`（`reply` 写答复）；`decidedBy` 默认 `operator`，不能是团队成员或 `auto`；AI 决定过的可以再决定一次（覆盖） |
+| `GET/PUT /v1/teams/{team}/auto-review` | 读取 / 设置请示的 AI 自动审核（`enabled`、`model`） |
 | `GET/POST /v1/teams/{team}/tasks` | 列出（`status`、`owner`、`priority`、`sort=priority`）/ 创建任务 |
 | `GET /v1/teams/{team}/tasks/stats` | 任务统计 |
 | `GET/PATCH /v1/teams/{team}/tasks/{id}` | 任务详情 / 更新任务 |

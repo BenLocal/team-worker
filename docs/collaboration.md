@@ -1,6 +1,6 @@
 # 团队协作流程
 
-> 加入审批、计划审批、团队说明与成员提示词、用量与预算、阶段编排（harness）、团队快照的命令和规则。
+> 加入审批、计划审批、请示（决策请求）与 AI 自动审核、团队说明与成员提示词、用量与预算、阶段编排（harness）、团队快照的命令和规则。
 
 ## 加入审批
 
@@ -37,6 +37,40 @@ team-worker plan reject my-team <计划ID> alice -f "先补上回滚步骤"
 计划正文和审批结果保存在数据库里，状态为 pending、approved 或 rejected。提交时 leader 收件箱收到 `plan_approval_request`，审批后成员收到 `plan_approved` 或 `plan_rejected`（带反馈）。只有 leader 能审批，而且只能处理仍在 pending 的计划。被拒后修改再提交会得到新的计划 ID，旧计划保留原状态。
 
 需要强制执行时，用 `team add-member --plan-required` 或 `spawn --plan-required` 打开成员的审批要求。打开后，该成员在有计划被批准之前，把任务改为 `in_progress` 或 `completed` 会被服务端拒绝；查看任务、收发消息、提交计划不受影响。`spawn --plan-required` 还会设置 `TEAM_WORKER_PLAN_MODE_REQUIRED=1`，并在首条提示词里说明审批流程，`identity show` 显示为 `planModeRequired`。没有打开要求的成员不受影响。
+
+## 请示（决策请求）
+
+Leader 需要操作员（用户）拍板或授权时，用请示代替发给 `operator` 的普通消息。请示带选项和推荐项，在看板上可以直接决定：
+
+```bash
+# Leader：-d 写背景和风险（长内容用 --body-file，- 表示 stdin）；--option 按顺序给选项；--human 表示必须由人决定
+team-worker request create my-team "缓存目录怎么处理？" -d "三种做法……" \
+  --option "A=保持现状" --option "B=迁到新卷" --option "C=冷热分离" --recommend C
+team-worker request create my-team "重刷测试板？" --human -d "会丢掉板上的日志"
+
+# 操作员：查看和决定（--choice 批准某个选项，-m 附说明；没有选项时用 --approve）
+team-worker request list my-team --status pending
+team-worker request show my-team <请示ID>
+team-worker request decide my-team <请示ID> --choice C -m "先在测试环境做"
+team-worker request decide my-team <请示ID> --reject -m "等发布之后再说"
+team-worker request decide my-team <请示ID> --reply "用 B，下周再拆"
+```
+
+- 请示保存在数据库里，状态为 pending、approved（批准，带所选选项）、rejected（拒绝，必须写原因）或 answered（直接用文字答复）。创建时收件箱 `operator` 收到 `decision_request` 消息（`inbox receive --agent operator`、`--remote` 下的 `task wait` 都能读到）；决定后请示人收到 `decision_result` 消息，带状态、选项和标签、答复、决定人，AI 决定的还带理由。
+- 决定人默认是 `operator`，用 `--remote` 时是该远程的 `as` 名字。团队成员不能决定请示：被 spawn 的 Agent 执行 `request decide` 会以自己的名字提交，服务端拒绝。看板上的决定都以 `operator` 的身份提交。
+- 只能决定 pending 的请示。例外是 AI 自动审核做出的决定：操作员可以再决定一次（覆盖），请示人会收到一条新的 `decision_result`，开头写明它覆盖了先前的 AI 决定。人做出的决定不能再改。
+
+### AI 自动审核
+
+```bash
+team-worker request auto my-team on --model <模型名>   # 打开；不带 --model 时沿用之前设置的模型
+team-worker request auto my-team off
+team-worker request auto my-team                       # 查看当前设置
+```
+
+打开后，daemon 在后台把团队里还没审过的 pending 请示交给模型决定，`--human` 的请示不碰。每条请示只审一次：模型选择上报（escalate）、命令失败或输出无法解析时，请示保持 pending，看板显示「AI did not decide: …」（即 `autoNote`），等人决定，不会自动重试。决定人记为 `auto`，设了模型时为 `auto:<模型名>`，理由保存在 `autoReason`。
+
+审核命令默认是 `claude -p --tools "" --no-session-persistence`：不给模型任何工具（审核只需要读提示词，避免团队消息里的文字诱导它读本机文件），也不保存会话。可以用 daemon 的环境变量 `TEAM_WORKER_AUTO_REVIEW_COMMAND` 换成别的命令（按空格切分，不经过 shell）；设了模型时在末尾追加 `--model <模型名>`。提示词从 stdin 传入，包含团队说明、请示内容、最近 30 条团队消息和未完成的任务；单次最长 5 分钟。提示词要求模型保守：不可逆或破坏性操作（删除或移动数据、清空、重刷、改凭据）、超出团队说明授权的范围、影响团队以外的人或系统、涉及费用，或者信息不足时一律上报；否则按团队说明和约束选最合适的选项。模型最后输出一个 JSON 对象：`{"decision":"approve|reject|answer|escalate","choice":"A","reply":"...","reason":"..."}`，daemon 取输出里最后一个带 `decision` 的 JSON 对象。
 
 ## 用量与预算
 

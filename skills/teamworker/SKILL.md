@@ -74,7 +74,22 @@ tw --json task wait <team> --task <任务ID> --task <任务ID> -t 1800   # 只�
 
 **完成标准**：回复里写明服务地址、团队、任务 ID、当前状态、交付结果或阻塞原因。
 
-### 4. 续接成员（保住上下文）
+### 4. 处理请示
+
+Leader 需要用户拍板时会建请示（`decision_request` 消息发到 `operator` 收件箱），也可以在看板 `Approvals` → `Requests` 里处理。
+
+```bash
+tw request list <team> --status pending
+tw request show <team> <请示ID>                          # 背景、选项、推荐项，AI 没决定的原因
+tw request decide <team> <请示ID> --choice B -m "<说明>"  # 批准某个选项；没有选项时用 --approve
+tw request decide <team> <请示ID> --reject -m "<原因>"
+tw request decide <team> <请示ID> --reply "<答复>"
+```
+
+- 只替用户转达**用户自己的决定**，不要自己替用户选；标了 human only 的请示尤其如此。
+- 团队打开了 AI 自动审核（`tw request auto <team>` 查看）时，部分请示已经由 `auto` 决定，`show` 里有 AI 理由；用户要改时照常 `decide`，会覆盖 AI 的决定并通知 Leader。
+
+### 5. 续接成员（保住上下文）
 
 只在用户要求重启或续接某个成员时做，会结束它当前的进程。
 
