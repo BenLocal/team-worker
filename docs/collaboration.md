@@ -44,7 +44,7 @@ team-worker plan reject my-team <计划ID> alice -f "先补上回滚步骤"
 
 ## 请示（决策请求）
 
-Leader 的协作说明（2026-11-06 起）要求它自己拍板：团队说明授权范围内、可以回退的事（做法、先后顺序、几个方案里选哪个）由 leader 直接决定并执行，再把决定、比较过的选项和理由作为普通消息发给 `operator`，不停下来等同意。只有不可逆或破坏性、影响真实数据（删除、移动或清空数据、重刷、改凭据）、超出团队说明授权、影响团队以外的人或系统、涉及费用、团队说明要求向用户确认的事，或者目标本身不清楚时，leader 才发请示，并且带 `--human`，只能由人决定。
+Leader 的协作说明（2026-11-07 起）要求它自己拍板：团队说明授权范围内、可以回退的事（做法、先后顺序、几个方案里选哪个）由 leader 直接决定并执行，再把决定、比较过的选项和理由作为普通消息发给 `operator`，不停下来等同意。团队仓库和工作目录里的日常工作（改代码、跑测试、构建）默认算授权，除非团队说明另有限制；目标不清楚时按最合理的理解做下去，并在汇报里写明假设。只有会删除或覆盖无法恢复的真实数据（删除、清空、重刷）、改凭据或密钥、花钱、影响团队以外的人或系统（发布、部署到生产、联系外部人员），或团队说明要求向用户确认的事，leader 才发请示，并且带 `--human`，只能由人决定。
 
 请示带选项和推荐项，在看板上可以直接决定：
 
@@ -90,9 +90,9 @@ team-worker request auto my-team on --include-human=false   # 恢复默认：--h
 
 打开后，daemon 在后台把团队里还没审过的 pending 请示交给模型决定（设了时间窗口时只在窗口内），`--human` 的请示默认不碰。每条请示只审一次：模型选择上报（escalate）、命令失败或输出无法解析时，请示保持 pending，看板显示「AI did not decide: …」（即 `autoNote`），等人决定，不会自动重试。决定人记为 `auto`，设了模型时为 `auto:<模型名>`，理由保存在 `autoReason`。
 
-`--include-human=true`（看板上的「Also review human-only requests」）让 AI 也审 `--human` 的请示，但只能批准或上报，不能拒绝或答复：提示词会告诉模型这条请示是请示人标给人决定的，上报规则要从严执行；模型给出拒绝或答复时 daemon 不采纳，请示保持 pending，`autoNote` 记为 `AI may only approve or escalate a human-only request; it answered <decision>: <理由>`。破坏性操作、超出团队说明授权等情况照样上报。AI 批准后，请示人收到的 `decision_result` 会写明这是一条标给人决定、由 AI 批准的请示，操作员仍可覆盖；操作员照常可以用 `Override` 或 `request decide` 改判。这个选项和模型、窗口一样，开关时不带就沿用之前的设置；打开时查看输出里带 `human-only requests too`。关掉后，还没审到的 `--human` 请示不再交给 AI，已经在审的那条也不会被 AI 决定。
+`--include-human=true`（看板上的「Also review human-only requests」）让 AI 也审 `--human` 的请示，但只能批准或上报，不能拒绝或答复：提示词会告诉模型这条请示是请示人标给人决定的，除非符合上报条件，否则批准；模型给出拒绝或答复时 daemon 不采纳，请示保持 pending，`autoNote` 记为 `AI may only approve or escalate a human-only request; it answered <decision>: <理由>`。删除无法恢复的数据、改凭据等符合上报条件的情况照样上报。AI 批准后，请示人收到的 `decision_result` 会写明这是一条标给人决定、由 AI 批准的请示，操作员仍可覆盖；操作员照常可以用 `Override` 或 `request decide` 改判。这个选项和模型、窗口一样，开关时不带就沿用之前的设置；打开时查看输出里带 `human-only requests too`。关掉后，还没审到的 `--human` 请示不再交给 AI，已经在审的那条也不会被 AI 决定。
 
-审核命令默认是 `claude -p --tools "" --no-session-persistence`：不给模型任何工具（审核只需要读提示词，避免团队消息里的文字诱导它读本机文件），也不保存会话。可以用 daemon 的环境变量 `TEAM_WORKER_AUTO_REVIEW_COMMAND` 换成别的命令（按空格切分，不经过 shell）；设了模型时在末尾追加 `--model <模型名>`。提示词从 stdin 传入，包含团队说明、请示内容、最近 30 条团队消息和未完成的任务；单次最长 5 分钟。提示词要求模型保守：不可逆或破坏性操作（删除或移动数据、清空、重刷、改凭据）、超出团队说明授权的范围、影响团队以外的人或系统、涉及费用，或者信息不足时一律上报；否则按团队说明和约束选最合适的选项。模型最后输出一个 JSON 对象：`{"decision":"approve|reject|answer|escalate","choice":"A","reply":"...","reason":"..."}`，daemon 取输出里最后一个带 `decision` 的 JSON 对象。
+审核命令默认是 `claude -p --tools "" --no-session-persistence`：不给模型任何工具（审核只需要读提示词，避免团队消息里的文字诱导它读本机文件），也不保存会话。可以用 daemon 的环境变量 `TEAM_WORKER_AUTO_REVIEW_COMMAND` 换成别的命令（按空格切分，不经过 shell）；设了模型时在末尾追加 `--model <模型名>`。提示词从 stdin 传入，包含团队说明、请示内容、最近 30 条团队消息和未完成的任务；单次最长 5 分钟。提示词要求模型尽量自己决定（2026-11-07 起）：只有会删除或覆盖无法恢复的真实数据（删除、清空、重刷）、改凭据或密钥、花钱、影响团队以外的人或系统（发布、部署到生产、联系外部人员），或团队说明要求由人决定时才上报；团队说明没提到的日常工作（改代码、测试、构建、选方案、排顺序）也由它决定，信息不足不是上报理由，此时采用请示人的推荐项或最容易回退的选项，并在 `reply` 里写明假设。模型最后输出一个 JSON 对象：`{"decision":"approve|reject|answer|escalate","choice":"A","reply":"...","reason":"..."}`，daemon 取输出里最后一个带 `decision` 的 JSON 对象。
 
 ## 用量与预算
 

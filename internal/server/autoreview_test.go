@@ -134,7 +134,8 @@ func TestAutoReviewerApproves(t *testing.T) {
 		t.Fatalf("model %q, %d prompts", gotModel, len(*prompts))
 	}
 	p := (*prompts)[0]
-	for _, want := range []string{"on behalf of the human operator", "ESCALATE", "You may refactor code in the repo.",
+	for _, want := range []string{"on behalf of the human operator", "ESCALATE", "Missing details are not a reason to escalate",
+		"You may refactor code in the repo.",
 		"Summary: Storage layout", "- C: split", "recommends C", "storage layer is messy", "refactor storage", `"decision":"approve|reject|answer|escalate"`} {
 		if !strings.Contains(p, want) {
 			t.Errorf("prompt misses %q:\n%s", want, p)
