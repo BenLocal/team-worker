@@ -22,7 +22,7 @@ import (
 func (a *app) taskCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "task", Short: "Task management"}
 	cmd.AddCommand(a.taskCreateCmd(), a.taskGetCmd(), a.taskUpdateCmd(), a.taskListCmd(),
-		a.taskStatsCmd(), a.taskWaitCmd())
+		a.taskResultsCmd(), a.taskStatsCmd(), a.taskWaitCmd())
 	return cmd
 }
 
@@ -102,6 +102,17 @@ func (a *app) taskGetCmd() *cobra.Command {
 				if task.Description != "" {
 					fmt.Fprintf(w, "  Description: %s\n", task.Description)
 				}
+				if task.Result != nil {
+					fmt.Fprintf(w, "  Result: %s\n  Reported: %s\n", task.Result.Summary, task.Result.ReportedAt)
+					for _, artifact := range task.Result.Artifacts {
+						fmt.Fprintf(w, "  Artifact: %s\n", artifact)
+					}
+					verification := task.Result.Verification
+					if verification == "" {
+						verification = "Not reported"
+					}
+					fmt.Fprintf(w, "  Verification: %s\n", verification)
+				}
 				if len(task.Blocks) > 0 {
 					fmt.Fprintf(w, "  Blocks: %s\n", strings.Join(task.Blocks, ", "))
 				}
@@ -116,6 +127,8 @@ func (a *app) taskGetCmd() *cobra.Command {
 
 func (a *app) taskUpdateCmd() *cobra.Command {
 	var status, owner, subject, description, priority, addBlocks, addBlockedBy, removeBlockedBy string
+	var result, verification string
+	var artifacts []string
 	var force bool
 	cmd := &cobra.Command{
 		Use:   "update TEAM TASK_ID",
@@ -152,6 +165,9 @@ func (a *app) taskUpdateCmd() *cobra.Command {
 			if cmd.Flags().Changed("description") {
 				in.Description = &description
 			}
+			if cmd.Flags().Changed("result") || cmd.Flags().Changed("artifact") || cmd.Flags().Changed("verification") {
+				in.Result = &model.TaskResult{Summary: result, Artifacts: artifacts, Verification: verification}
+			}
 			task, err := a.client().UpdateTask(cmd.Context(), args[0], args[1], in)
 			if err != nil {
 				if client.IsConflict(err) && !a.jsonOut {
@@ -171,6 +187,9 @@ func (a *app) taskUpdateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&addBlocks, "add-blocks", "", "Comma-separated task IDs this blocks")
 	cmd.Flags().StringVar(&addBlockedBy, "add-blocked-by", "", "Comma-separated task IDs blocking this")
 	cmd.Flags().StringVar(&removeBlockedBy, "remove-blocked-by", "", "Comma-separated task IDs that no longer block this (pending again once none is left)")
+	cmd.Flags().StringVar(&result, "result", "", "Completion summary (replaces the whole result report)")
+	cmd.Flags().StringArrayVar(&artifacts, "artifact", nil, "Output file path or URL (repeatable; requires --result)")
+	cmd.Flags().StringVar(&verification, "verification", "", "Checks performed and their outcomes (requires --result)")
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "Force override task lock")
 	return cmd
 }

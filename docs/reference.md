@@ -161,7 +161,7 @@ team-workerd 记录这些事件：
 | `GET/PUT /v1/teams/{team}/auto-review` | 读取 / 设置请示的 AI 自动审核（`enabled`、`model`，每日窗口 `from`、`to` 为 `HH:MM`，含开始不含结束，结束早于开始表示跨午夜，都为空表示全天；`timeZone` 为 IANA 时区名，空为 daemon 本地时区；`includeHuman` 为 true 时 AI 也审 `humanOnly` 的请示，只能批准或上报，默认 false）。PUT 整体替换设置；两者都返回设置以及 `active`（此刻是否在审核）和 `daemonZone`（daemon 本地时区，如 `CST +08:00`） |
 | `GET/POST /v1/teams/{team}/tasks` | 列出（`status`、`owner`、`priority`、`sort=priority`）/ 创建任务 |
 | `GET /v1/teams/{team}/tasks/stats` | 任务统计 |
-| `GET/PATCH /v1/teams/{team}/tasks/{id}` | 任务详情 / 更新任务 |
+| `GET/PATCH /v1/teams/{team}/tasks/{id}` | 任务详情 / 更新任务；可传 `result` 上报完成结果 |
 | `POST /v1/teams/{team}/messages` | 发消息 |
 | `POST /v1/teams/{team}/broadcast` | 广播给除发件人外的所有成员 |
 | `GET /v1/teams/{team}/messages/log` | 消息历史（`limit`、`from`） |
@@ -233,3 +233,13 @@ Web 看板（`team-workerd --board` 或 `board serve`）的提示词读取接口
 | `GET /api/openbao/login` | `TEAM_WORKER_OPENBAO_SESSION_LOGIN=1` 时用保存的 root 令牌签发 12 小时子令牌，包装 60 秒后跳到 OpenBao 界面自动登录；没有 `init.json` 时跳到 `/ui/`；未开启返回 404 |
 | `GET /api/teams/{team}/prompt` | 查看团队公共提示词 |
 | `GET /api/teams/{team}/members/{name}/prompt?user=...` | 查看成员专属提示词，`user` 默认空 |
+
+### 任务结果报告
+
+`PATCH /v1/teams/{team}/tasks/{id}` 可与 `status: "completed"` 一起传入 `result`：
+
+```json
+{"status":"completed","result":{"summary":"已生成报告","artifacts":["reports/output.csv"],"verification":"已检查 12 行数据，全部通过"}}
+```
+
+`summary` 必须非空；`artifacts` 为文件路径或 URL 列表，`verification` 为检查方法和结果说明。服务端生成 `reportedAt`。传入 `result` 会整体替换已有报告，省略或传 `null` 则保留原报告。任务详情、任务列表和看板快照返回相同的 `result`；历史任务未上报时不返回此字段。看板 Results 页按任务负责人分组，验证说明是 Agent 的上报内容，不代表系统独立验证。

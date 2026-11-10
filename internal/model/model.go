@@ -117,6 +117,7 @@ type TeamOverview struct {
 }
 
 type Task struct {
+	Result      *TaskResult    `json:"result,omitempty"`
 	ID          string         `json:"id"`
 	Subject     string         `json:"subject"`
 	Description string         `json:"description"`
@@ -131,6 +132,13 @@ type Task struct {
 	CreatedAt   string         `json:"createdAt"`
 	UpdatedAt   string         `json:"updatedAt"`
 	Metadata    map[string]any `json:"metadata"`
+}
+
+type TaskResult struct {
+	Summary      string   `json:"summary"`
+	Artifacts    []string `json:"artifacts"`
+	Verification string   `json:"verification"`
+	ReportedAt   string   `json:"reportedAt"`
 }
 
 type TaskStats struct {

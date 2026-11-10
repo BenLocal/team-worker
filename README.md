@@ -110,6 +110,26 @@ team-workerd --listen 127.0.0.1:8080 --board   # daemon 同时提供 Web 看板�
 team-worker board serve -p 8080    # 另起一个看板进程，用于在别的机器上查看远程 daemon
 ```
 
+Web 看板的 **Results** 页每个 Agent 默认只显示最新完成的任务和简短结果，展开后可看产出文件、验证说明和历史任务；旧任务没有单独报告时展示任务记录。Agent 完成任务时上报：
+
+```bash
+team-worker task update demo <task-id> --status completed \
+  --result "已生成报告" --artifact "reports/output.csv" \
+  --verification "已检查 12 行数据，全部通过"
+```
+
+`--artifact` 可重复传入；没有产出文件时省略。文件路径可复制，HTTP(S) 链接可打开；路径相对于 Agent 的工作目录，不会自动上传文件。验证说明来自 Agent 上报，未填写时显示未上报；旧任务的完成状态不会自动生成报告。再次传入结果参数会整体替换报告；`task get` 也能查看结果。
+
+其他 Agent 可以通过 CLI 读取和整理结果：
+
+```bash
+team-worker task results demo                         # 每个负责人最新完成的任务
+team-worker --json task results demo --all            # 全部历史，含原始任务记录和结果
+team-worker --json task results demo --owner alice    # 单个 Agent 的最新结果
+```
+
+JSON 返回任务数组，保留 `id`、`owner`、`description`、`result` 等字段，方便整理者核对上下文。整理后用 `task update demo <task-id> --result ... --artifact ... --verification ...` 写回，任务负责人不变；这会整体替换报告，需要带上要保留的文件和验证说明。只有任务状态是 `completed` 的记录会出现在 `task results` 中。
+
 Web 看板使用与 CLI HTTP 调用相同的 Key，本机用 `team-worker key show` 查看。访问、链接按钮和反向代理子路径的设置见 [docs/reference.md](docs/reference.md#web-看板访问)。
 
 ## 协作规则与 skill

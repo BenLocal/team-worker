@@ -9,7 +9,7 @@ const SVG = "http://www.w3.org/2000/svg";
 const COLUMNS = [["pending", "Pending"], ["in_progress", "In progress"], ["blocked", "Blocked"], ["completed", "Done"]];
 const PRIORITY = { urgent: 0, high: 1, medium: 2, low: 3 };
 const DONE_PAGE = 15, MSG_PAGE = 60, GAP_MS = 10 * 60 * 1000, LANE_H = 14;
-const VIEWS = [["board", "Board"], ["messages", "Messages"], ["approvals", "Approvals"], ["terminals", "Terminals"]];
+const VIEWS = [["board", "Board"], ["results", "Results"], ["messages", "Messages"], ["approvals", "Approvals"], ["terminals", "Terminals"]];
 const RAIL_KEY = "team-worker.rail";
 const TERM_LAYOUT_KEY = "team-worker.terminals";
 
@@ -21,7 +21,7 @@ const initialView = new URLSearchParams(location.search).get("view");
 const state = {
   teams: [], boards: {}, team: new URLSearchParams(location.search).get("team") || "", 
   view: VIEWS.some(([v]) => v === initialView) ? initialView : "board", railOpen: stored(RAIL_KEY) !== "closed",
-  doneShown: DONE_PAGE, open: new Set(), oversight: {}, openPlans: new Set(), approvalsTab: "requests",
+  doneShown: DONE_PAGE, open: new Set(), resultOpen: new Set(), oversight: {}, openPlans: new Set(), approvalsTab: "requests",
   // Decision request cards: open bodies, the action being written per
   // request, requests being sent, their errors and AI decisions being overridden.
   req: { open: new Set(), form: {}, busy: new Set(), errors: {}, overriding: new Set(), autoBusy: false, autoError: "", autoWindow: null },
@@ -389,6 +389,8 @@ function buildMain() {
       el("div", { class: "harness", id: "harness", hidden: true }),
       el("div", { class: "stats", id: "stats", role: "list", "aria-label": "Team summary" }),
       el("div", { class: "board", id: "board" }))),
+    el("div", { class: "view", id: "view-results", role: "tabpanel", "aria-labelledby": "tab-results", hidden: state.view !== "results" },
+      el("section", { class: "results", id: "results", "aria-label": "Agent results" })),
     el("div", { class: "view", id: "view-messages", role: "tabpanel", "aria-labelledby": "tab-messages", hidden: state.view !== "messages" },
     el("section", { class: "traj", "aria-label": "Messages" },
       el("div", { class: "traj-head" }, el("h2", {}, "Messages"),
@@ -752,6 +754,64 @@ function taskCard(t, byId) {
   card.addEventListener("toggle", () => card.open ? state.open.add(t.id) : state.open.delete(t.id));
   return card;
 }
+function resultDetails(task) {
+  const r = task.result;
+  const artifact = (path) => /^https?:\/\//i.test(path)
+    ? el("a", { href: path, target: "_blank", rel: "noopener noreferrer" }, path)
+    : el("span", {}, el("code", {}, path), " ", el("button", { type: "button", class: "quiet-btn", onclick: () => copyText(path), "aria-label": `Copy ${path}` }, "Copy"));
+  return el("div", { class: "result-report" },
+    el("p", { class: "muted" }, task.id),
+    r ? [el("p", { class: "result-text" }, r.summary),
+      el("h4", {}, "Output files"),
+      r.artifacts?.length ? el("ul", {}, r.artifacts.map((path) => el("li", {}, artifact(path)))) : el("p", { class: "muted" }, "No files reported"),
+      el("h4", {}, "Verification (agent reported)"), el("p", { class: "result-text" }, r.verification || "Not reported")]
+      : [el("p", { class: "muted" }, "No separate result report. Task notes:"),
+        el("p", { class: "result-text" }, task.description || "No task notes")]);
+}
+function resultDisclosure(key, attrs, summary, ...body) {
+  const node = el("details", { ...attrs, open: state.resultOpen.has(key) }, summary, ...body);
+  node.addEventListener("toggle", () => {
+    if (node.isConnected) node.open ? state.resultOpen.add(key) : state.resultOpen.delete(key);
+  });
+  return node;
+}
+function renderResults(board) {
+  if (!changed("results", [board.members, board.tasks])) return;
+  const groups = new Map(board.members.map((m) => [m.name, []]));
+  for (const task of board.tasks) {
+    const owner = task.owner || "Unassigned";
+    if (!groups.has(owner)) groups.set(owner, []);
+    groups.get(owner).push(task);
+  }
+  const rows = [...groups].map(([name, tasks]) => {
+    const completed = tasks.filter((t) => t.status === "completed")
+      .sort((a, b) => (b.result?.reportedAt || b.updatedAt).localeCompare(a.result?.reportedAt || a.updatedAt));
+    const latest = completed[0];
+    const count = tasks.filter((t) => t.status === "in_progress").length;
+    const agent = el("div", { class: "result-agent" }, el("h3", {}, name),
+      el("span", { class: "muted" }, count ? `${count} in progress` : `${completed.length} completed`));
+    if (!latest) return el("div", { class: "agent-results result-empty" }, agent,
+      el("span", { class: "muted" }, "No completed tasks yet"));
+    const at = latest.result?.reportedAt || latest.updatedAt;
+    const key = JSON.stringify([board.team.name, name]);
+    const history = completed.slice(1);
+    const earlier = history.length ? resultDisclosure(key + ":history", { class: "result-history" },
+      el("summary", {}, `Earlier completed tasks (${history.length})`),
+      history.map((t) => resultDisclosure(key + ":" + t.id, {}, el("summary", {}, t.subject), resultDetails(t)))) : null;
+    return resultDisclosure(key, { class: "agent-results" },
+      el("summary", { class: "result-row" }, agent,
+        el("div", { class: "result-latest" }, el("div", { class: "result-subject" }, latest.subject),
+          latest.result?.summary ? el("p", { class: "result-preview" }, latest.result.summary) : null),
+        el("time", { class: "muted result-time", datetime: at, title: (latest.result ? "Reported " : "Updated ") + new Date(at).toLocaleString() },
+          new Date(at).toLocaleDateString()),
+        el("span", { class: "result-chevron", "aria-hidden": "true" }, "›")),
+      el("div", { class: "result-expanded" }, resultDetails(latest), earlier));
+  });
+  $("results").replaceChildren(el("h2", {}, "Latest completed work"),
+    el("p", { class: "muted" }, "One result per agent. Expand for files, checks and earlier tasks."),
+    el("div", { class: "result-groups" }, rows.length ? rows : el("p", { class: "muted" }, "No agents or tasks yet")));
+}
+
 function renderTasks(board) {
   if (!changed("tasks", [board.tasks, state.doneShown])) return;
   const scroll = {};
@@ -953,6 +1013,7 @@ function update() {
   renderApprovalsTab();
   if (state.view === "board") { renderHarness(); renderStats(board); renderTasks(board); return; }
   if (state.view === "approvals") { renderApprovals(); return; }
+  if (state.view === "results") { renderResults(board); return; }
   const records = messageRecords(board);
   renderOverview(board, records);
   renderLedger(records);

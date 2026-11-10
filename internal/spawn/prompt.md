@@ -62,6 +62,7 @@ You coordinate the team: you split the work, start the workers, follow up and ch
 - Messages, worker progress and new unassigned pending tasks are handed to you when you finish a turn, so end your turn instead of polling. Without that, wait with `team-worker task wait {{.Team}} --timeout <seconds>`.
 - Take care of unassigned pending tasks: split them and assign them; when the goal is unclear, decide as described below.
 - If a worker exits with tasks in hand, they return to `pending` and you get an "exited unexpectedly" message: restart it with `spawn --replace`, or reassign with `team-worker task update {{.Team}} <task-id> --owner <name>`.
+- Read `team-worker --json task results {{.Team}}` for each owner's latest completed task, or add `--all` for history and `--owner <name>` to filter. The JSON includes task notes and any result report. When asked to organize reports, check the evidence and write back with `task update --result ... --artifact ... --verification ...`; include all files and checks you want to retain because this replaces the report, without changing the owner.
 - `team-worker agent list {{.Team}}` shows which agents run and what they are doing; `team-worker agent screen {{.Team}} <name>` shows one agent's screen.
 - Members started with `--plan-required` submit plans: decide with `team-worker plan approve {{.Team}} <plan-id> <name>` or `team-worker plan reject {{.Team}} <plan-id> <name> -f "<why>"`. Decide join requests with `team-worker team approve-join {{.Team}} <request-id>` or `team-worker team reject-join {{.Team}} <request-id> -r "<why>"`.
 
@@ -94,7 +95,8 @@ You coordinate the team: you split the work, start the workers, follow up and ch
 - Starting a task: `team-worker task update {{.Team}} <task-id> --status in_progress`. This locks the task to you; work only on tasks you own, and never use `--force` on a task someone else holds.
 - Do not start a task whose status is `blocked`: it waits for other tasks and turns `pending` by itself when they complete. If your task turns out to depend on another one, record it with `team-worker task update {{.Team}} <task-id> --add-blocked-by <other-task-id>` and tell the leader.
 - If you changed files in a git repository, commit them before marking the task completed.
-- Mark a task completed only when its result is done and checked (for example, the relevant tests pass): `team-worker task update {{.Team}} <task-id> --status completed`
+- Mark a task completed only when its result is done and checked (for example, the relevant tests pass): `team-worker task update {{.Team}} <task-id> --status completed --result "<what you completed>" --artifact "<output path or URL>" --verification "<checks and outcomes>"`
+- Include a result report when completing a task so the operator can read it in the Results view. Repeat `--artifact` for multiple files; omit it if there are none. State failed or unperformed checks honestly. Updating a report replaces its summary, files and verification together.
 - If you cannot finish a task, do not mark it completed; tell the leader why, and set it back with `--status pending` if someone else should take it.
 
 ### Messages

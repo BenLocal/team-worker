@@ -9,6 +9,7 @@ import (
 	"math"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/benlocal/team-worker/internal/model"
@@ -85,6 +86,7 @@ func (s *Store) GetTask(ctx context.Context, team, id string) (model.Task, error
 }
 
 type UpdateTaskInput struct {
+	Result       *model.TaskResult `json:"result,omitempty"`
 	Status       *model.TaskStatus `json:"status,omitempty"`
 	Owner        *string           `json:"owner,omitempty"`
 	Subject      *string           `json:"subject,omitempty"`
@@ -113,6 +115,9 @@ func (s *Store) UpdateTask(ctx context.Context, team, id string, in UpdateTaskIn
 		if _, err := model.ParsePriority(string(*in.Priority)); err != nil {
 			return model.Task{}, invalidf("%s", err)
 		}
+	}
+	if in.Result != nil && strings.TrimSpace(in.Result.Summary) == "" {
+		return model.Task{}, invalidf("Result summary must not be empty")
 	}
 	var t model.Task
 	err := s.write(ctx, func(tx *sql.Tx) error {
@@ -227,6 +232,12 @@ func (s *Store) UpdateTask(ctx context.Context, team, id string, in UpdateTaskIn
 		}
 		for k, v := range in.Metadata {
 			t.Metadata[k] = v
+		}
+		if in.Result != nil {
+			result := *in.Result
+			result.Artifacts = dedupe(result.Artifacts)
+			result.ReportedAt = now
+			t.Result = &result
 		}
 		t.UpdatedAt = now
 
@@ -361,21 +372,24 @@ func (s *Store) TaskStats(ctx context.Context, team string) (model.TaskStats, er
 }
 
 const taskColumns = `id, subject, description, status, priority, owner, locked_by, locked_at,
-	blocks, started_at, created_at, updated_at, metadata`
+	blocks, started_at, created_at, updated_at, metadata, result`
 
 type scanner interface{ Scan(dest ...any) error }
 
 func scanTask(row scanner) (model.Task, error) {
 	var t model.Task
-	var blocks, metadata string
+	var blocks, metadata, result string
 	if err := row.Scan(&t.ID, &t.Subject, &t.Description, &t.Status, &t.Priority, &t.Owner,
-		&t.LockedBy, &t.LockedAt, &blocks, &t.StartedAt, &t.CreatedAt, &t.UpdatedAt, &metadata); err != nil {
+		&t.LockedBy, &t.LockedAt, &blocks, &t.StartedAt, &t.CreatedAt, &t.UpdatedAt, &metadata, &result); err != nil {
 		return t, err
 	}
 	if err := json.Unmarshal([]byte(blocks), &t.Blocks); err != nil {
 		return t, err
 	}
 	if err := json.Unmarshal([]byte(metadata), &t.Metadata); err != nil {
+		return t, err
+	}
+	if err := json.Unmarshal([]byte(result), &t.Result); err != nil {
 		return t, err
 	}
 	if t.Blocks == nil {
@@ -446,16 +460,20 @@ func insertTask(ctx context.Context, q queryer, team string, t model.Task) error
 }
 
 func saveTask(ctx context.Context, q queryer, team string, t model.Task) error {
+	result, err := json.Marshal(t.Result)
+	if err != nil {
+		return err
+	}
 	blocks, metadata, err := encodeTaskJSON(t)
 	if err != nil {
 		return err
 	}
 	_, err = q.ExecContext(ctx,
 		`UPDATE tasks SET subject = ?, description = ?, status = ?, priority = ?, owner = ?,
-		 locked_by = ?, locked_at = ?, blocks = ?, started_at = ?, updated_at = ?, metadata = ?
+		 locked_by = ?, locked_at = ?, blocks = ?, started_at = ?, updated_at = ?, metadata = ?, result = ?
 		 WHERE team = ? AND id = ?`,
 		t.Subject, t.Description, t.Status, t.Priority, t.Owner, t.LockedBy, t.LockedAt,
-		blocks, t.StartedAt, t.UpdatedAt, metadata, team, t.ID)
+		blocks, t.StartedAt, t.UpdatedAt, metadata, string(result), team, t.ID)
 	return err
 }
 
