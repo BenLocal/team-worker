@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 const (
@@ -14,8 +15,17 @@ const (
 	envSocket  = "TEAM_WORKER_SOCKET"
 )
 
+// MemoryOptions configures daemon-owned personal files.
+type MemoryOptions struct {
+	Root         string `json:"root,omitempty"`
+	ContextBytes int    `json:"context_bytes,omitempty"`
+	PollSeconds  int    `json:"poll_seconds,omitempty"`
+}
+
 // File is the optional ~/.team-worker/config.json.
 type File struct {
+	Memory MemoryOptions `json:"memory,omitempty"`
+
 	DataDir   string `json:"data_dir"`
 	User      string `json:"user"`
 	ServerURL string `json:"server_url,omitempty"`
@@ -163,8 +173,8 @@ type Identity struct {
 }
 
 func IdentityFromEnv() Identity {
-	user := os.Getenv("TEAM_WORKER_USER")
-	if user == "" {
+	user, userSet := os.LookupEnv("TEAM_WORKER_USER")
+	if !userSet {
 		user = Load().User
 	}
 	return Identity{
@@ -192,4 +202,23 @@ func isTrue(v string) bool {
 		return true
 	}
 	return false
+}
+
+// PersonalMemory returns defaults for omitted or non-positive limits.
+func PersonalMemory(dataDir string) MemoryOptions {
+	c := Load().Memory
+	if c.Root == "" {
+		c.Root = filepath.Join(dataDir, "agent-data")
+	}
+	if c.ContextBytes < 1024 {
+		c.ContextBytes = 24 << 10
+	}
+	if c.PollSeconds < 1 || c.PollSeconds > 86400 {
+		c.PollSeconds = 10
+	}
+	return c
+}
+
+func MemoryPollInterval(dataDir string) time.Duration {
+	return time.Duration(PersonalMemory(dataDir).PollSeconds) * time.Second
 }

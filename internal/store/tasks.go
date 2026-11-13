@@ -677,3 +677,30 @@ type teamScanner struct {
 func (t teamScanner) Scan(dest ...any) error {
 	return t.row.Scan(append([]any{t.team}, dest...)...)
 }
+
+// MemoryTaskEvidence gathers bounded completed-task reports in one query.
+// Ambiguous owner names are excluded rather than assigned to another user.
+func (s *Store) MemoryTaskEvidence(ctx context.Context) (map[model.MemoryIdentity]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT t.team, m.user_name, t.owner, t.id, t.subject, t.result
+ FROM tasks t JOIN members m ON m.team = t.team AND m.name = t.owner
+ WHERE t.status = ? AND t.result <> 'null'
+ AND NOT EXISTS (SELECT 1 FROM members other WHERE other.team = m.team AND other.name = m.name AND other.user_name <> m.user_name)
+ ORDER BY t.updated_at DESC LIMIT 1000`, model.StatusCompleted)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[model.MemoryIdentity]string{}
+	for rows.Next() {
+		var id model.MemoryIdentity
+		var task, subject, result string
+		if err = rows.Scan(&id.Team, &id.User, &id.Name, &task, &subject, &result); err != nil {
+			return nil, err
+		}
+		entry := fmt.Sprintf("Task %s (%s), self-reported result, not independent verification:\n%s\n", task, subject, result)
+		if len(out[id])+len(entry) <= 64<<10 {
+			out[id] += entry
+		}
+	}
+	return out, rows.Err()
+}

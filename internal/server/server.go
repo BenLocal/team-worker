@@ -53,6 +53,7 @@ type Server struct {
 	// runDataDir and workerBin configure the agents it starts (SetRunner).
 	runDataDir, workerBin string
 	conduct               conductors
+	memory                memberMemory
 	// restoreMu keeps restores from resuming the same agent twice.
 	restoreMu sync.Mutex
 }
@@ -129,6 +130,7 @@ func (r *statusRecorder) Write(b []byte) (int, error) {
 
 func (s *Server) routes() {
 	m := s.mux
+	m.HandleFunc("POST /v1/teams/{team}/members/{name}/memory/{action}", s.memoryOperation)
 	m.HandleFunc("GET /v1/access-key", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		if allowed, _ := r.Context().Value(localAccess{}).(bool); !allowed {

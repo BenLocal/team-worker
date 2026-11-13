@@ -268,3 +268,22 @@ func TestClaudeQuestionMenuIsOffUnlessAskUser(t *testing.T) {
 		t.Fatalf("the claude flag leaked into codex: %q", args)
 	}
 }
+
+func TestCodexNoDaemonRemainsARootOption(t *testing.T) {
+	adapter := Registry().For([]string{"codex"})
+	for _, command := range [][]string{{"codex", "--no-daemon"}, {"codex", "--no-daemon", "exec"}, {"codex", "exec", "resume", "example-session", "--no-daemon"}} {
+		plan := adapter.Prepare(agent.Session{Command: command, Prompt: "hello"})
+		if len(plan.Args) < 4 || plan.Args[1] != "--no-daemon" || plan.Args[2] != "exec" {
+			t.Fatalf("invalid batch command: %q", plan.Args)
+		}
+		count := 0
+		for _, arg := range plan.Args {
+			if arg == "exec" {
+				count++
+			}
+		}
+		if count != 1 {
+			t.Fatalf("duplicated subcommand: %q", plan.Args)
+		}
+	}
+}

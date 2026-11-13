@@ -151,3 +151,25 @@ func (s *Store) Sessions(ctx context.Context) (map[string]model.Session, error) 
 	}
 	return out, rows.Err()
 }
+
+// AllSessions returns saved sessions in one query, including user-scoped members.
+func (s *Store) AllSessions(ctx context.Context) ([]model.Session, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT data FROM sessions ORDER BY team, user_name, agent")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []model.Session{}
+	for rows.Next() {
+		var data string
+		if err := rows.Scan(&data); err != nil {
+			return nil, err
+		}
+		var session model.Session
+		if err := json.Unmarshal([]byte(data), &session); err != nil {
+			return nil, err
+		}
+		out = append(out, session)
+	}
+	return out, rows.Err()
+}

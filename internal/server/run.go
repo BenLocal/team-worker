@@ -30,7 +30,7 @@ func (s *Server) runEnv() runner.Env {
 	if bin == "" {
 		bin = workerBin()
 	}
-	return runner.Env{Client: LocalClient(s), DataDir: dataDir, WorkerBin: bin}
+	return runner.Env{Client: LocalClient(s), DataDir: dataDir, WorkerBin: bin, LockPersonal: s.lockPersonal}
 }
 
 // workerBin finds the team-worker CLI: next to this executable, then in PATH.

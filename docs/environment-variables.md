@@ -15,7 +15,7 @@
 | `TEAM_WORKER_SERVER_URL` | CLI 连接的远程 HTTP(S) 地址；显式设为空字符串则强制使用本地 socket | 配置文件的 `server_url`，否则不设 |
 | `TEAM_WORKER_API_KEY` | CLI HTTP 调用与 Web 看板共用的 Key；daemon 端设置时覆盖并保存到 SQLite；走 socket 时不需要 | daemon 自动生成并保存在 SQLite |
 | `TEAM_WORKER_NO_AUTOSTART` | 设为任意非空值时，CLI 不自动拉起 daemon | 不设，第一次调用时自动拉起 |
-| `TEAM_WORKER_USER` | 多用户场景下的用户名，收件箱按 `<user>_<name>` 区分 | 配置文件的 `user` |
+| `TEAM_WORKER_USER` | 多用户场景下的用户名，收件箱按 `<user>_<name>` 区分；显式空值选择无用户前缀的身份 | 配置文件的 `user` |
 | `TEAM_WORKER_WORKSPACE` | daemon 的工作区模式：`auto`、`always` 或 `never`，决定 spawn 是否为 Agent 建 git worktree（见 [workspaces.md](workspaces.md)） | 配置文件的 `workspace`，否则 `auto` |
 | `TEAM_WORKER_DEFAULT_PROFILE` | spawn 未指定 `--profile` 时使用的运行配置（见 [profiles.md](profiles.md)） | 配置文件的 `default_profile` |
 | `TEAM_WORKER_START_BLOCKED_FILE` | 带 keepalive 的 Agent 等该文件被删除后才启动子进程；Docker 用它等待 provider Key 配置好，daemon 开机续接的 Agent 也一样等 | 不设；Docker 入口脚本在拉起 daemon 前设为 `/tmp/team-worker-provider-pending` |

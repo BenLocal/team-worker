@@ -21,7 +21,7 @@ var agentRuntime = map[string]bool{"supervise.go": true, "hook.go": true}
 var daemonOnly = []string{
 	"github.com/benlocal/team-worker/internal/spawn", "github.com/benlocal/team-worker/internal/proc",
 	"github.com/benlocal/team-worker/internal/tmux", "github.com/benlocal/team-worker/internal/runner",
-	"github.com/benlocal/team-worker/internal/board/live", "github.com/benlocal/team-worker/internal/workspace",
+	"github.com/benlocal/team-worker/internal/memory", "github.com/benlocal/team-worker/internal/board/live", "github.com/benlocal/team-worker/internal/workspace",
 }
 
 // TestClientCommandsLeaveProcessesToTheDaemon keeps the CLI a client: what

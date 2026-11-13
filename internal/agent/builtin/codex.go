@@ -29,8 +29,16 @@ func codex() agent.Def {
 				agent.CodexHookOverrides(s.WorkerBin, s.Team, s.AgentName, s.Leader)...)
 		},
 		Adjust: func(args []string, s agent.Session) []string {
+			// --no-daemon is a root option, including for exec and resume.
+			noDaemon := slices.Contains(args[1:], "--no-daemon")
+			if noDaemon {
+				args = slices.DeleteFunc(args, func(arg string) bool { return arg == "--no-daemon" })
+			}
 			if !s.Interactive && !(len(args) > 1 && slices.Contains(codexSubcommands, args[1])) {
 				args = slices.Insert(args, 1, "exec")
+			}
+			if noDaemon {
+				args = slices.Insert(args, 1, "--no-daemon")
 			}
 			return args
 		},

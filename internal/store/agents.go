@@ -383,3 +383,8 @@ func (s *Store) Board(ctx context.Context, team string, messageLimit int) (model
 	}
 	return b, rows.Err()
 }
+
+// AllAgents returns process records in one query for daemon maintenance.
+func (s *Store) AllAgents(ctx context.Context) ([]model.Agent, error) {
+	return s.queryAgents(ctx, "SELECT "+agentColumns+" FROM agents")
+}

@@ -25,6 +25,9 @@ func (s *Server) saveSession(w http.ResponseWriter, r *http.Request) {
 	}
 	in.Team, in.Agent, in.User = r.PathValue("team"), r.PathValue("name"), r.URL.Query().Get("user")
 	out, err := s.store.SaveSession(r.Context(), in)
+	if err == nil {
+		err = s.memoryFiles().RememberSession(model.MemoryIdentity{Team: in.Team, Name: in.Agent, User: in.User}, out)
+	}
 	respond(w, out, err)
 }
 

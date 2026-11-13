@@ -85,7 +85,13 @@ func (s *Server) captureSession(ctx context.Context, team, name string) (model.S
 		return session, nil
 	}
 	session.SessionID, session.Source = id, "transcript"
-	return s.store.SaveSession(ctx, session)
+	saved, err := s.store.SaveSession(ctx, session)
+	if err == nil {
+		if memoryErr := s.memoryFiles().RememberSession(model.MemoryIdentity{Team: saved.Team, Name: saved.Agent, User: saved.User}, saved); memoryErr != nil {
+			s.log.Warn("remember captured session", "err", memoryErr)
+		}
+	}
+	return saved, err
 }
 
 // capturesSession reports whether the daemon finds a client's session id in

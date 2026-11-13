@@ -16,7 +16,7 @@
 | `TEAM_WORKER_HTTP_ADDR` | daemon 的可选 HTTP 监听地址，可由 `--listen` 覆盖；启用时必须配置 Key | 未设置，不监听 TCP |
 | `TEAM_WORKER_AGENT_NAME` | 当前 Agent 名称，作为发件人、锁持有者和默认收件箱 | `agent` |
 | `TEAM_WORKER_AGENT_ID` | 当前 Agent ID | 随机生成 |
-| `TEAM_WORKER_USER` | 多用户场景下的用户名，收件箱按 `<user>_<name>` 区分 | 配置文件中的 `user` |
+| `TEAM_WORKER_USER` | 多用户场景下的用户名，收件箱按 `<user>_<name>` 区分；显式空值选择无用户前缀的身份 | 配置文件中的 `user` |
 | `TEAM_WORKER_WORKSPACE_DIR` | spawn 为 Agent 设置的工作目录 | 由 spawn 设置 |
 | `TEAM_WORKER_WORKSPACE` | daemon 的工作区模式：`auto`、`always` 或 `never`，决定 spawn 是否给 Agent 建 git worktree（见 [workspaces.md](workspaces.md)） | 配置文件中的 `workspace`，否则 `auto` |
 | `TEAM_WORKER_DEFAULT_PROFILE` | daemon 在 spawn 没指定 `--profile` 时用的运行配置（见 [profiles.md](profiles.md)） | 配置文件中的 `default_profile` |
@@ -246,3 +246,30 @@ Web 看板（`team-workerd --board` 或 `board serve`）的提示词读取接口
 ```
 
 `summary` 必须非空；`artifacts` 为文件路径或 URL 列表，`verification` 为检查方法和结果说明。服务端生成 `reportedAt`。传入 `result` 会整体替换已有报告，省略或传 `null` 则保留原报告。任务详情、任务列表和看板快照返回相同的 `result`；历史任务未上报时不返回此字段。看板 Results 页按任务负责人分组，验证说明是 Agent 的上报内容，不代表系统独立验证。
+
+### 成员个人 Markdown 文档
+
+`POST /v1/teams/{team}/members/{name}/memory/{action}?user=...` 使用原有 socket / HTTP 鉴权，支持本地及远程客户端。文档正文、历史、复盘配置和游标保存在 daemon 的文件系统，数据库快照不包含这些资料。完整用法见 [成员个人文档与复盘](agent-memory.md)。
+
+| action | 请求字段 | 结果 |
+|---|---|---|
+| `init` | 无 | 创建缺失的文档与目录 |
+| `list` / `search` | 可选 `query` | `documents`，含路径、正文和 SHA-256 |
+| `read` | `path` | 单篇 `documents` |
+| `write` | `path`、`content`、`baseHash` | 写入后的 `documents`；版本不符返回 409 |
+| `history` | `path` | `history` 中的版本、内容与来源 |
+| `rollback` | `path`、`revision`、`baseHash` | 回滚后的 `documents`，保留新历史 |
+| `context` | 可选 `runId`、`dryRun` | `context`，完整规则或明确的读取要求 |
+| `prepare` | `runId`、可选 `dryRun` | runner 为新运行准备上下文，允许注册前调用 |
+| `updates` | 可选 `runId` | 钩子获取尚未提供的当前上下文；无变化时为空 |
+| `status` | 无 | `status`，含当前、已提供及确认读取的哈希清单 |
+| `ack` | `runId`、`hashes` | 确认当前运行已读取全部当前版本；过期返回 409 |
+| `reflect-config` | 可选 `config` | 读取配置或整体替换配置 |
+| `reflect` | 无 | 执行一次证据复盘，返回候选 `reflection` |
+| `reflect-status` | 无 | 当前配置及最近的复盘状态 |
+| `reflect-apply` | `revision` | 成员停止后应用指定候选，保留冲突与部分失败状态 |
+| `reflect-discard` | `revision` | 放弃候选，不改正文，记录已处理的证据 |
+
+受管接口仅接受规定范围内的相对 Markdown 路径，拒绝符号链接，正文上限 256 KiB，请求体上限 2 MiB。路径或正文无效返回 400，资料不存在返回 404，版本冲突返回 409。`--json` 的 CLI 返回相同结果结构。
+
+`config.json` 新增可选 `memory` 配置，包含 `root`（默认 `<数据目录>/agent-data`）、`context_bytes`（默认 24576）、`poll_seconds`（默认 10）。更改后重启 daemon 生效，目录不自动迁移。

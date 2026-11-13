@@ -135,6 +135,9 @@ func (a *app) hookStopCmd() *cobra.Command {
 // stopReason returns why the agent should keep going, or "" to let it stop.
 func (a *app) stopReason(ctx context.Context, t hookTarget, in hookInput, wait time.Duration) string {
 	c := a.client()
+	if text := a.personalUpdates(ctx, t); text != "" {
+		return text
+	}
 	if msgs, err := c.Receive(ctx, t.team, t.agent, t.user, 20, 0); err == nil && len(msgs) > 0 {
 		return model.FormatMessages(t.team, msgs)
 	}
@@ -164,6 +167,9 @@ func (a *app) stopReason(ctx context.Context, t hookTarget, in hookInput, wait t
 		}
 		if version, err = c.Changes(ctx, version, min(remaining, 55*time.Second)); err != nil {
 			return ""
+		}
+		if text := a.personalUpdates(ctx, t); text != "" {
+			return text
 		}
 		if msgs, err := c.Receive(ctx, t.team, t.agent, t.user, 20, 0); err == nil && len(msgs) > 0 {
 			return model.FormatMessages(t.team, msgs)
@@ -294,9 +300,13 @@ func (a *app) hookPostToolCmd() *cobra.Command {
 			if !throttle(t, postToolInterval) {
 				return nil
 			}
+			text := a.personalUpdates(cmd.Context(), t)
 			msgs, err := a.client().Receive(cmd.Context(), t.team, t.agent, t.user, 20, 0)
 			if err == nil && len(msgs) > 0 {
-				a.hookContext("PostToolUse", model.FormatMessages(t.team, msgs))
+				text += model.FormatMessages(t.team, msgs)
+			}
+			if text != "" {
+				a.hookContext("PostToolUse", text)
 			}
 			return nil
 		},
@@ -368,6 +378,9 @@ func (a *app) hookPromptSubmitCmd() *cobra.Command {
 			a.readHookInput()
 			if t.resolve() {
 				a.reportActivity(cmd.Context(), t, model.ActivityWorking)
+				if text := a.personalUpdates(cmd.Context(), t); text != "" {
+					a.hookContext("UserPromptSubmit", text)
+				}
 			}
 			return nil
 		},
@@ -434,8 +447,12 @@ func (a *app) teamContext(ctx context.Context, t hookTarget, cwd string) (string
 		}
 		taskText = label + " right now:\n" + taskLines(tasks)
 	}
+	personal, err := c.Memory(ctx, model.MemoryIdentity{Team: t.team, Name: t.agent, User: t.user}, "context", model.MemoryRequest{RunID: os.Getenv("TEAM_WORKER_RUN_ID")})
+	if err != nil {
+		return "", err
+	}
 	return spawn.BuildPrompt(spawn.PromptParams{AgentName: t.agent, AgentID: id.AgentID, AgentType: agentType,
-		Team: t.team, Leader: leaderOf(team), User: t.user, Workspace: cwd, TeamPrompt: prompt, Task: agentInstructions}) + "\n## Current Tasks\n\n" + taskText + "\n", nil
+		Team: t.team, Leader: leaderOf(team), User: t.user, Workspace: cwd, TeamPrompt: prompt, Task: agentInstructions}) + personal.Context + "\n## Current Tasks\n\n" + taskText + "\n", nil
 }
 
 func (a *app) hookSettingsCmd() *cobra.Command {
@@ -458,4 +475,16 @@ func (a *app) hookSettingsCmd() *cobra.Command {
 	}
 	t.flags(cmd)
 	return cmd
+}
+
+// personalUpdates runs only at executor hook boundaries; it never types into a pane.
+func (a *app) personalUpdates(ctx context.Context, t hookTarget) string {
+	if os.Getenv("TEAM_WORKER_RUN_ID") == "" {
+		return ""
+	}
+	out, err := a.client().Memory(ctx, model.MemoryIdentity{Team: t.team, Name: t.agent, User: t.user}, "updates", model.MemoryRequest{RunID: os.Getenv("TEAM_WORKER_RUN_ID")})
+	if err != nil {
+		return ""
+	}
+	return out.Context
 }

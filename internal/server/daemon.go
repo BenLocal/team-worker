@@ -136,6 +136,7 @@ func Run(ctx context.Context, opts Options) error {
 		}
 		reapLoop(baseCtx, st, log)
 	})
+	workers.Go(func() { handler.runMemory(baseCtx) })
 	workers.Go(func() { runCheckpoints(baseCtx, st, log) })
 	workers.Go(func() { NewNudger(st, log).Run(baseCtx) })
 	workers.Go(func() { NewAnnouncer(st, log).Run(baseCtx) })

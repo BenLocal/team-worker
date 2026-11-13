@@ -27,6 +27,7 @@ team-worker board serve ──> internal/board (同一看板的独立进程，�
 
 | 包 | 职责（一句话） | 允许依赖 | 禁止依赖 |
 |---|---|---|---|
+| `internal/memory` | 成员个人 Markdown、文件历史、哈希冲突检查、上下文与复盘状态；只由 daemon 使用 | `model`、标准库 | `store`、`server`、`cli`、`client` |
 | `internal/model` | 共享数据类型与枚举校验，JSON 字段名沿用 ClawTeam | 标准库 | 其他 internal 包 |
 | `internal/config` | 数据目录、socket 路径、`TEAM_WORKER_*` 环境变量与身份 | 标准库 | 其他 internal 包 |
 | `internal/store` | 全部状态与业务规则（依赖解锁、任务锁、收件箱消费），事务内完成 | `model` | `server`、`client`、`cli` |
@@ -115,3 +116,12 @@ team-worker board serve ──> internal/board (同一看板的独立进程，�
 - 明确禁止的改法：CLI 直接打开数据库；在 `server` 里写业务规则；修改已有迁移条目。
 
 Web 与 CLI HTTP 共用 SQLite `settings` 中的访问 Key；daemon 启动时生成或保存配置覆盖值，Key 只允许本地 socket 读取。看板使用同一 Key 登录并签发带有效期的 HttpOnly cookie，保护页面、API 和 WebSocket；服务密钥仅在认证后按需读取，不随看板快照返回。
+
+
+## 九、成员个人资料
+
+成员的个人规则和记忆按用户、团队、成员名称映射到 `<数据目录>/agent-data`，与任务工作目录分开保存。Markdown 是正文的权威来源，文件历史及 `.state` 元数据同样只在文件系统持久化。成员和团队删除不清理这些资料，同名重建继续使用；改名不自动迁移。
+
+`runner.Spawn` 在启动及恢复时通过本地 API 取得最新个人上下文；CLI hooks 在恢复、压缩及工具或轮次边界重新读取更新。daemon 检查外部编辑并归档版本，唤醒等待变化的 hook，不向终端粘贴文档更新。无 hooks 的执行器在启动、恢复或显式读取时更新。提供清单、确认读取和实际行为验证是不同的证据。
+
+复盘调度和手动复盘共用独立批处理执行器，复用运行 profile 与适配器，生成候选 JSON。文件模块校验目标、证据和基础哈希后应用。自动调度和自动应用分别显式启用；自动应用要求成员已停止，并与该成员的 runner 启动互斥。调度配置、证据游标、候选和失败状态都保存在个人资料目录中，不增加数据库表。具体操作和限制见 `docs/agent-memory.md`。

@@ -26,9 +26,10 @@ import (
 // process, its data directory and the team-worker CLI the agents' hooks and
 // supervisors run.
 type Env struct {
-	Client    *client.Client
-	DataDir   string
-	WorkerBin string
+	Client       *client.Client
+	DataDir      string
+	WorkerBin    string
+	LockPersonal func(model.MemoryIdentity) func()
 }
 
 // The request and result types are the API's, in model.
@@ -55,6 +56,10 @@ func dollars(cents float64) string { return fmt.Sprintf("$%.2f", cents/100) }
 // it and records the process with the daemon. Everything that can fail is
 // checked before the team is changed, and a dry run stops there.
 func Spawn(ctx context.Context, e Env, req Request) (_ Result, err error) {
+	if e.LockPersonal != nil {
+		unlock := e.LockPersonal(model.MemoryIdentity{User: req.User, Team: req.Team, Name: req.Name})
+		defer unlock()
+	}
 	c := e.Client
 	if req.AgentType == "" {
 		req.AgentType = "general-purpose"
@@ -135,14 +140,20 @@ func Spawn(ctx context.Context, e Env, req Request) (_ Result, err error) {
 			gitContext = text
 		}
 	}
-	prompt := spawn.BuildPrompt(spawn.PromptParams{
+	basePrompt := spawn.BuildPrompt(spawn.PromptParams{
 		AgentName: req.Name, AgentID: req.AgentID, AgentType: req.AgentType, Team: req.Team,
 		Leader: leader, User: req.User, Workspace: cwd, Worktrees: worktrees, TeamPrompt: teamPrompt, Task: req.Task,
 		Context: gitContext, PlanRequired: req.PlanRequired,
 	})
+	personal, err := c.Memory(ctx, model.MemoryIdentity{Team: req.Team, Name: req.Name, User: req.User}, "prepare", model.MemoryRequest{RunID: req.RunID, DryRun: true})
+	if err != nil {
+		return Result{}, err
+	}
+	prompt := basePrompt + personal.Context
 	identity := map[string]string{
 		"TEAM_WORKER_AGENT_ID":      req.AgentID,
 		"TEAM_WORKER_RUN_ID":        req.RunID,
+		"TEAM_WORKER_USER":          req.User,
 		"TEAM_WORKER_AGENT_NAME":    req.Name,
 		"TEAM_WORKER_AGENT_TYPE":    req.AgentType,
 		"TEAM_WORKER_TEAM_NAME":     req.Team,
@@ -155,15 +166,13 @@ func Spawn(ctx context.Context, e Env, req Request) (_ Result, err error) {
 	if req.PlanRequired {
 		identity["TEAM_WORKER_PLAN_MODE_REQUIRED"] = "1"
 	}
-	if req.User != "" {
-		identity["TEAM_WORKER_USER"] = req.User
-	}
-	built, err := spawn.Build(spawn.Options{
+	options := spawn.Options{
 		Backend: req.Backend, Command: nativeCommand, RunID: req.RunID, KeepAlive: req.KeepAlive, Adapter: adapter, Team: req.Team, Agent: req.Name,
 		Prompt: prompt, Cwd: cwd, SkipPermissions: req.SkipPerms, IsLeader: req.Name == leader,
 		EnvLayers: req.EnvLayers, Identity: identity, WorkerBin: e.WorkerBin,
 		RunDir: filepath.Join(dataDir, "run"), LogPath: config.AgentLogPath(dataDir, req.Team, req.Name),
-	})
+	}
+	built, err := spawn.Build(options)
 	if err != nil {
 		return Result{}, err
 	}
@@ -248,6 +257,19 @@ func Spawn(ctx context.Context, e Env, req Request) (_ Result, err error) {
 	rec := model.Agent{Team: req.Team, Name: req.Name, AgentID: req.AgentID, RunID: req.RunID, Backend: req.Backend,
 		Command: req.Command, Cwd: cwd, Nudge: req.Backend == "tmux" && adapter.Nudge()}
 	if _, err := c.RegisterAgent(ctx, rec); err != nil {
+		return Result{}, err
+	}
+	// Registration invalidates the previous run's hooks before publishing
+	// this run's document versions. Preflight above remains read-only.
+	personal, err = c.Memory(ctx, model.MemoryIdentity{Team: req.Team, Name: req.Name, User: req.User}, "prepare", model.MemoryRequest{RunID: req.RunID})
+	if err == nil {
+		options.Prompt = basePrompt + personal.Context
+		built, err = spawn.Build(options)
+	}
+	if err != nil {
+		if _, cleanupErr := c.AgentExitedRun(ctx, req.Team, req.Name, req.RunID, -1); cleanupErr != nil {
+			return Result{}, fmt.Errorf("prepare personal context: %w; release reservation: %v", err, cleanupErr)
+		}
 		return Result{}, err
 	}
 	if clientName != "" {

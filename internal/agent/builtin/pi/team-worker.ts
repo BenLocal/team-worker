@@ -115,8 +115,11 @@ export default function (pi: ExtensionAPI): void {
     await restoreContext("compact");
   });
 
-  pi.on("agent_start", () => {
+  pi.on("agent_start", async () => {
     stopIdleWatch();
+    const out = await runHook("prompt-submit", {});
+    const text = out?.hookSpecificOutput?.additionalContext;
+    if (text) pi.sendMessage({ customType: "team-worker-memory", content: text, display: false }, { deliverAs: "nextTurn" });
   });
 
   pi.on("agent_settled", (_event, ctx) => {
