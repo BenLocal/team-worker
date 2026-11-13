@@ -19,7 +19,7 @@ import (
 // restore inserts them (parents first). Agent processes, worktrees and
 // harness runs are not saved: they describe processes and git state that a
 // restore cannot bring back.
-var snapshotTables = []string{"members", "tasks", "task_deps", "messages", "events", "sessions", "plans", "cost_events"}
+var snapshotTables = []string{"members", "tasks", "checkpoints", "task_deps", "messages", "events", "sessions", "plans", "cost_events"}
 
 // snapshotBundle is the saved state: the teams row and the team's rows of
 // each snapshot table, keyed by column name.

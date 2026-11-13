@@ -220,6 +220,7 @@ func (s *Server) routes() {
 	s.joinRoutes(m)
 	s.planRoutes()
 	s.decisionRoutes()
+	s.checkpointRoutes()
 	s.costRoutes(m)
 	s.harnessRoutes(m)
 }

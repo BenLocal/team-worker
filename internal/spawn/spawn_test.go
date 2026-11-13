@@ -186,13 +186,13 @@ func TestBuildPromptOptionalSectionsAndLiteralText(t *testing.T) {
 			t.Errorf("empty field still renders %q", absent)
 		}
 	}
-	if !strings.Contains(bare, "- Leader: lead\n\n## Coordination Protocol\n") {
+	if !strings.Contains(bare, "- Leader: lead\n\n## Waiting and background work\n") {
 		t.Errorf("sections are not separated by one blank line:\n%s", bare)
 	}
 	// Instructions are data: template syntax and markup in them stay literal.
 	p := BuildPrompt(PromptParams{AgentName: "alice", Team: "demo", Leader: "lead",
 		TeamPrompt: "Use {{.Team}} & <tags>", Task: "Fix {{x}}"})
-	if !strings.Contains(p, "Use {{.Team}} & <tags>\n\n## Task\n\nFix {{x}}\n\n## Coordination") {
+	if !strings.Contains(p, "Use {{.Team}} & <tags>\n\n## Task\n\nFix {{x}}\n\n## Waiting and background work\n") {
 		t.Errorf("instructions not kept literally:\n%s", p)
 	}
 }
@@ -200,6 +200,13 @@ func TestBuildPromptOptionalSectionsAndLiteralText(t *testing.T) {
 func TestBuildPromptPicksProtocolByRole(t *testing.T) {
 	worker := BuildPrompt(PromptParams{AgentName: "alice", Team: "demo", Leader: "lead"})
 	leader := BuildPrompt(PromptParams{AgentName: "lead", Team: "demo", Leader: "lead"})
+	for role, prompt := range map[string]string{"worker": worker, "leader": leader} {
+		for _, section := range []string{"## Waiting and background work\n", "## Evidence and checkpoints\n"} {
+			if strings.Count(prompt, section) != 1 {
+				t.Errorf("%s prompt should include %q once", role, section)
+			}
+		}
+	}
 	if !strings.Contains(worker, "## Worker Loop Protocol") || strings.Contains(worker, "## Leader Protocol") {
 		t.Errorf("worker prompt has the wrong protocol:\n%s", worker)
 	}

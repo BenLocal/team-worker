@@ -69,7 +69,7 @@ func NewRoot(newClient func() *client.Client) *cobra.Command {
 	root.PersistentFlags().BoolVar(&a.jsonOut, "json", false, "Output as JSON")
 	root.PersistentFlags().StringVar(&a.remote, "remote", "", "Act as an operator on this remote from config.json's remotes")
 	root.AddCommand(a.teamCmd(), a.taskCmd(), a.inboxCmd(), a.identityCmd(), a.spawnCmd(), a.lifecycleCmd(), a.sessionCmd(), a.keyCmd(),
-		a.agentCmd(), a.boardCmd(), a.templateCmd(), a.launchCmd(), a.hookCmd(), a.planCmd(), a.requestCmd(), a.costCmd())
+		a.agentCmd(), a.boardCmd(), a.templateCmd(), a.launchCmd(), a.hookCmd(), a.planCmd(), a.requestCmd(), a.checkpointCmd(), a.costCmd())
 	root.AddCommand(a.profileCmd(), a.presetCmd())
 	root.AddCommand(a.harnessCmd())
 	root.AddCommand(a.configCmd())

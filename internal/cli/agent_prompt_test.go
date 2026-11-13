@@ -76,7 +76,7 @@ func TestSpawnReadsTaskFromFile(t *testing.T) {
 	}
 	var res model.SpawnResult
 	h.json(&res, "spawn", "subprocess", "--team", "demo", "-n", "alice", "--task-file", file, "--dry-run", "--", "sh")
-	if !strings.Contains(res.Prompt, "## Task\n\nLine one\nLine two\n\n## Coordination Protocol") {
+	if !strings.Contains(res.Prompt, "## Task\n\nLine one\nLine two\n\n## Waiting and background work") {
 		t.Fatalf("task file not used as the task:\n%s", res.Prompt)
 	}
 	// Cobra rejects the flag pair while parsing, before the command runs.

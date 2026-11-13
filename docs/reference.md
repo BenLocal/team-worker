@@ -162,6 +162,9 @@ team-workerd 记录这些事件：
 | `GET/POST /v1/teams/{team}/tasks` | 列出（`status`、`owner`、`priority`、`sort=priority`）/ 创建任务 |
 | `GET /v1/teams/{team}/tasks/stats` | 任务统计 |
 | `GET/PATCH /v1/teams/{team}/tasks/{id}` | 任务详情 / 更新任务；可传 `result` 上报完成结果 |
+| `GET/POST /v1/teams/{team}/checkpoints` | 列出 / 登记单次检查点；登记字段为 `key`、`taskId`、`caller`、`dueAt`、`ackTimeoutSeconds`、`resultDueAt`、`escalateAfterSeconds`、`action`、`expectedEvidence`；时间为带偏移的 RFC3339，时长为秒 |
+| `GET /v1/teams/{team}/checkpoints/{id}` | 查询状态、负责人、截止时间、接手 token、结果及超时记录 |
+| `POST /v1/teams/{team}/checkpoints/{id}` | `action=ack`（负责人接手）、`complete`（需 `token`、`outcome`、`summary`、`evidence`）或 `cancel`（需 `reason`）；均带 `caller`，空值表示 operator。详见[检查点说明](checkpoints.md) |
 | `POST /v1/teams/{team}/messages` | 发消息 |
 | `POST /v1/teams/{team}/broadcast` | 广播给除发件人外的所有成员 |
 | `GET /v1/teams/{team}/messages/log` | 消息历史（`limit`、`from`） |

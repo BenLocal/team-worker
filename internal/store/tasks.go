@@ -130,6 +130,7 @@ func (s *Store) UpdateTask(ctx context.Context, team, id string, in UpdateTaskIn
 			return err
 		}
 		oldStatus := t.Status
+		oldOwner := t.Owner
 		now := s.timestamp()
 
 		if in.Status != nil && (*in.Status == model.StatusInProgress || *in.Status == model.StatusCompleted) {
@@ -243,6 +244,11 @@ func (s *Store) UpdateTask(ctx context.Context, team, id string, in UpdateTaskIn
 
 		if err := saveTask(ctx, tx, team, t); err != nil {
 			return err
+		}
+		if t.Owner != oldOwner || t.Status == model.StatusCompleted {
+			if err := cancelTaskCheckpoints(ctx, tx, team, t.ID, now, "Task owner changed or task completed; register a new checkpoint if needed"); err != nil {
+				return err
+			}
 		}
 		// The owner that dropped the last blocker itself already knows.
 		if unblocked && t.Status == model.StatusPending && t.Owner != in.Caller {

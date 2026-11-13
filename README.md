@@ -132,6 +132,10 @@ JSON 返回任务数组，保留 `id`、`owner`、`description`、`result` 等�
 
 Web 看板使用与 CLI HTTP 调用相同的 Key，本机用 `team-worker key show` 查看。访问、链接按钮和反向代理子路径的设置见 [docs/reference.md](docs/reference.md#web-看板访问)。
 
+## 未来检查与超时告警
+
+`team-worker checkpoint` 登记一次任务观察，由 daemon 持久化计时、投递通知，并跟踪负责人接手和结果回报。到期未接手或未回报时先通知 Leader，仍未解决再通知 operator；任务改派时取消旧检查点。它不会中断成员的长工具调用，也不会代替实际检查。命令和恢复行为见 [docs/checkpoints.md](docs/checkpoints.md)。
+
 ## 协作规则与 skill
 
 被 `spawn` 启动的 Agent 在第一条提示词里收到协作规则：Leader 收到 Leader Protocol（拆任务、启动 Worker、跟进、审批、收尾），其他成员收到 Coordination Protocol 和 Worker Loop Protocol（领任务、汇报、待命、关闭）。规则写在 [`internal/spawn/prompt.md`](internal/spawn/prompt.md)，编译时嵌入二进制，改这个文件即可调整。
