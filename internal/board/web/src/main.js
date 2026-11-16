@@ -154,9 +154,29 @@ function orderedTeams() {
   return rows.sort((x, y) => (rail.pins.has(y.t.name) - rail.pins.has(x.t.name))
     || (rail.sort === "manual" ? pos(x.t.name) - pos(y.t.name) || y.at - x.at : y.at - x.at));
 }
-function copyText(text) {
-  navigator.clipboard?.writeText(text).catch(() => {});
+async function copyText(text) {
   closeMenu();
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch { /* Try the selection-based copy when clipboard permission is denied. */ }
+  }
+  // HTTP boards have no Clipboard API; keep this fallback in the click handler.
+  const active = document.activeElement;
+  const input = el("textarea", { readonly: true, style: "position:fixed;left:-9999px;top:0" });
+  input.value = text;
+  document.body.append(input);
+  try {
+    input.select();
+    if (document.execCommand("copy")) return true;
+  } catch { /* Report failure below. */ }
+  finally {
+    input.remove();
+    active?.focus({ preventScroll: true });
+  }
+  window.alert("Unable to copy. Select the text and copy it manually.");
+  return false;
 }
 function closeMenu() {
   if (!rail.menu) return;
@@ -430,9 +450,9 @@ function renderHead(board) {
   // The description is the name's tooltip; icons after the name copy it and
   // open the team prompt.
   const copy = el("button", { type: "button", class: "icon-btn copy-name", title: "Copy team name", "aria-label": `Copy ${name}`,
-    onclick: (e) => {
+    onclick: async (e) => {
       const button = e.currentTarget;
-      copyText(name);
+      if (!await copyText(name)) return;
       button.replaceChildren(icon(ICONS.check));
       setTimeout(() => button.replaceChildren(icon(ICONS.copy)), 1200);
     } }, icon(ICONS.copy));
