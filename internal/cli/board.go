@@ -153,9 +153,12 @@ func nullable(s string) any {
 func printBoard(w io.Writer, b model.Board) {
 	s := b.Stats
 	fmt.Fprintf(w, "Team %s — %d/%d tasks done, %d in progress, %d pending, %d blocked\n\n",
-		b.Team.Name, s.Completed, s.Total, s.InProgress, s.Pending, s.Blocked)
+		b.Team.Name, s.Completed, s.Total-s.Goals-s.Superseded, s.InProgress, s.Pending, s.Blocked)
 
-	tw := newTable(w, "MEMBER", "TYPE", "STATE", "UNREAD")
+	if s.Goals > 0 || s.Superseded > 0 || s.Waiting > 0 {
+		fmt.Fprintf(w, "Goals: %d; superseded rounds: %d; waiting execution tasks: %d\n\n", s.Goals, s.Superseded, s.Waiting)
+	}
+	tw := newTable(w, "MEMBER", "TYPE", "PROCESS", "ACTIVITY", "WORK", "NEXT OBSERVATION", "PROTOCOL", "UNREAD")
 	for _, m := range b.Members {
 		state := "not spawned"
 		if m.Agent != nil {
@@ -165,18 +168,34 @@ func printBoard(w io.Writer, b model.Board) {
 		if m.AgentID == b.Team.LeadAgentID {
 			name += " (leader)"
 		}
-		row(tw, name, m.AgentType, state, fmt.Sprint(m.InboxCount))
+		activity, protocol := "unknown", "unknown"
+		if m.Agent != nil {
+			activity = activityLabel(*m.Agent)
+			if p := m.Agent.Protocol; p != nil {
+				protocol = "update pending"
+				if p.ReadAt != "" {
+					protocol = "read"
+				}
+				if p.AckedAt != "" {
+					protocol = "acknowledged"
+				}
+			}
+		}
+		row(tw, name, m.AgentType, state, activity, m.Work.State, m.Work.NextAt, protocol, fmt.Sprint(m.InboxCount))
 	}
 	tw.Flush()
 
 	for _, status := range []model.TaskStatus{model.StatusInProgress, model.StatusPending,
-		model.StatusBlocked, model.StatusCompleted} {
+		model.StatusBlocked, model.StatusCompleted, model.StatusSuperseded} {
 		var lines []string
 		for _, t := range b.Tasks {
 			if t.Status != status {
 				continue
 			}
 			line := fmt.Sprintf("  %s  %s", t.ID, t.Subject)
+			if progress := taskProgressText(t); progress != "" {
+				line += "  [" + progress + "]"
+			}
 			if t.Owner != "" {
 				line += "  @" + t.Owner
 			}

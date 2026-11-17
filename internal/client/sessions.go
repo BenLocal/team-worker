@@ -96,3 +96,12 @@ func (c *Client) AgentScreen(ctx context.Context, team, name string, lines int) 
 	q := url.Values{"lines": {strconv.Itoa(lines)}}
 	return out.Screen, c.do(ctx, http.MethodGet, teamPath(team, "agents", name, "screen"), q, nil, &out)
 }
+
+func (c *Client) AgentProtocol(ctx context.Context, team, name string, in *model.ProtocolRequest) (model.ProtocolContext, error) {
+	var out model.ProtocolContext
+	method := http.MethodGet
+	if in != nil {
+		method = http.MethodPost
+	}
+	return out, c.do(ctx, method, teamPath(team, "agents", name, "protocol"), nil, in, &out)
+}

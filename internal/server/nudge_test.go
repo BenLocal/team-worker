@@ -152,7 +152,7 @@ func TestNoStallReminderWhenWorkingOrWithoutTask(t *testing.T) {
 	}
 }
 
-func TestNoStallReminderForLeader(t *testing.T) {
+func TestLeaderMayWaitForWorkingMembers(t *testing.T) {
 	n, st, pane, now := newNudgeFixture(t, true)
 	ctx := context.Background()
 	if _, err := st.RegisterAgent(ctx, model.Agent{Team: "demo", Name: "leader", Backend: "tmux", Target: "%2", Nudge: true,
@@ -160,6 +160,7 @@ func TestNoStallReminderForLeader(t *testing.T) {
 		t.Fatal(err)
 	}
 	startTask(t, st, "leader")
+	setActivity(t, st, "alice", model.ActivityWorking)
 	setActivity(t, st, "leader", model.ActivityWaiting)
 	advance(n, now, 2*time.Hour)
 	if len(pane.typed) != 0 {
@@ -227,5 +228,100 @@ func TestLeaderStuckOnAPromptIsNotReportedToItself(t *testing.T) {
 	advance(n, now, time.Hour)
 	if got := leaderMessages(t, st); len(got) != 0 {
 		t.Fatalf("told the leader about itself: %+v", got)
+	}
+}
+
+func TestRegisteredWaitAndGoalDoNotCauseStallReminder(t *testing.T) {
+	n, st, pane, now := newNudgeFixture(t, true)
+	ctx := context.Background()
+	st.Now = func() time.Time { return *now }
+	task := startTask(t, st, "alice")
+	goal, err := st.CreateTask(ctx, "demo", store.CreateTaskInput{Subject: "Continuous coverage", Kind: "goal", Owner: "alice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	status := model.StatusInProgress
+	if _, err = st.UpdateTask(ctx, "demo", goal.ID, store.UpdateTaskInput{Status: &status, Caller: "alice"}); err != nil {
+		t.Fatal(err)
+	}
+	cp, err := st.CreateCheckpoint(ctx, "demo", store.CreateCheckpointInput{TaskID: task.ID, Key: "observation", Caller: "alice", DueAt: now.Add(time.Hour), ResultDueAt: now.Add(2 * time.Hour), AckTimeoutSeconds: 300, EscalateAfterSeconds: 600, Action: "Read sample", ExpectedEvidence: "Sample report"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := model.TaskProgress{Key: "waiting", State: "waiting", Summary: "Ready", Reason: "Observation window", NextAction: "Read sample", CheckpointID: cp.ID}
+	if _, err = st.UpdateTask(ctx, "demo", task.ID, store.UpdateTaskInput{Progress: &p}); err != nil {
+		t.Fatal(err)
+	}
+	setActivity(t, st, "alice", model.ActivityWaiting)
+	advance(n, now, 11*time.Minute)
+	if len(pane.typed) != 0 || len(leaderMessages(t, st)) != 0 {
+		t.Fatalf("registered wait was treated as a stall: %q", pane.typed)
+	}
+	if _, err = st.UpdateCheckpoint(ctx, "demo", cp.ID, store.CheckpointUpdateInput{Action: "cancel", Caller: "alice", Reason: "Window changed"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = st.Receive(ctx, "demo", "alice", "", 50); err != nil {
+		t.Fatal(err)
+	}
+	advance(n, now, 2*time.Minute)
+	if len(pane.typed) != 1 || !strings.Contains(pane.typed[0], task.ID) || strings.Contains(pane.typed[0], goal.ID) {
+		t.Fatalf("closed trigger did not restore follow-up: %q", pane.typed)
+	}
+}
+
+func TestIdleLeaderReviewsUnreportedWorkOnceThenEscalates(t *testing.T) {
+	n, st, pane, now := newNudgeFixture(t, true)
+	ctx := context.Background()
+	if _, err := st.RegisterAgent(ctx, model.Agent{Team: "demo", Name: "leader", Backend: "tmux", Target: "%2", Nudge: true, Command: []string{"codex"}}); err != nil {
+		t.Fatal(err)
+	}
+	task := startTask(t, st, "leader")
+	setActivity(t, st, "leader", model.ActivityWaiting)
+	n.Tick(ctx)
+	*now = now.Add(11 * time.Minute)
+	n.Tick(ctx)
+	if len(pane.typed) != 1 || !strings.Contains(pane.typed[0], "coordination") || !strings.Contains(pane.typed[0], task.ID) {
+		t.Fatalf("idle leader left unexplained work open: %q", pane.typed)
+	}
+	*now = now.Add(2 * time.Hour)
+	n.Tick(ctx)
+	*now = now.Add(time.Hour)
+	n.Tick(ctx)
+	if len(pane.typed) != 1 {
+		t.Fatalf("coordinator was repeatedly prompted: %q", pane.typed)
+	}
+	msgs, err := st.Peek(ctx, "demo", store.OperatorInbox, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 1 || !strings.Contains(msgs[0].Content, "coordination") {
+		t.Fatalf("unresolved coordination was not escalated: %+v", msgs)
+	}
+}
+
+func TestIdleTeamMayWaitForRegisteredFutureWindows(t *testing.T) {
+	n, st, pane, now := newNudgeFixture(t, true)
+	ctx := context.Background()
+	st.Now = func() time.Time { return *now }
+	if _, err := st.RegisterAgent(ctx, model.Agent{Team: "demo", Name: "leader", Backend: "tmux", Target: "%2", Nudge: true, Command: []string{"codex"}}); err != nil {
+		t.Fatal(err)
+	}
+	task := startTask(t, st, "alice")
+	cp, err := st.CreateCheckpoint(ctx, "demo", store.CreateCheckpointInput{TaskID: task.ID, Key: "future", Caller: "alice", DueAt: now.Add(3 * time.Hour), ResultDueAt: now.Add(4 * time.Hour), AckTimeoutSeconds: 300, EscalateAfterSeconds: 600, Action: "Read scheduled sample", ExpectedEvidence: "Report"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := model.TaskProgress{Key: "wait", State: "waiting", Summary: "Prepared", Reason: "Scheduled window", NextAction: "Read sample", CheckpointID: cp.ID}
+	if _, err = st.UpdateTask(ctx, "demo", task.ID, store.UpdateTaskInput{Progress: &p}); err != nil {
+		t.Fatal(err)
+	}
+	setActivity(t, st, "leader", model.ActivityWaiting)
+	setActivity(t, st, "alice", model.ActivityWaiting)
+	n.Tick(ctx)
+	*now = now.Add(time.Hour)
+	n.Tick(ctx)
+	msgs, err := st.Peek(ctx, "demo", store.OperatorInbox, "")
+	if err != nil || len(msgs) != 0 || len(pane.typed) != 0 {
+		t.Fatalf("legitimate team waiting was disturbed: %q %+v %v", pane.typed, msgs, err)
 	}
 }

@@ -8,4 +8,5 @@
 - [看板终端显示问题](known-pitfalls.md) — Ghostty 终端的浏览器光标、自动高度与网格滚动的排查结论。
 - [Magpie 网关兼容问题](magpie-gateway.md) — Claude Code 经 Magpie 转发到各家 Anthropic 兼容接口时踩过的格式坑，以及排查方法。
 - [Agent 画面状态判断](screen-detection.md) — 从 tmux 画面和终端标题判断 Agent 空闲 / 工作 / 等用户时踩过的坑与实测结论。
+- [长期任务与等待状态](task-progress.md) — 对照任务、检查点和消息判断真实进度，避免将长期职责和已交接的旧轮次当成持续执行。
 - [Web 访问鉴权与反向代理](web-access.md) — 看板登录经过 Nginx 路径前缀时的跳转约定和实测问题。

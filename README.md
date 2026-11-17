@@ -133,6 +133,10 @@ JSON 返回任务数组，保留 `id`、`owner`、`description`、`result` 等�
 
 Web 看板使用与 CLI HTTP 调用相同的 Key，本机用 `team-worker key show` 查看。访问、链接按钮和反向代理子路径的设置见 [docs/reference.md](docs/reference.md#web-看板访问)。
 
+## 阶段进展与轮次交接
+
+`task progress` 追加阶段报告，独立保留最终结果；可关联检查点或请示显示等待原因和下一步。`task update --superseded-by` 结束旧轮并交接未完成依赖，长期目标用 `--kind goal` 与 `--parent` 关联本批任务。命令、重试和统计语义见 [docs/task-progress.md](docs/task-progress.md)。
+
 ## 未来检查与超时告警
 
 `team-worker checkpoint` 登记一次任务观察，由 daemon 持久化计时、投递通知，并跟踪负责人接手和结果回报。到期未接手或未回报时先通知 Leader，仍未解决再通知 operator；任务改派时取消旧检查点。它不会中断成员的长工具调用，也不会代替实际检查。命令和恢复行为见 [docs/checkpoints.md](docs/checkpoints.md)。

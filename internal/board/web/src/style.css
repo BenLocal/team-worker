@@ -502,3 +502,16 @@ body.rail-collapsed #rail-tools { display: none; }
   .result-chevron { display: none; }
   .result-expanded { padding: 0 12px 16px; }
 }
+
+/* Stage reports and goals share the existing task card layout. */
+.goals { max-height: 26vh; overflow: auto; display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
+.goals[hidden] { display: none; }
+.goals > h2 { grid-column: 1 / -1; font-size: 12px; margin: 0; color: var(--muted); }
+.goals p { font-size: 12px; margin: 5px 0; }
+.stage-preview { margin-top: 7px; font-size: 12px; color: var(--fg-2); overflow-wrap: anywhere; white-space: pre-wrap; }
+.stage-history { border-top: 1px solid var(--line-2); margin-top: 9px; padding-top: 6px; }
+.stage-history h4 { font-size: 12px; margin: 5px 0; }
+.stage-report { font-size: 12px; border-bottom: 1px solid var(--line-2); padding: 8px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.stage-report p { margin: 5px 0; }
+
+.term-work, .term-activity, .term-protocol { margin: 0; padding: 0 14px 6px; font-size: 12px; color: var(--fg-2); overflow-wrap: anywhere; }

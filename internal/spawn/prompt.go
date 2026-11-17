@@ -1,7 +1,9 @@
 package spawn
 
 import (
+	"crypto/sha256"
 	_ "embed"
+	"fmt"
 	"strings"
 	"text/template"
 )
@@ -53,3 +55,8 @@ func BuildPrompt(p PromptParams) string {
 	}
 	return b.String()
 }
+
+// ProtocolVersion identifies the embedded coordination instructions.
+func ProtocolVersion() string { return fmt.Sprintf("%x", sha256.Sum256([]byte(promptText))) }
+
+func (p PromptParams) ProtocolVersion() string { return ProtocolVersion() }

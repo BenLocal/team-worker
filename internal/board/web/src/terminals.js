@@ -2,6 +2,7 @@
 // (a68f67b6 plus the wheel-selection and text-selection fixes after it).
 // ghostty-web inlines its WebAssembly (~650 KB), so it loads only when the
 // Terminals view opens.
+import { workLabel, activityLabel, protocolLabel } from "./member-work.js";
 import { openMemberPrompt } from "./prompt-dialog.js";
 
 let Terminal, FitAddon;
@@ -74,6 +75,9 @@ export class AgentTerminal {
     this.element.innerHTML = `
       <div class="term-head"><span class="dot" aria-hidden="true"></span><strong class="term-name"></strong>
         <span class="term-role"></span><span class="term-status" role="status"></span></div>
+      <p class="term-work"></p>
+      <p class="term-activity"></p>
+      <p class="term-protocol"></p>
       <p class="term-task"></p>
       <div class="term-actions">
         <button type="button" class="prompt">Prompt</button>
@@ -124,8 +128,14 @@ export class AgentTerminal {
     const role = member.agentType && member.agentType !== "leader" ? member.agentType : "";
     this.element.querySelector(".term-role").textContent = [member.leader ? "Leader" : "", role].filter(Boolean).join(", ");
     // Offline cards show the reason in the terminal area, so it is not repeated here.
-    this.element.querySelector(".term-task").textContent = tasks.length ? "Working on " + tasks.join("; ") : "";
-    this.element.querySelector(".dot").className = "dot" + (this.state.live ? " alive" : member.agent ? " dead" : "");
+    this.element.querySelector(".term-task").textContent = tasks.length ? "Assigned tasks: " + tasks.join("; ") : "";
+    this.element.querySelector(".term-work").textContent = workLabel(member);
+    this.element.querySelector(".term-work").title = member.work?.reason || "";
+    this.element.querySelector(".term-activity").textContent = activityLabel(member);
+    this.element.querySelector(".term-protocol").textContent = protocolLabel(member);
+    const a = member.agent;
+    const processClass = !a ? "" : a.status === "exited" || a.alive === false ? " dead" : a.alive === true ? " alive" : "";
+    this.element.querySelector(".dot").className = "dot" + processClass;
     // The prompt is stored server-side, so it stays viewable without a terminal.
     this.promptButton.hidden = false;
     this.promptButton.setAttribute("aria-label", `Show ${member.name}'s prompt`);

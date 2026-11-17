@@ -161,7 +161,7 @@ team-workerd 记录这些事件：
 | `GET/PUT /v1/teams/{team}/auto-review` | 读取 / 设置请示的 AI 自动审核（`enabled`、`model`，每日窗口 `from`、`to` 为 `HH:MM`，含开始不含结束，结束早于开始表示跨午夜，都为空表示全天；`timeZone` 为 IANA 时区名，空为 daemon 本地时区；`includeHuman` 为 true 时 AI 也审 `humanOnly` 的请示，只能批准或上报，默认 false）。PUT 整体替换设置；两者都返回设置以及 `active`（此刻是否在审核）和 `daemonZone`（daemon 本地时区，如 `CST +08:00`） |
 | `GET/POST /v1/teams/{team}/tasks` | 列出（`status`、`owner`、`priority`、`sort=priority`）/ 创建任务 |
 | `GET /v1/teams/{team}/tasks/stats` | 任务统计 |
-| `GET/PATCH /v1/teams/{team}/tasks/{id}` | 任务详情 / 更新任务；可传 `result` 上报完成结果 |
+| `GET/PATCH /v1/teams/{team}/tasks/{id}` | 任务详情 / 更新任务；`result` 保存最终结果，`progress` 追加阶段，`kind` / `parentId` 关联目标，`supersededBy` 配合 `status: "superseded"` 交接旧轮 |
 | `GET/POST /v1/teams/{team}/checkpoints` | 列出 / 登记单次检查点；登记字段为 `key`、`taskId`、`caller`、`dueAt`、`ackTimeoutSeconds`、`resultDueAt`、`escalateAfterSeconds`、`action`、`expectedEvidence`；时间为带偏移的 RFC3339，时长为秒 |
 | `GET /v1/teams/{team}/checkpoints/{id}` | 查询状态、负责人、截止时间、接手 token、结果及超时记录 |
 | `POST /v1/teams/{team}/checkpoints/{id}` | `action=ack`（负责人接手）、`complete`（需 `token`、`outcome`、`summary`、`evidence`）或 `cancel`（需 `reason`）；均带 `caller`，空值表示 operator。详见[检查点说明](checkpoints.md) |
@@ -174,7 +174,9 @@ team-workerd 记录这些事件：
 | `GET/PUT /v1/teams/{team}/members/{name}/prompt?user=...` | 读取 / 设置成员专属提示词，`user` 默认空；设置时通知对应成员 |
 | `GET /v1/teams/{team}/board` | 看板数据：成员及进程状态、任务、统计、最近消息 |
 | `GET/POST /v1/teams/{team}/agents` | 列出 Agent（含实时存活检测）/ 登记已启动的 Agent |
-| `GET /v1/teams/{team}/agents/{name}` | Agent 详情 |
+| `GET /v1/teams/{team}/agents/{name}` | Agent 详情，含当前 Run 的 protocol 投递、读取、确认记录 |
+| `GET /v1/teams/{team}/agents/{name}/protocol` | 只读当前版本、角色与团队指令，不登记读取 |
+| `POST /v1/teams/{team}/agents/{name}/protocol` | `{action: "read" 或 "ack", runId, version}`；校验当前运行实例及版本，ack 要求已读取 |
 | `POST /v1/teams/{team}/agents/{name}/exit?run_id=...&code=...` | 按运行标识回报退出并释放任务；无标识的旧回报只适用于旧运行记录 |
 | `POST /v1/teams/{team}/agents/{name}/stop?run_id=...` | 保存该轮运行的停止意图 |
 | `POST /v1/teams/{team}/agents/{name}/spawn` | 在 daemon 所在机器上启动成员（`agent spawn` 的全部参数，见 `model.SpawnRequest`），返回启动结果；`dryRun` 只检查不启动 |
@@ -236,6 +238,24 @@ Web 看板（`team-workerd --board` 或 `board serve`）的提示词读取接口
 | `GET /api/openbao/login` | `TEAM_WORKER_OPENBAO_SESSION_LOGIN=1` 时用保存的 root 令牌签发 12 小时子令牌，包装 60 秒后跳到 OpenBao 界面自动登录；没有 `init.json` 时跳到 `/ui/`；未开启返回 404 |
 | `GET /api/teams/{team}/prompt` | 查看团队公共提示词 |
 | `GET /api/teams/{team}/members/{name}/prompt?user=...` | 查看成员专属提示词，`user` 默认空 |
+
+### 任务阶段与交接
+
+创建任务支持 `kind`（`task` 或 `goal`，省略为普通任务）及 `parentId`；PATCH 支持修改这两项。
+
+在 `PATCH /v1/teams/{team}/tasks/{id}` 传入 `progress` 追加阶段，例如：
+
+```json
+{"progress":{"key":"batch-1","summary":"First batch checked","state":"waiting","reason":"Observation window","nextAction":"Collect the sample","checkpointId":"<checkpoint-id>","artifacts":["reports/batch-1.md"],"verification":"12 cases passed"}}
+```
+
+`key`、`summary` 必填，`state` 为 active（默认）或 waiting；waiting 要求非空 reason 和 nextAction。`checkpointId` 与 `requestId` 最多传一项。服务端填写 reportedAt、reportedBy；同 key 同内容重试不追加，同 key 不同内容返回 409。阶段历史在任务的 `progress` 数组中返回，最终 `result` 不变。
+
+GET 详情、任务列表和看板还返回实时派生的 `executionState`、`nextCheckpoint`、`waitCheckpoint`、`waitingRequest`。executionState 为 active、waiting、unregistered（未登记触发条件）或 follow_up（关联触发已结束，待处理结果）；它不替代任务 status，不代表执行成功。返回的检查点不包含执行 token。
+
+交接用 `{"status":"superseded","supersededBy":"<replacement-task-id>","result":{"summary":"Completed work and remaining gaps"}}`。它释放旧锁、取消旧检查点，并将验收依赖转给接替任务，不产生 TaskCompleted 事件。旧轮保留在任务列表，`task results` 仍只列 completed。
+
+`tasks/stats` 增加 goals、waiting、superseded；total 保留全部记录数，原状态计数只统计普通执行任务。细节及 CLI 用法见 [任务阶段、等待与轮次交接](task-progress.md)。
 
 ### 任务结果报告
 

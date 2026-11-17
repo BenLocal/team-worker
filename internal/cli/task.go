@@ -22,7 +22,7 @@ import (
 func (a *app) taskCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "task", Short: "Task management"}
 	cmd.AddCommand(a.taskCreateCmd(), a.taskGetCmd(), a.taskUpdateCmd(), a.taskListCmd(),
-		a.taskResultsCmd(), a.taskStatsCmd(), a.taskWaitCmd())
+		a.taskResultsCmd(), a.taskStatsCmd(), a.taskWaitCmd(), a.taskProgressCmd())
 	return cmd
 }
 
@@ -37,7 +37,7 @@ func ownerChanged(cmd *cobra.Command) bool {
 }
 
 func (a *app) taskCreateCmd() *cobra.Command {
-	var description, owner, priority, blocks, blockedBy string
+	var description, owner, priority, blocks, blockedBy, kind, parent string
 	cmd := &cobra.Command{
 		Use:   "create TEAM SUBJECT",
 		Short: "Create a new task",
@@ -48,6 +48,7 @@ func (a *app) taskCreateCmd() *cobra.Command {
 				return a.fail(err)
 			}
 			task, err := a.client().CreateTask(cmd.Context(), args[0], store.CreateTaskInput{
+				Kind: kind, ParentID: parent,
 				Subject:     args[1],
 				Description: description,
 				Owner:       owner,
@@ -70,6 +71,8 @@ func (a *app) taskCreateCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&kind, "kind", "task", "Task kind: task or goal")
+	cmd.Flags().StringVar(&parent, "parent", "", "Parent goal ID")
 	cmd.Flags().StringVarP(&description, "description", "d", "", "Task description")
 	ownerFlags(cmd, &owner, "Owner agent name")
 	cmd.Flags().StringVarP(&priority, "priority", "p", "medium", "Task priority: low, medium, high, urgent")
@@ -96,6 +99,7 @@ func (a *app) taskGetCmd() *cobra.Command {
 				if task.Owner != "" {
 					fmt.Fprintf(w, "  Owner: %s\n", task.Owner)
 				}
+				printTaskTracking(w, task)
 				if task.LockedBy != "" {
 					fmt.Fprintf(w, "  Locked by: %s (since %s)\n", task.LockedBy, formatTimestamp(task.LockedAt))
 				}
@@ -127,7 +131,7 @@ func (a *app) taskGetCmd() *cobra.Command {
 
 func (a *app) taskUpdateCmd() *cobra.Command {
 	var status, owner, subject, description, priority, addBlocks, addBlockedBy, removeBlockedBy string
-	var result, verification string
+	var result, verification, kind, parent, supersededBy string
 	var artifacts []string
 	var force bool
 	cmd := &cobra.Command{
@@ -141,6 +145,19 @@ func (a *app) taskUpdateCmd() *cobra.Command {
 				RemoveBlockedBy: splitList(removeBlockedBy),
 				Caller:          config.IdentityFromEnv().AgentName,
 				Force:           force,
+			}
+			if cmd.Flags().Changed("kind") {
+				in.Kind = &kind
+			}
+			if cmd.Flags().Changed("parent") {
+				in.ParentID = &parent
+			}
+			if cmd.Flags().Changed("superseded-by") {
+				in.SupersededBy = &supersededBy
+				if !cmd.Flags().Changed("status") {
+					s := model.StatusSuperseded
+					in.Status = &s
+				}
 			}
 			if cmd.Flags().Changed("status") {
 				s, err := model.ParseTaskStatus(status)
@@ -179,7 +196,10 @@ func (a *app) taskUpdateCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVarP(&status, "status", "s", "", "New status: pending, in_progress, completed, blocked")
+	cmd.Flags().StringVar(&kind, "kind", "", "Task kind: task or goal")
+	cmd.Flags().StringVar(&parent, "parent", "", "Parent goal ID (empty to detach)")
+	cmd.Flags().StringVar(&supersededBy, "superseded-by", "", "Replacement task ID; closes this round without passing its acceptance")
+	cmd.Flags().StringVarP(&status, "status", "s", "", "New status: pending, in_progress, completed, blocked, superseded")
 	ownerFlags(cmd, &owner, "New owner")
 	cmd.Flags().StringVar(&subject, "subject", "", "New subject")
 	cmd.Flags().StringVarP(&description, "description", "d", "", "New description")
@@ -227,10 +247,10 @@ func (a *app) taskListCmd() *cobra.Command {
 					return
 				}
 				fmt.Fprintf(w, "Tasks - %s\n", args[0])
-				tw := newTable(w, "ID", "SUBJECT", "STATUS", "PRIORITY", "OWNER", "LOCK", "BLOCKED BY")
+				tw := newTable(w, "ID", "SUBJECT", "STATUS", "PRIORITY", "OWNER", "LOCK", "BLOCKED BY", "PROGRESS")
 				for _, t := range tasks {
 					row(tw, t.ID, t.Subject, string(t.Status), string(t.Priority), t.Owner, t.LockedBy,
-						strings.Join(t.BlockedBy, ", "))
+						strings.Join(t.BlockedBy, ", "), taskProgressText(t))
 				}
 				tw.Flush()
 			})
@@ -258,6 +278,9 @@ func (a *app) taskStatsCmd() *cobra.Command {
 				fmt.Fprintf(w, "Task Stats - %s\n", args[0])
 				tw := newTable(w, "METRIC", "VALUE")
 				row(tw, "Total tasks", fmt.Sprint(st.Total))
+				row(tw, "Goals", fmt.Sprint(st.Goals))
+				row(tw, "Waiting", fmt.Sprint(st.Waiting))
+				row(tw, "Superseded", fmt.Sprint(st.Superseded))
 				row(tw, "Completed", fmt.Sprint(st.Completed))
 				row(tw, "In progress", fmt.Sprint(st.InProgress))
 				row(tw, "Pending", fmt.Sprint(st.Pending))
@@ -292,6 +315,17 @@ type taskSummary struct {
 
 type taskCounts struct {
 	total, completed, inProgress, pending, blocked int
+}
+
+// executionTasks excludes ongoing goals and closed predecessor rounds.
+func executionTasks(tasks []model.Task) []model.Task {
+	executions := make([]model.Task, 0, len(tasks))
+	for _, task := range tasks {
+		if task.Kind != "goal" && task.Status != model.StatusSuperseded {
+			executions = append(executions, task)
+		}
+	}
+	return executions
 }
 
 func countTasks(tasks []model.Task) taskCounts {
@@ -389,6 +423,9 @@ func (a *app) taskWaitCmd() *cobra.Command {
 					continue
 				}
 				failures = 0
+				if len(only) == 0 {
+					tasks = executionTasks(tasks)
+				}
 				if len(only) > 0 {
 					if tasks, err = pickTasks(tasks, only); err != nil {
 						return a.fail(err)
@@ -427,6 +464,11 @@ func (a *app) taskWaitCmd() *cobra.Command {
 				// Report the final state even though the wait context is cancelled.
 				if latest, err := c.ListTasks(context.WithoutCancel(ctx), team, store.TaskFilter{}); err == nil {
 					tasks = latest
+					if len(only) == 0 {
+						tasks = executionTasks(tasks)
+					} else if selected, err := pickTasks(tasks, only); err == nil {
+						tasks = selected
+					}
 				}
 			}
 			a.printWaitResult(status, time.Since(start), tasks, received)
@@ -458,6 +500,9 @@ func pickTasks(tasks []model.Task, ids []string) ([]model.Task, error) {
 		t, ok := byID[id]
 		if !ok {
 			return nil, fmt.Errorf("task '%s' not found", id)
+		}
+		if t.Status == model.StatusSuperseded {
+			return nil, fmt.Errorf("task %s was superseded by %s; wait for the replacement", t.ID, t.SupersededBy)
 		}
 		picked = append(picked, t)
 	}

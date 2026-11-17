@@ -75,7 +75,7 @@ func (s *Store) CreateCheckpoint(ctx context.Context, team string, in CreateChec
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-		if task.Owner == "" || task.Status == model.StatusCompleted {
+		if task.Owner == "" || (task.Status == model.StatusCompleted || task.Status == model.StatusSuperseded) {
 			return conflictf("Checkpoint requires an owned, unfinished task")
 		}
 		owner, err := checkpointMemberInbox(ctx, tx, team, task.Owner)

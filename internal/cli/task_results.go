@@ -34,6 +34,9 @@ func (a *app) taskResultsCmd() *cobra.Command {
 			results := make([]model.Task, 0, len(tasks))
 			seen := map[string]bool{}
 			for _, task := range tasks {
+				if task.Kind == "goal" {
+					continue
+				}
 				if !all && seen[task.Owner] {
 					continue
 				}

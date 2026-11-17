@@ -301,8 +301,8 @@ func (s *Store) checkRemovable(ctx context.Context, tx *sql.Tx, team, name strin
 				name, team, name)
 		}
 	}
-	rows, err := tx.QueryContext(ctx, "SELECT id FROM tasks WHERE team = ? AND owner = ? AND status != ? ORDER BY id",
-		team, name, model.StatusCompleted)
+	rows, err := tx.QueryContext(ctx, "SELECT id FROM tasks WHERE team = ? AND owner = ? AND status NOT IN (?, ?) ORDER BY id",
+		team, name, model.StatusCompleted, model.StatusSuperseded)
 	if err != nil {
 		return err
 	}

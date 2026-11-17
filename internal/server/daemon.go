@@ -17,6 +17,7 @@ import (
 	"github.com/benlocal/team-worker/internal/board/live"
 	"github.com/benlocal/team-worker/internal/config"
 	"github.com/benlocal/team-worker/internal/proc"
+	"github.com/benlocal/team-worker/internal/runner"
 	"github.com/benlocal/team-worker/internal/store"
 )
 
@@ -65,6 +66,9 @@ func Run(ctx context.Context, opts Options) error {
 	accessKey, err := st.EnsureAccessKey(ctx, opts.APIKey)
 	if err != nil {
 		return fmt.Errorf("prepare access key: %w", err)
+	}
+	if err := st.PublishProtocol(ctx, runner.CoordinationVersion()); err != nil {
+		return fmt.Errorf("publish coordination protocol: %w", err)
 	}
 	// Every agent is started by this daemon, so its process is probed here.
 	st.Probe = proc.Probe

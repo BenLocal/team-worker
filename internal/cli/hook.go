@@ -146,12 +146,13 @@ func (a *app) stopReason(ctx context.Context, t hookTarget, in hookInput, wait t
 		return ""
 	}
 	if t.leader() {
-		if countTasks(before).completed == len(before) {
+		executions := executionTasks(before)
+		if countTasks(executions).completed == len(executions) {
 			return ""
 		}
 	} else if open := openTasks(before); len(open) > 0 && !in.StopHookActive {
 		return fmt.Sprintf("You still have %d open task(s) in team %s:\n%s\nContinue with them. If you "+
-			"cannot, tell the leader why with `team-worker inbox send %s <leader> \"...\"`.",
+			"cannot proceed, record a stage or waiting report with `team-worker task progress %s <task-id> --key <stage> --summary ... --state waiting --reason ... --next-action ... --checkpoint <registered-id>` (or --request <id>), then tell the leader. Do not execute a future observation early.",
 			len(open), t.team, taskLines(open), t.team)
 	}
 
@@ -188,7 +189,14 @@ func (a *app) stopReason(ctx context.Context, t hookTarget, in hookInput, wait t
 			before = after
 		}
 	}
-	if !t.leader() && len(openTasks(before)) == 0 {
+	registeredWait := false
+	for _, task := range before {
+		if task.ExecutionState == "waiting" {
+			registeredWait = true
+			break
+		}
+	}
+	if !t.leader() && !registeredWait && len(openTasks(before)) == 0 {
 		a.reportIdle(ctx, t)
 	}
 	return ""
@@ -207,7 +215,7 @@ func (a *app) hookTasks(ctx context.Context, t hookTarget) ([]model.Task, error)
 func openTasks(tasks []model.Task) []model.Task {
 	var open []model.Task
 	for _, task := range tasks {
-		if task.Status == model.StatusPending || task.Status == model.StatusInProgress {
+		if task.Kind != "goal" && task.ExecutionState != "waiting" && (task.Status == model.StatusPending || task.Status == model.StatusInProgress) {
 			open = append(open, task)
 		}
 	}
@@ -223,7 +231,7 @@ func newWork(before, after []model.Task) []model.Task {
 	}
 	var fresh []model.Task
 	for _, task := range after {
-		if task.Status == model.StatusPending && was[task.ID] != model.StatusPending {
+		if task.Kind != "goal" && task.Status == model.StatusPending && was[task.ID] != model.StatusPending {
 			fresh = append(fresh, task)
 		}
 	}
@@ -250,7 +258,7 @@ func taskChanges(before, after []model.Task) []string {
 }
 
 func leaderProgress(t hookTarget, tasks []model.Task, changes []string) string {
-	n := countTasks(tasks)
+	n := countTasks(executionTasks(tasks))
 	return fmt.Sprintf("Team %s progress: %d/%d tasks completed (%d in progress, %d pending, %d blocked).\n"+
 		"Changes:\n%s\nCheck the results that came in, answer or redirect members with `team-worker inbox send`, "+
 		"and keep coordinating until every task is completed.",
@@ -261,6 +269,9 @@ func taskLines(tasks []model.Task) string {
 	lines := make([]string, len(tasks))
 	for i, task := range tasks {
 		lines[i] = fmt.Sprintf("- %s %q (%s)", task.ID, task.Subject, task.Status)
+		if progress := taskProgressText(task); progress != "" {
+			lines[i] += " [" + progress + "]"
+		}
 	}
 	return strings.Join(lines, "\n")
 }

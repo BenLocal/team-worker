@@ -2,11 +2,12 @@ import "@fontsource-variable/jetbrains-mono";
 import "./style.css";
 import { AgentTerminal, describe, selectCard, setBoardHost } from "./terminals.js";
 import { openMemberPrompt, openTeamPrompt } from "./prompt-dialog.js";
+import { workLabel, activityLabel, protocolLabel } from "./member-work.js";
 import { openServiceKeys } from "./service-keys.js";
 
 const $ = (id) => document.getElementById(id);
 const SVG = "http://www.w3.org/2000/svg";
-const COLUMNS = [["pending", "Pending"], ["in_progress", "In progress"], ["blocked", "Blocked"], ["completed", "Done"]];
+const COLUMNS = [["pending", "Pending"], ["in_progress", "In progress"], ["blocked", "Blocked"], ["completed", "Closed"]];
 const PRIORITY = { urgent: 0, high: 1, medium: 2, low: 3 };
 const DONE_PAGE = 15, MSG_PAGE = 60, GAP_MS = 10 * 60 * 1000, LANE_H = 14;
 const VIEWS = [["board", "Board"], ["results", "Results"], ["messages", "Messages"], ["approvals", "Approvals"], ["terminals", "Terminals"]];
@@ -73,7 +74,7 @@ function agentState(m) {
   if (a.alive === true && a.activity === "blocked") return ["attention", "asking the user"];
   if (a.alive === true && a.activity === "waiting") return ["alive", "waiting for messages"];
   if (a.alive === true && a.activity === "working") return ["alive", "working"];
-  if (a.alive === true) return ["alive", "running"];
+  if (a.alive === true) return ["alive", "online; activity unknown"];
   if (a.alive === false) return ["dead", "stopped"];
   return ["", "unknown"];
 }
@@ -141,10 +142,11 @@ function memberActivity(b, name) {
   for (const m of b.messages) if (m.from === name) at = Math.max(at, Date.parse(m.timestamp || "") || 0);
   return at;
 }
+function executionTotal(s) { return Math.max(0, s.total - (s.goals || 0) - (s.superseded || 0)); }
 function teamTone(s) {
   if (!s || !s.total) return "";
   if (s.blocked) return "blocked";
-  if (s.completed === s.total) return "done";
+  if (executionTotal(s) > 0 && s.completed === executionTotal(s)) return "done";
   return s.in_progress ? "progress" : "";
 }
 // orderedTeams puts pinned teams first, then sorts by activity or by the saved manual order.
@@ -262,7 +264,7 @@ function renderSearchResults() {
 function renderMiniRail(rows) {
   $("teams").replaceChildren(el("li", {}, el("ul", { class: "mini" }, rows.map(({ t, b }) => {
     const s = b && b.taskSummary;
-    const facts = s && s.total ? `, ${s.completed} of ${s.total} done${s.blocked ? `, ${s.blocked} blocked` : ""}` : "";
+    const facts = s && s.total ? `, ${s.completed} of ${executionTotal(s)} done${s.blocked ? `, ${s.blocked} blocked` : ""}` : "";
     return el("li", {}, el("button", { type: "button", title: t.name + facts, "aria-label": t.name + facts,
       "aria-current": t.name === state.team ? "page" : null, onclick: () => selectTeam(t.name) },
       [...t.name][0].toUpperCase(), teamTone(s) ? el("span", { class: "dot " + teamTone(s), "aria-hidden": "true" }) : null));
@@ -291,7 +293,7 @@ function memberRows(t, b) {
     // state as a dot, unread messages or the last activity at the end.
     return el("li", { class: "person-row" },
       el("button", { type: "button", class: "person", onclick: () => showTerminal(t.name, m.name),
-        title: [`${m.name}: ${leader ? "leader, " : ""}${label}`, m.agent ? "Show the terminal" : "", when].filter(Boolean).join("\n") },
+        title: [`${m.name}: ${leader ? "leader, " : ""}${label}`, workLabel(m), activityLabel(m), protocolLabel(m), m.agent ? "Show the terminal" : "", when].filter(Boolean).join("\n") },
         el("span", { class: "dot " + cls, "aria-hidden": "true" }),
         el("span", { class: "pname" }, m.name),
         leader && m.name !== "leader" ? el("span", { class: "lead" }, "leader") : null,
@@ -338,14 +340,14 @@ function teamRow({ t, b, at }) {
       el("button", { type: "button", class: "team-tab", "aria-current": current ? "page" : null,
         "aria-expanded": current ? String(open) : null, "aria-controls": open ? "people-" + t.name : null,
         onclick: () => current ? fold() : selectTeam(t.name),
-        title: [t.description, s && s.total ? `${s.completed} of ${s.total} tasks done${s.blocked ? `, ${s.blocked} blocked` : ""}` : "No tasks",
+        title: [t.description, s && s.total ? `${s.completed} of ${executionTotal(s)} tasks done${s.blocked ? `, ${s.blocked} blocked` : ""}` : "No tasks",
           running ? `${running} of ${members.length} members running` : `${t.memberCount} members`,
           at ? "Updated " + new Date(at).toLocaleString() : ""].filter(Boolean).join("\n") },
         icon(ICONS.team),
         el("span", { class: "name" }, t.name),
         pinned ? el("span", { class: "pin", title: "Pinned" }, icon(ICONS.pin)) : null,
         tone ? el("span", { class: "dot " + tone, "aria-hidden": "true" }) : null,
-        el("em", {}, s && s.total ? `${s.completed}/${s.total}` : "")),
+        el("em", {}, s && s.total ? `${s.completed}/${executionTotal(s)}` : "")),
       el("button", { type: "button", class: "row-more menu-trigger", "aria-label": `${t.name} actions`, "aria-haspopup": "menu",
         onclick: (e) => openMenu(e.currentTarget, "t:" + t.name, [
           [pinned ? "Unpin" : "Pin to top", () => { pinned ? rail.pins.delete(t.name) : rail.pins.add(t.name); saveRail(); renderRail(); }],
@@ -408,6 +410,7 @@ function buildMain() {
     el("section", { class: "tasks", "aria-label": "Tasks" },
       el("div", { class: "harness", id: "harness", hidden: true }),
       el("div", { class: "stats", id: "stats", role: "list", "aria-label": "Team summary" }),
+      el("section", { class: "goals", id: "goals", "aria-label": "Long-term goals", hidden: true }),
       el("div", { class: "board", id: "board" }))),
     el("div", { class: "view", id: "view-results", role: "tabpanel", "aria-labelledby": "tab-results", hidden: state.view !== "results" },
       el("section", { class: "results", id: "results", "aria-label": "Agent results" })),
@@ -467,14 +470,15 @@ function renderStats(board) {
   const unread = members.reduce((n, m) => n + (m.inboxCount || 0), 0);
   const ov = state.oversight[state.team];
   if (!changed("stats", [s, running, members.length, unread, ov && [ov.budget, ov.cost]])) return;
-  const pct = s.total ? Math.round((s.completed / s.total) * 100) : 0;
+  const total = executionTotal(s);
+  const pct = total ? Math.round((s.completed / total) * 100) : 0;
   const stat = (tone, label, value, note, extra) => el("div", { class: "stat" + (tone ? " " + tone : ""), role: "listitem" },
     el("div", { class: "stat-label" }, label), el("div", { class: "stat-value" }, value),
     note ? el("div", { class: "stat-note" }, note) : null, extra || null);
   $("stats").replaceChildren(
-    stat("done", "Done", s.total ? `${pct}%` : "–", s.total ? `${s.completed} of ${s.total} tasks` : "No tasks yet",
+    stat("done", "Done", total ? `${pct}%` : "–", total ? `${s.completed} of ${total} execution tasks` : "No execution tasks",
       el("div", { class: "stat-bar", "aria-hidden": "true" }, el("span", { style: `width:${pct}%` }))),
-    stat("progress", "In progress", String(s.in_progress), s.in_progress ? "being worked on" : "nobody is working"),
+    stat("progress", "In progress", String(s.in_progress), `${s.waiting || 0} waiting; ${s.goals || 0} goals tracked separately`),
     stat(s.blocked ? "blocked" : "", "Blocked", String(s.blocked), s.blocked ? "waiting on other tasks" : "nothing is stuck"),
     stat("", "Pending", String(s.pending), s.pending ? "ready to pick up" : "queue is empty"),
     stat("", "Time per task", s.avg_duration_seconds ? duration(s.avg_duration_seconds) : "–",
@@ -761,19 +765,50 @@ function sortTasks(status, tasks) {
   if (status === "in_progress") return tasks.sort(newest("startedAt"));
   return tasks.sort((a, b) => (PRIORITY[a.priority] ?? 2) - (PRIORITY[b.priority] ?? 2) || (a.createdAt || "").localeCompare(b.createdAt || ""));
 }
+function stageDetails(p) {
+  return el("div", { class: "stage-report" },
+    el("div", { class: "muted" }, `${p.key} · ${p.reportedBy || "unreported author"} · ${new Date(p.reportedAt).toLocaleString()}`),
+    el("p", {}, p.summary),
+    p.reason ? el("p", {}, "Reason: " + p.reason) : null,
+    p.nextAction ? el("p", {}, "Next action: " + p.nextAction) : null,
+    p.checkpointId ? el("p", {}, "Checkpoint: " + p.checkpointId) : null,
+    p.requestId ? el("p", {}, "Request: " + p.requestId) : null,
+    p.artifacts?.length ? el("ul", {}, p.artifacts.map((path) => el("li", {}, el("code", {}, path)))) : null,
+    p.verification ? el("p", {}, "Verification (agent reported): " + p.verification) : null);
+}
 function taskCard(t, byId) {
   const line = el("div", { class: "line" }, el("span", {}, t.id),
     t.priority && t.priority !== "medium" ? el("span", { class: "prio-" + t.priority }, t.priority) : null,
     el("span", {}, t.owner ? "@" + t.owner : "unassigned"),
-    t.status === "completed" && t.metadata && t.metadata.duration_seconds ? el("span", {}, duration(t.metadata.duration_seconds)) : null);
-  const waits = t.blockedBy && t.blockedBy.length
+    t.kind === "goal" ? el("span", {}, "Goal") : null,
+    t.status === "completed" && t.metadata?.duration_seconds ? el("span", {}, duration(t.metadata.duration_seconds)) : null);
+  const waits = t.blockedBy?.length
     ? el("div", { class: "waits" }, "Waits for " + t.blockedBy.map((id) => byId[id] ? byId[id].subject : id).join(", ")) : null;
-  const head = [el("div", { class: "subject" }, t.subject), line, waits];
-  if (!t.description) return el("div", { class: "task" }, head);
-  const card = el("details", { class: "task", open: state.open.has(t.id) }, el("summary", {}, head), el("div", { class: "body" }, t.description));
+  const progress = t.progress || [], latest = progress.at(-1);
+  const open = !["completed", "superseded"].includes(t.status);
+  const trigger = open && latest?.state === "waiting" ? (t.waitingRequest
+    ? `Request ${t.waitingRequest.id}: ${t.waitingRequest.status}${t.waitingRequest.status !== "pending" ? "; review decision and report next stage" : ""}`
+    : t.waitCheckpoint ? `Checkpoint ${t.waitCheckpoint.id}: ${t.waitCheckpoint.status}${["completed", "canceled"].includes(t.waitCheckpoint.status) ? "; report next stage" : ""}`
+      : "No registered trigger") : "";
+  const next = open && t.nextCheckpoint;
+  const parent = t.parentId ? el("div", { class: "line" }, "Goal: " + (byId[t.parentId]?.subject || t.parentId)) : null;
+  const handoff = t.supersededBy ? el("div", { class: "waits" }, "Superseded by " + (byId[t.supersededBy]?.subject || t.supersededBy) + ". Acceptance was not completed in this round.") : null;
+  const head = [el("div", { class: "subject" }, t.subject), line, parent, waits, handoff,
+    latest ? el("div", { class: "stage-preview" }, `${open ? (t.executionState === "follow_up" ? "Ready for follow-up: " : latest.state + ": ") : "Last stage: "}${latest.summary}`,
+      latest.reason && open ? el("div", { class: "waits" }, latest.reason) : null,
+      latest.nextAction && open ? el("div", {}, "Next action: " + latest.nextAction) : null) : null,
+    trigger ? el("div", { class: "waits" }, trigger) : null,
+    next ? el("div", { class: "line" }, `Next observation: ${new Date(next.dueAt).toLocaleString()} · ${next.status}`) : null];
+  if (!t.description && !progress.length && !t.result) return el("div", { class: "task" }, head);
+  const card = el("details", { class: "task", open: state.open.has(t.id) }, el("summary", {}, head),
+    t.description ? el("div", { class: "body" }, t.description) : null,
+    progress.length ? el("div", { class: "stage-history" }, el("h4", {}, `Stage history (${progress.length})`),
+      [...progress].reverse().map(stageDetails)) : null,
+    t.result ? el("div", { class: "stage-history" }, el("h4", {}, "Final result (agent reported)"), resultDetails(t)) : null);
   card.addEventListener("toggle", () => card.open ? state.open.add(t.id) : state.open.delete(t.id));
   return card;
 }
+
 function resultDetails(task) {
   const r = task.result;
   const artifact = (path) => /^https?:\/\//i.test(path)
@@ -804,10 +839,10 @@ function renderResults(board) {
     groups.get(owner).push(task);
   }
   const rows = [...groups].map(([name, tasks]) => {
-    const completed = tasks.filter((t) => t.status === "completed")
+    const completed = tasks.filter((t) => t.kind !== "goal" && t.status === "completed")
       .sort((a, b) => (b.result?.reportedAt || b.updatedAt).localeCompare(a.result?.reportedAt || a.updatedAt));
     const latest = completed[0];
-    const count = tasks.filter((t) => t.status === "in_progress").length;
+    const count = tasks.filter((t) => t.kind !== "goal" && t.status === "in_progress").length;
     const agent = el("div", { class: "result-agent" }, el("h3", {}, name),
       el("span", { class: "muted" }, count ? `${count} in progress` : `${completed.length} completed`));
     if (!latest) return el("div", { class: "agent-results result-empty" }, agent,
@@ -837,8 +872,16 @@ function renderTasks(board) {
   const scroll = {};
   $("board").querySelectorAll(".list").forEach((n) => { scroll[n.dataset.col] = n.scrollTop; });
   const byId = Object.fromEntries(board.tasks.map((t) => [t.id, t]));
+  const goals = board.tasks.filter((t) => t.kind === "goal");
+  $("goals").hidden = !goals.length;
+  $("goals").replaceChildren(el("h2", {}, `Long-term goals (${goals.length})`),
+    ...goals.map((g) => {
+      const children = board.tasks.filter((t) => t.kind !== "goal" && t.parentId === g.id);
+      return el("div", {}, taskCard(g, byId), el("p", { class: "muted" },
+        `${children.filter((t) => t.status === "completed").length}/${children.filter((t) => t.status !== "superseded").length} batches completed; ${children.filter((t) => t.status === "superseded").length} superseded`));
+    }));
   $("board").replaceChildren(...COLUMNS.map(([status, title]) => {
-    const all = board.tasks.filter((t) => t.status === status);
+    const all = board.tasks.filter((t) => t.kind !== "goal" && (t.status === status || (status === "completed" && t.status === "superseded")));
     let tasks = sortTasks(status, all);
     let hidden = 0;
     if (status === "completed" && tasks.length > state.doneShown) {
@@ -1117,7 +1160,7 @@ function renderTerminals(board) {
   for (const m of board.members) {
     if (!wanted.has(m.name)) continue;
     const member = { ...m, leader: m.agentId === board.team.leadAgentId };
-    const tasks = board.tasks.filter((t) => t.status === "in_progress" && t.owner === m.name).map((t) => t.subject);
+    const tasks = board.tasks.filter((t) => t.kind !== "goal" && t.status === "in_progress" && t.owner === m.name).map((t) => t.subject);
     if (terms.has(m.name)) terms.get(m.name).update(member, tasks);
     else {
       const card = new AgentTerminal(state.team, member, tasks);

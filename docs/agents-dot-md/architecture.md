@@ -88,6 +88,7 @@ team-worker board serve ──> internal/board (同一看板的独立进程，�
 - 迁移：`internal/store/migrations/*.sql` 用 `go:embed` 内置，Goose Provider 负责顺序执行和事务，进度记在 `goose_db_version`。旧库的 `PRAGMA user_version` 一次性接入 Goose 历史；各 SQL 仍同步更新 `user_version`，用于版本兼容检查。**已发布的迁移不改，只追加文件。**
 - 时间戳：字符串存储，格式对齐 Python `datetime.isoformat()`（`store.timestamp`），保持与 ClawTeam 输出一致。
 - 通知：没有消息队列；`Hub` 是进程内「关闭旧 channel、换新 channel」的广播。
+- 任务阶段与交接：`tasks.tracking` JSON 保存 kind、父目标、接替任务及追加式阶段报告，随任务行一起快照。store 批量读取关联检查点与请示的当前状态，详情和看板不保存一份过时状态；交接在同一事务中取消旧检查点、释放旧锁并把未完成依赖转到接替任务，不产生 TaskCompleted 事件。命令与统计语义见 [任务阶段与交接](../task-progress.md)。
 - 单次检查点：`store` 保存任务关联、状态、截止时间和结果，状态变更与 inbox 通知在同一事务完成；daemon 启动时及每秒扫描到期记录，空扫描不触发 Hub。负责人必须显式接手和回报，通知消费不等于执行。任务改派或完成时取消未结束检查点；超时告警先到 Leader，再到 operator。检查点随团队快照保存和恢复。接口及交接行为见 [单次检查点](../checkpoints.md)。
 - 事件 hook：store 的写操作在同一个事务里调用 `s.emit`，把事件写进 `event_outbox`（只在有匹配的 `event_hooks` 时写，没有外键，团队删除时的 `TeamShutdown` 也能留下）。daemon 的 `HookRunner`（`internal/server/eventhooks.go`）在每次写入后被 `Hub` 唤醒，按顺序执行匹配的 shell hook，执行完再删除事件；删除不触发 `OnChange`，不会自己唤醒自己。新增事件类型：在 `model.EventTypes` 登记，在对应的 store 写操作里 `emit`。
 - 请示与 AI 自动审核：请示存在 `decision_requests`，创建和决定都在同一个事务里给 `operator` / 请示人投递消息。daemon 的 `AutoReviewer`（`internal/server/autoreview.go`）同样由 `Hub` 唤醒，从 `AutoReviewQueue` 取打开了 `teams.auto_review` 的团队里未审过的请示，先 `ClaimAutoReview` 标记已审（保证每条只审一次，重启也不重审），再运行审核命令（可替换的 `Review` 函数，测试用假的）；模型上报或失败只写 `auto_note`，请示保持 pending。
@@ -125,3 +126,5 @@ Web 与 CLI HTTP 共用 SQLite `settings` 中的访问 Key；daemon 启动时生
 `runner.Spawn` 在启动及恢复时通过本地 API 取得最新个人上下文；CLI hooks 在恢复、压缩及工具或轮次边界重新读取更新。daemon 检查外部编辑并归档版本，唤醒等待变化的 hook，不向终端粘贴文档更新。无 hooks 的执行器在启动、恢复或显式读取时更新。提供清单、确认读取和实际行为验证是不同的证据。
 
 复盘调度和手动复盘共用独立批处理执行器，复用运行 profile 与适配器，生成候选 JSON。文件模块校验目标、证据和基础哈希后应用。自动调度和自动应用分别显式启用；自动应用要求成员已停止，并与该成员的 runner 启动互斥。调度配置、证据游标、候选和失败状态都保存在个人资料目录中，不增加数据库表。具体操作和限制见 `docs/agent-memory.md`。
+
+运行中协议更新：`spawn` 给嵌入的协作模板计算版本；`runner` 导出同一角色提示词的渲染入口，`server` 组合当前团队和个人指令，提供 protocol 读取与确认 API。`store` 将版本与 offered/read/acked 时间保存在 Agent 的当前 Run 上；daemon 启动时按版本通过现有收件箱投递更新，事务保证重启不重复通知，不重启成员。成员任务去向由 `model.SummarizeMemberWork` 从看板已批量读取的任务汇总，独立于进程存活和 hook 活动。

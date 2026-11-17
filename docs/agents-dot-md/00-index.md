@@ -1,6 +1,6 @@
 # docs/agents-dot-md 模块索引
 
-> AGENTS.md 的细化模块目录（不会被 Claude Code 自动加载，按需查阅）。本文件由 agents-dot-md skill 的 `reindex.py` 生成，勿手工编辑。
+> AGENTS.md 的细化模块目录（不会被 agent 自动加载，按需查阅）。本文件由 agents-dot-md skill 的 `reindex.py` 生成，勿手工编辑。
 
 - [系统架构](architecture.md) — 组件边界、关键链路、数据流与设计决策；动结构、加模块、接外部依赖前先看本文。
 - [代码 checklist（强制自检）](code-checklist.md) — 写完 / 改完代码必须逐条对照的硬性自检清单；新增条目直接追加本文件。

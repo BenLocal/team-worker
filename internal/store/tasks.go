@@ -16,6 +16,8 @@ import (
 )
 
 type CreateTaskInput struct {
+	Kind        string         `json:"kind,omitempty"`
+	ParentID    string         `json:"parentId,omitempty"`
 	Subject     string         `json:"subject"`
 	Description string         `json:"description"`
 	Owner       string         `json:"owner"`
@@ -37,17 +39,18 @@ func (s *Store) CreateTask(ctx context.Context, team string, in CreateTaskInput)
 	}
 	now := s.timestamp()
 	t := model.Task{
-		ID:          randomHex(8),
-		Subject:     in.Subject,
-		Description: in.Description,
-		Status:      model.StatusPending,
-		Priority:    in.Priority,
-		Owner:       in.Owner,
-		Blocks:      dedupe(in.Blocks),
-		BlockedBy:   dedupe(in.BlockedBy),
-		CreatedAt:   now,
-		UpdatedAt:   now,
-		Metadata:    in.Metadata,
+		TaskTracking: model.TaskTracking{Kind: in.Kind, ParentID: in.ParentID},
+		ID:           randomHex(8),
+		Subject:      in.Subject,
+		Description:  in.Description,
+		Status:       model.StatusPending,
+		Priority:     in.Priority,
+		Owner:        in.Owner,
+		Blocks:       dedupe(in.Blocks),
+		BlockedBy:    dedupe(in.BlockedBy),
+		CreatedAt:    now,
+		UpdatedAt:    now,
+		Metadata:     in.Metadata,
 	}
 	if t.Metadata == nil {
 		t.Metadata = map[string]any{}
@@ -67,6 +70,9 @@ func (s *Store) CreateTask(ctx context.Context, team string, in CreateTaskInput)
 		if err := checkDeps(ctx, tx, team, t.ID, t.BlockedBy); err != nil {
 			return err
 		}
+		if err := validateTaskTracking(ctx, tx, team, t); err != nil {
+			return err
+		}
 		if err := insertTask(ctx, tx, team, t); err != nil {
 			return err
 		}
@@ -82,18 +88,30 @@ func (s *Store) GetTask(ctx context.Context, team, id string) (model.Task, error
 	if err := requireTeam(ctx, s.db, team); err != nil {
 		return model.Task{}, err
 	}
-	return getTask(ctx, s.db, team, id)
+	t, err := getTask(ctx, s.db, team, id)
+	if err != nil {
+		return t, err
+	}
+	tasks := []model.Task{t}
+	if err := s.enrichTaskTracking(ctx, team, tasks); err != nil {
+		return t, err
+	}
+	return tasks[0], nil
 }
 
 type UpdateTaskInput struct {
-	Result       *model.TaskResult `json:"result,omitempty"`
-	Status       *model.TaskStatus `json:"status,omitempty"`
-	Owner        *string           `json:"owner,omitempty"`
-	Subject      *string           `json:"subject,omitempty"`
-	Description  *string           `json:"description,omitempty"`
-	Priority     *model.Priority   `json:"priority,omitempty"`
-	AddBlocks    []string          `json:"addBlocks,omitempty"`
-	AddBlockedBy []string          `json:"addBlockedBy,omitempty"`
+	Kind         *string             `json:"kind,omitempty"`
+	ParentID     *string             `json:"parentId,omitempty"`
+	SupersededBy *string             `json:"supersededBy,omitempty"`
+	Progress     *model.TaskProgress `json:"progress,omitempty"`
+	Result       *model.TaskResult   `json:"result,omitempty"`
+	Status       *model.TaskStatus   `json:"status,omitempty"`
+	Owner        *string             `json:"owner,omitempty"`
+	Subject      *string             `json:"subject,omitempty"`
+	Description  *string             `json:"description,omitempty"`
+	Priority     *model.Priority     `json:"priority,omitempty"`
+	AddBlocks    []string            `json:"addBlocks,omitempty"`
+	AddBlockedBy []string            `json:"addBlockedBy,omitempty"`
 	// RemoveBlockedBy drops blockers; a blocked task left without any
 	// becomes pending.
 	RemoveBlockedBy []string       `json:"removeBlockedBy,omitempty"`
@@ -130,7 +148,16 @@ func (s *Store) UpdateTask(ctx context.Context, team, id string, in UpdateTaskIn
 			return err
 		}
 		oldStatus := t.Status
+		if in.SupersededBy != nil && t.Status == model.StatusCompleted {
+			return conflictf("Completed tasks cannot be superseded")
+		}
 		oldOwner := t.Owner
+		if t.Status == model.StatusSuperseded && supersessionRetry(t, in) {
+			return nil
+		}
+		if t.Status == model.StatusSuperseded && (in.Status != nil || in.SupersededBy != nil || in.Progress != nil || in.Kind != nil || in.ParentID != nil) {
+			return conflictf("Superseded task is closed; update its replacement instead")
+		}
 		now := s.timestamp()
 
 		if in.Status != nil && (*in.Status == model.StatusInProgress || *in.Status == model.StatusCompleted) {
@@ -167,7 +194,7 @@ func (s *Store) UpdateTask(ctx context.Context, team, id string, in UpdateTaskIn
 				if in.Owner == nil && in.Caller != "" && t.Owner == "" {
 					t.Owner = in.Caller
 				}
-			case model.StatusCompleted, model.StatusPending:
+			case model.StatusCompleted, model.StatusPending, model.StatusSuperseded:
 				t.LockedBy, t.LockedAt = "", ""
 			}
 			if *in.Status == model.StatusCompleted && t.StartedAt != "" {
@@ -240,13 +267,47 @@ func (s *Store) UpdateTask(ctx context.Context, team, id string, in UpdateTaskIn
 			result.ReportedAt = now
 			t.Result = &result
 		}
+		if in.Kind != nil {
+			t.Kind = *in.Kind
+		}
+		if in.ParentID != nil {
+			t.ParentID = *in.ParentID
+		}
+		if in.SupersededBy != nil {
+			t.SupersededBy = *in.SupersededBy
+		}
+		if oldStatus != model.StatusSuperseded {
+			if err := validateTaskTracking(ctx, tx, team, t); err != nil {
+				return err
+			}
+		}
+		if t.Kind == "goal" {
+			t.LockedBy, t.LockedAt = "", ""
+		}
+		if in.Progress != nil {
+			oldReports := len(t.Progress)
+			if err := appendTaskProgress(ctx, tx, team, &t, *in.Progress, in.Caller, now); err != nil {
+				return err
+			}
+			if len(t.Progress) == oldReports && progressOnlyUpdate(in) {
+				return nil
+			}
+		}
+		if t.Status == model.StatusSuperseded && oldStatus != model.StatusSuperseded {
+			if in.Result == nil {
+				return invalidf("Superseding a task requires a result describing completed work and remaining gaps")
+			}
+			if err := transferTaskDependents(ctx, tx, team, t.ID, t.SupersededBy, now); err != nil {
+				return err
+			}
+		}
 		t.UpdatedAt = now
 
 		if err := saveTask(ctx, tx, team, t); err != nil {
 			return err
 		}
-		if t.Owner != oldOwner || t.Status == model.StatusCompleted {
-			if err := cancelTaskCheckpoints(ctx, tx, team, t.ID, now, "Task owner changed or task completed; register a new checkpoint if needed"); err != nil {
+		if t.Owner != oldOwner || t.Status == model.StatusCompleted || t.Status == model.StatusSuperseded {
+			if err := cancelTaskCheckpoints(ctx, tx, team, t.ID, now, "Task owner changed or task closed; register a new checkpoint if needed"); err != nil {
 				return err
 			}
 		}
@@ -336,6 +397,9 @@ func (s *Store) ListTasks(ctx context.Context, team string, f TaskFilter) ([]mod
 			tasks[i].BlockedBy = d
 		}
 	}
+	if err := s.enrichTaskTracking(ctx, team, tasks); err != nil {
+		return nil, err
+	}
 	if f.SortPriority {
 		sort.SliceStable(tasks, func(i, j int) bool {
 			ri, rj := model.PriorityRank(tasks[i].Priority), model.PriorityRank(tasks[j].Priority)
@@ -356,7 +420,16 @@ func (s *Store) TaskStats(ctx context.Context, team string) (model.TaskStats, er
 	st := model.TaskStats{Total: len(tasks)}
 	var sum float64
 	for _, t := range tasks {
+		if t.Kind == "goal" {
+			st.Goals++
+			continue
+		}
+		if t.Status == model.StatusInProgress && (t.ExecutionState == "waiting" || t.ExecutionState == "unregistered") {
+			st.Waiting++
+		}
 		switch t.Status {
+		case model.StatusSuperseded:
+			st.Superseded++
 		case model.StatusCompleted:
 			st.Completed++
 			if d, ok := t.Metadata["duration_seconds"].(float64); ok {
@@ -378,15 +451,15 @@ func (s *Store) TaskStats(ctx context.Context, team string) (model.TaskStats, er
 }
 
 const taskColumns = `id, subject, description, status, priority, owner, locked_by, locked_at,
-	blocks, started_at, created_at, updated_at, metadata, result`
+	blocks, started_at, created_at, updated_at, metadata, result, tracking`
 
 type scanner interface{ Scan(dest ...any) error }
 
 func scanTask(row scanner) (model.Task, error) {
 	var t model.Task
-	var blocks, metadata, result string
+	var blocks, metadata, result, tracking string
 	if err := row.Scan(&t.ID, &t.Subject, &t.Description, &t.Status, &t.Priority, &t.Owner,
-		&t.LockedBy, &t.LockedAt, &blocks, &t.StartedAt, &t.CreatedAt, &t.UpdatedAt, &metadata, &result); err != nil {
+		&t.LockedBy, &t.LockedAt, &blocks, &t.StartedAt, &t.CreatedAt, &t.UpdatedAt, &metadata, &result, &tracking); err != nil {
 		return t, err
 	}
 	if err := json.Unmarshal([]byte(blocks), &t.Blocks); err != nil {
@@ -396,6 +469,9 @@ func scanTask(row scanner) (model.Task, error) {
 		return t, err
 	}
 	if err := json.Unmarshal([]byte(result), &t.Result); err != nil {
+		return t, err
+	}
+	if err := json.Unmarshal([]byte(tracking), &t.TaskTracking); err != nil {
 		return t, err
 	}
 	if t.Blocks == nil {
@@ -456,12 +532,16 @@ func insertTask(ctx context.Context, q queryer, team string, t model.Task) error
 	if err != nil {
 		return err
 	}
+	tracking, err := json.Marshal(t.TaskTracking)
+	if err != nil {
+		return err
+	}
 	_, err = q.ExecContext(ctx,
 		`INSERT INTO tasks (team, id, subject, description, status, priority, owner, locked_by,
-		 locked_at, blocks, started_at, created_at, updated_at, metadata)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 locked_at, blocks, started_at, created_at, updated_at, metadata, tracking)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		team, t.ID, t.Subject, t.Description, t.Status, t.Priority, t.Owner, t.LockedBy,
-		t.LockedAt, blocks, t.StartedAt, t.CreatedAt, t.UpdatedAt, metadata)
+		t.LockedAt, blocks, t.StartedAt, t.CreatedAt, t.UpdatedAt, metadata, string(tracking))
 	return err
 }
 
@@ -474,12 +554,16 @@ func saveTask(ctx context.Context, q queryer, team string, t model.Task) error {
 	if err != nil {
 		return err
 	}
+	tracking, err := json.Marshal(t.TaskTracking)
+	if err != nil {
+		return err
+	}
 	_, err = q.ExecContext(ctx,
 		`UPDATE tasks SET subject = ?, description = ?, status = ?, priority = ?, owner = ?,
-		 locked_by = ?, locked_at = ?, blocks = ?, started_at = ?, updated_at = ?, metadata = ?, result = ?
+		 locked_by = ?, locked_at = ?, blocks = ?, started_at = ?, updated_at = ?, metadata = ?, result = ?, tracking = ?
 		 WHERE team = ? AND id = ?`,
 		t.Subject, t.Description, t.Status, t.Priority, t.Owner, t.LockedBy, t.LockedAt,
-		blocks, t.StartedAt, t.UpdatedAt, metadata, string(result), team, t.ID)
+		blocks, t.StartedAt, t.UpdatedAt, metadata, string(result), string(tracking), team, t.ID)
 	return err
 }
 
@@ -500,21 +584,39 @@ func encodeTaskJSON(t model.Task) (string, string, error) {
 // again, since dependents are released only when a blocker completes, and a
 // mistyped id would block it for good.
 func openBlockers(ctx context.Context, q queryer, team string, deps []string) ([]string, error) {
+	if len(deps) == 0 {
+		return []string{}, nil
+	}
+	encoded, err := json.Marshal(deps)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := q.QueryContext(ctx, `WITH RECURSIVE resolved(root,id,status,next) AS (
+ SELECT value,t.id,t.status,coalesce(json_extract(t.tracking,'$.supersededBy'),'')
+ FROM json_each(?) LEFT JOIN tasks t ON t.team=? AND t.id=value
+ UNION ALL
+ SELECT r.root,t.id,t.status,coalesce(json_extract(t.tracking,'$.supersededBy'),'')
+ FROM resolved r LEFT JOIN tasks t ON t.team=? AND t.id=r.next
+ WHERE r.status='superseded' AND r.next!=''
+ ) SELECT root,coalesce(id,''),coalesce(status,'') FROM resolved WHERE status IS NULL OR status!='superseded' OR next=''`, string(encoded), team, team)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
 	open := []string{}
-	for _, dep := range deps {
-		var status model.TaskStatus
-		err := q.QueryRowContext(ctx, "SELECT status FROM tasks WHERE team = ? AND id = ?", team, dep).Scan(&status)
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, invalidf("Blocking task '%s' does not exist in team '%s'", dep, team)
-		}
-		if err != nil {
+	for rows.Next() {
+		var root, id, status string
+		if err := rows.Scan(&root, &id, &status); err != nil {
 			return nil, err
 		}
-		if status != model.StatusCompleted {
-			open = append(open, dep)
+		if id == "" {
+			return nil, invalidf("Blocking task '%s' does not exist in team '%s'", root, team)
+		}
+		if model.TaskStatus(status) != model.StatusCompleted {
+			open = append(open, id)
 		}
 	}
-	return open, nil
+	return dedupe(open), rows.Err()
 }
 
 // checkDeps rejects self-dependencies and any new edge that would close a
@@ -651,7 +753,7 @@ func dedupe(items []string) []string {
 // in creation order, in one query. Dependencies are not filled in.
 func (s *Store) UnassignedPending(ctx context.Context) (map[string][]model.Task, error) {
 	rows, err := s.db.QueryContext(ctx, "SELECT team, "+taskColumns+
-		" FROM tasks WHERE status = ? AND owner = '' ORDER BY rowid", model.StatusPending)
+		" FROM tasks WHERE status = ? AND owner = '' AND coalesce(json_extract(tracking, '$.kind'), 'task') != 'goal' ORDER BY rowid", model.StatusPending)
 	if err != nil {
 		return nil, err
 	}

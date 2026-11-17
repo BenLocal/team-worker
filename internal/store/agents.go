@@ -11,17 +11,20 @@ import (
 	"github.com/benlocal/team-worker/internal/model"
 )
 
-const agentColumns = `team, name, agent_id, backend, target, pid, command, cwd, status, started_at, exited_at, nudge, run_id, stop_requested, exit_code, host, activity, activity_at`
+const agentColumns = `team, name, agent_id, backend, target, pid, command, cwd, status, started_at, exited_at, nudge, run_id, stop_requested, exit_code, host, activity, activity_at, protocol`
 
 func scanAgent(row scanner) (model.Agent, error) {
 	var a model.Agent
-	var command string
+	var command, protocol string
 	err := row.Scan(&a.Team, &a.Name, &a.AgentID, &a.Backend, &a.Target, &a.PID, &command, &a.Cwd,
-		&a.Status, &a.StartedAt, &a.ExitedAt, &a.Nudge, &a.RunID, &a.StopRequested, &a.ExitCode, &a.Host, &a.Activity, &a.ActivityAt)
+		&a.Status, &a.StartedAt, &a.ExitedAt, &a.Nudge, &a.RunID, &a.StopRequested, &a.ExitCode, &a.Host, &a.Activity, &a.ActivityAt, &protocol)
 	if err != nil {
 		return a, err
 	}
 	if err := json.Unmarshal([]byte(command), &a.Command); err != nil {
+		return a, err
+	}
+	if err := json.Unmarshal([]byte(protocol), &a.Protocol); err != nil {
 		return a, err
 	}
 	if a.Command == nil {
@@ -45,6 +48,7 @@ func (s *Store) RegisterAgent(ctx context.Context, a model.Agent) (model.Agent, 
 	a.ExitedAt = ""
 	// A new run has reported nothing yet; re-registering a run keeps its state.
 	a.Activity, a.ActivityAt = "", ""
+	a.Protocol = nil
 	command, err := json.Marshal(a.Command)
 	if err != nil {
 		return a, err
@@ -67,14 +71,28 @@ func (s *Store) RegisterAgent(ctx context.Context, a model.Agent) (model.Agent, 
 				a.Status, a.ExitedAt, a.StopRequested, a.ExitCode = previous.Status, previous.ExitedAt, previous.StopRequested, previous.ExitCode
 				a.StartedAt = previous.StartedAt
 				a.Activity, a.ActivityAt = previous.Activity, previous.ActivityAt
+				a.Protocol = previous.Protocol
 			} else if previous.RunID != "" && previous.Status == model.AgentRunning {
 				return conflictf("Agent already has a running instance")
 			}
 		}
+		if !sameRun {
+			var version string
+			if err := tx.QueryRowContext(ctx, "SELECT coalesce((SELECT value FROM settings WHERE name=?),'')", protocolSetting).Scan(&version); err != nil {
+				return err
+			}
+			if version != "" {
+				a.Protocol = &model.ProtocolState{Version: version, OfferedAt: s.timestamp()}
+			}
+		}
+		protocol, err := json.Marshal(a.Protocol)
+		if err != nil {
+			return err
+		}
 		_, err = tx.ExecContext(ctx,
-			`INSERT OR REPLACE INTO agents (`+agentColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			`INSERT OR REPLACE INTO agents (`+agentColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			a.Team, a.Name, a.AgentID, a.Backend, a.Target, a.PID, string(command), a.Cwd,
-			a.Status, a.StartedAt, a.ExitedAt, a.Nudge, a.RunID, a.StopRequested, a.ExitCode, a.Host, a.Activity, a.ActivityAt)
+			a.Status, a.StartedAt, a.ExitedAt, a.Nudge, a.RunID, a.StopRequested, a.ExitCode, a.Host, a.Activity, a.ActivityAt, string(protocol))
 		if err != nil || sameRun {
 			return err
 		}
@@ -376,7 +394,7 @@ func (s *Store) Board(ctx context.Context, team string, messageLimit int) (model
 	rows.Close()
 	b.Members = make([]model.BoardMember, len(b.Team.Members))
 	for i, m := range b.Team.Members {
-		b.Members[i] = model.BoardMember{Member: m, InboxCount: counts[m.InboxName()]}
+		b.Members[i] = model.BoardMember{Member: m, InboxCount: counts[m.InboxName()], Work: model.SummarizeMemberWork(b.Tasks, m.Name, s.Now())}
 		if a, ok := byName[m.Name]; ok {
 			b.Members[i].Agent = &a
 		}

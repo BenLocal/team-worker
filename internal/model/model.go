@@ -14,14 +14,15 @@ const (
 	StatusInProgress TaskStatus = "in_progress"
 	StatusCompleted  TaskStatus = "completed"
 	StatusBlocked    TaskStatus = "blocked"
+	StatusSuperseded TaskStatus = "superseded"
 )
 
 func ParseTaskStatus(s string) (TaskStatus, error) {
 	switch v := TaskStatus(s); v {
-	case StatusPending, StatusInProgress, StatusCompleted, StatusBlocked:
+	case StatusPending, StatusInProgress, StatusCompleted, StatusBlocked, StatusSuperseded:
 		return v, nil
 	}
-	return "", fmt.Errorf("invalid status %q: use pending, in_progress, completed or blocked", s)
+	return "", fmt.Errorf("invalid status %q: use pending, in_progress, completed, blocked or superseded", s)
 }
 
 type Priority string
@@ -117,21 +118,26 @@ type TeamOverview struct {
 }
 
 type Task struct {
-	Result      *TaskResult    `json:"result,omitempty"`
-	ID          string         `json:"id"`
-	Subject     string         `json:"subject"`
-	Description string         `json:"description"`
-	Status      TaskStatus     `json:"status"`
-	Priority    Priority       `json:"priority"`
-	Owner       string         `json:"owner"`
-	LockedBy    string         `json:"lockedBy"`
-	LockedAt    string         `json:"lockedAt"`
-	Blocks      []string       `json:"blocks"`
-	BlockedBy   []string       `json:"blockedBy"`
-	StartedAt   string         `json:"startedAt"`
-	CreatedAt   string         `json:"createdAt"`
-	UpdatedAt   string         `json:"updatedAt"`
-	Metadata    map[string]any `json:"metadata"`
+	TaskTracking
+	ExecutionState string           `json:"executionState,omitempty"`
+	NextCheckpoint *Checkpoint      `json:"nextCheckpoint,omitempty"`
+	WaitingRequest *DecisionRequest `json:"waitingRequest,omitempty"`
+	WaitCheckpoint *Checkpoint      `json:"waitCheckpoint,omitempty"`
+	Result         *TaskResult      `json:"result,omitempty"`
+	ID             string           `json:"id"`
+	Subject        string           `json:"subject"`
+	Description    string           `json:"description"`
+	Status         TaskStatus       `json:"status"`
+	Priority       Priority         `json:"priority"`
+	Owner          string           `json:"owner"`
+	LockedBy       string           `json:"lockedBy"`
+	LockedAt       string           `json:"lockedAt"`
+	Blocks         []string         `json:"blocks"`
+	BlockedBy      []string         `json:"blockedBy"`
+	StartedAt      string           `json:"startedAt"`
+	CreatedAt      string           `json:"createdAt"`
+	UpdatedAt      string           `json:"updatedAt"`
+	Metadata       map[string]any   `json:"metadata"`
 }
 
 type TaskResult struct {
@@ -143,6 +149,9 @@ type TaskResult struct {
 
 type TaskStats struct {
 	Total              int     `json:"total"`
+	Goals              int     `json:"goals"`
+	Waiting            int     `json:"waiting"`
+	Superseded         int     `json:"superseded"`
 	Completed          int     `json:"completed"`
 	InProgress         int     `json:"in_progress"`
 	Pending            int     `json:"pending"`
@@ -203,21 +212,22 @@ func (a AgentActivity) Valid() bool {
 // Agent is a spawned agent process. Target is the tmux pane id for the tmux
 // backend; PID is the pane's shell or the subprocess.
 type Agent struct {
-	PreviousRunID string      `json:"previousRunId,omitempty"`
-	RunID         string      `json:"runId,omitempty"`
-	StopRequested bool        `json:"stopRequested,omitempty"`
-	ExitCode      int         `json:"exitCode,omitempty"`
-	Team          string      `json:"team"`
-	Name          string      `json:"name"`
-	AgentID       string      `json:"agentId"`
-	Backend       string      `json:"backend"`
-	Target        string      `json:"target"`
-	PID           int         `json:"pid"`
-	Command       []string    `json:"command"`
-	Cwd           string      `json:"cwd"`
-	Status        AgentStatus `json:"status"`
-	StartedAt     string      `json:"startedAt"`
-	ExitedAt      string      `json:"exitedAt"`
+	Protocol      *ProtocolState `json:"protocol,omitempty"`
+	PreviousRunID string         `json:"previousRunId,omitempty"`
+	RunID         string         `json:"runId,omitempty"`
+	StopRequested bool           `json:"stopRequested,omitempty"`
+	ExitCode      int            `json:"exitCode,omitempty"`
+	Team          string         `json:"team"`
+	Name          string         `json:"name"`
+	AgentID       string         `json:"agentId"`
+	Backend       string         `json:"backend"`
+	Target        string         `json:"target"`
+	PID           int            `json:"pid"`
+	Command       []string       `json:"command"`
+	Cwd           string         `json:"cwd"`
+	Status        AgentStatus    `json:"status"`
+	StartedAt     string         `json:"startedAt"`
+	ExitedAt      string         `json:"exitedAt"`
 	// Host is no longer written or read: every agent runs beside the daemon
 	// that started it. Older records keep the hostname they were started on.
 	Host string `json:"host,omitempty"`
@@ -264,8 +274,9 @@ type AgentExit struct {
 // BoardMember is one row of the team board.
 type BoardMember struct {
 	Member
-	InboxCount int    `json:"inboxCount"`
-	Agent      *Agent `json:"agent,omitempty"`
+	Work       MemberWork `json:"work"`
+	InboxCount int        `json:"inboxCount"`
+	Agent      *Agent     `json:"agent,omitempty"`
 }
 
 type Board struct {

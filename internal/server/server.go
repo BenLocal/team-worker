@@ -172,6 +172,8 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /v1/teams/{team}/agents", s.registerAgent)
 	m.HandleFunc("POST /v1/teams/{team}/agents/stop", s.stopTeamAgents)
 	m.HandleFunc("GET /v1/teams/{team}/agents/{name}", s.getAgent)
+	m.HandleFunc("GET /v1/teams/{team}/agents/{name}/protocol", s.agentProtocol)
+	m.HandleFunc("POST /v1/teams/{team}/agents/{name}/protocol", s.agentProtocol)
 	m.HandleFunc("POST /v1/teams/{team}/agents/{name}/exit", s.agentExited)
 	m.HandleFunc("POST /v1/teams/{team}/agents/{name}/stop", s.requestAgentStop)
 	m.HandleFunc("POST /v1/teams/{team}/agents/{name}/terminate", s.terminateAgent)

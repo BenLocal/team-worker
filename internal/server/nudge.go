@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -167,10 +168,25 @@ func (n *Nudger) checkStall(ctx context.Context, a model.Agent, st *nudgeState, 
 	if idle < n.StallAfter {
 		return
 	}
-	tasks, err := n.Store.ListTasks(ctx, a.Team, store.TaskFilter{Status: model.StatusInProgress, Owner: a.Name})
+	leader, err := n.Store.Leader(ctx, a.Team)
 	if err != nil {
 		return
 	}
+	if leader.Name == a.Name {
+		n.checkCoordination(ctx, a, st, now)
+		return
+	}
+	tasks, err := n.Store.ListTasks(ctx, a.Team, store.TaskFilter{Owner: a.Name})
+	if err != nil {
+		return
+	}
+	executions := tasks[:0]
+	for _, task := range tasks {
+		if task.Kind != "goal" && task.Status != model.StatusCompleted && task.Status != model.StatusSuperseded && task.ExecutionState != "waiting" && !(task.Status == model.StatusBlocked && len(task.BlockedBy) > 0) {
+			executions = append(executions, task)
+		}
+	}
+	tasks = executions
 	ids := make([]string, len(tasks))
 	lines := make([]string, len(tasks))
 	for i, task := range tasks {
@@ -183,15 +199,11 @@ func (n *Nudger) checkStall(ctx context.Context, a model.Agent, st *nudgeState, 
 	if len(tasks) == 0 || st.stallReported || (st.stallNudges > 0 && now.Sub(st.stallAt) < n.StallRepeat) {
 		return
 	}
-	// The leader waits at its prompt while its workers run; that is no stall.
-	leader, err := n.Store.Leader(ctx, a.Team)
-	if err != nil || leader.Name == a.Name {
-		return
-	}
+
 	taskList := strings.Join(lines, "; ")
 	if st.stallNudges < stallReminders {
-		text := fmt.Sprintf("Your task(s) in team %s are still in_progress: %s. Continue them; if you are waiting "+
-			"on someone or cannot go on, mark the task blocked or tell the leader with "+
+		text := fmt.Sprintf("Your open execution task(s) in team %s need follow-up: %s. Continue them; if you are waiting "+
+			"on someone or a future event, record `task progress --state waiting --reason ... --next-action ...` with its registered checkpoint or request; otherwise report the current stage and continue authorized work. Tell the leader with "+
 			"`team-worker inbox send %s %s \"...\"`.", a.Team, taskList, a.Team, leader.Name)
 		if err := n.Type(a.Target, text); err != nil {
 			n.Log.Warn("stall reminder failed", "team", a.Team, "agent", a.Name, "err", err)
@@ -202,7 +214,7 @@ func (n *Nudger) checkStall(ctx context.Context, a model.Agent, st *nudgeState, 
 		st.screen = ""
 		return
 	}
-	content := fmt.Sprintf("%s has sat idle at its prompt for %s with in-progress task(s) %s and did not react "+
+	content := fmt.Sprintf("%s has sat idle at its prompt for %s with open execution task(s) %s and did not react "+
 		"to %d reminders. Check it with `team-worker agent screen %s %s`, then message it or reassign the task.",
 		a.Name, idle.Round(time.Minute), taskList, stallReminders, a.Team, a.Name)
 	if _, err := n.Store.Send(ctx, a.Team, store.SendInput{From: "team-worker", To: leader.Name, Content: content}); err != nil {
@@ -210,6 +222,83 @@ func (n *Nudger) checkStall(ctx context.Context, a model.Agent, st *nudgeState, 
 		return
 	}
 	n.Log.Info("reported stalled agent to the leader", "team", a.Team, "agent", a.Name, "tasks", st.stallTasks)
+	st.stallReported = true
+}
+
+// checkCoordination asks an idle leader to account for executable or unexplained work.
+// Registered waits and completed batches do not create work just to keep agents busy.
+func (n *Nudger) checkCoordination(ctx context.Context, a model.Agent, st *nudgeState, now time.Time) {
+	agents, err := n.Store.ListAgents(ctx, a.Team)
+	if err != nil {
+		return
+	}
+	for _, peer := range agents {
+		if peer.Name != a.Name && peer.Status == model.AgentRunning && peer.Activity == model.ActivityWorking {
+			return
+		}
+	}
+	tasks, err := n.Store.ListTasks(ctx, a.Team, store.TaskFilter{})
+	if err != nil {
+		return
+	}
+	owners := map[string]bool{}
+	issues := []string{}
+	for _, task := range tasks {
+		if task.Kind == "goal" || task.Status == model.StatusCompleted || task.Status == model.StatusSuperseded {
+			continue
+		}
+		if task.Owner == "" && task.Status == model.StatusPending {
+			issues = append(issues, task.ID+" unassigned")
+		} else {
+			owners[task.Owner] = true
+		}
+	}
+	for owner := range owners {
+		work := model.SummarizeMemberWork(tasks, owner, now)
+		if work.State != "needs_review" && work.State != "assigned" {
+			continue
+		}
+		for _, task := range tasks {
+			if task.Owner == owner && task.Kind != "goal" && task.Status != model.StatusCompleted && task.Status != model.StatusSuperseded && !(task.Status == model.StatusBlocked && len(task.BlockedBy) > 0) && task.ExecutionState != "waiting" {
+				issues = append(issues, task.ID+" @"+owner)
+			}
+		}
+	}
+	sort.Strings(issues)
+	signature := "coord:" + strings.Join(issues, ",")
+	if len(issues) == 0 {
+		st.stallTasks = ""
+		st.stallNudges = 0
+		st.stallReported = false
+		return
+	}
+	if signature != st.stallTasks {
+		st.stallTasks = signature
+		st.stallNudges = 0
+		st.stallAt = time.Time{}
+		st.stallReported = false
+	}
+	if st.stallReported {
+		return
+	}
+	if st.stallNudges == 0 {
+		text := fmt.Sprintf("Idle coordination review for team %s: %s. Check whether authorized independent work can proceed. Before ending the turn, record each open task's stage or waiting reason, next action and registered checkpoint/request with `team-worker task progress`. Respect scheduled windows; do not run future observations early. Members with completed batches may remain on standby.", a.Team, strings.Join(issues, "; "))
+		if err := n.Type(a.Target, text); err != nil {
+			n.Log.Warn("coordination reminder failed", "team", a.Team, "err", err)
+			return
+		}
+		st.stallNudges = 1
+		st.stallAt = now
+		return
+	}
+	if now.Sub(st.stallAt) < n.StallRepeat {
+		return
+	}
+	content := fmt.Sprintf("Idle coordination remains unresolved in team %s after a reminder: %s. The leader has not accounted for these open assignments; inspect progress and waiting records before changing execution.", a.Team, strings.Join(issues, "; "))
+	if _, err := n.Store.Send(ctx, a.Team, store.SendInput{From: "team-worker", To: store.OperatorInbox, Content: content}); err != nil {
+		n.Log.Warn("coordination escalation failed", "team", a.Team, "err", err)
+		return
+	}
 	st.stallReported = true
 }
 
