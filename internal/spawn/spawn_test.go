@@ -232,6 +232,19 @@ func TestBuildPromptAddsPlanApprovalOnlyWhenRequired(t *testing.T) {
 	}
 }
 
+func TestBuildPromptScopesGoalManagementToLeader(t *testing.T) {
+	leader := BuildPrompt(PromptParams{AgentName: "lead", Team: "demo", Leader: "lead"})
+	worker := BuildPrompt(PromptParams{AgentName: "alice", Team: "demo", Leader: "lead"})
+	for _, section := range []string{"### Resolve blockers\n", "### Keep context and improve the workflow\n"} {
+		if strings.Count(leader, section) != 1 {
+			t.Errorf("leader prompt should include %q once", section)
+		}
+		if strings.Contains(worker, section) {
+			t.Errorf("worker prompt must not receive leader goal management: %q", section)
+		}
+	}
+}
+
 func TestBuildPromptRoutesUserQuestionsThroughTheLeader(t *testing.T) {
 	leader := BuildPrompt(PromptParams{AgentName: "lead", Team: "demo", Leader: "lead"})
 	worker := BuildPrompt(PromptParams{AgentName: "alice", Team: "demo", Leader: "lead"})
