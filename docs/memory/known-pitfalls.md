@@ -8,3 +8,4 @@
 
 - 2026-10-29：接管终端后输入法组词位置偏离终端光标，原因是 ghostty-web 0.4.0 聚焦 contenteditable 容器，隐藏 textarea 固定在 `(0, 0)`。接管时将焦点转到 textarea，用终端光标行列和 renderer 字体度量更新其坐标，并在组词期间显示预编辑文本。`internal/board/web/tests/terminal_input_test.py` 通过真实 Ghostty 与 Chromium CDP 验证行列变化、字体缩放、2 倍像素比、英文输入、中文确认/取消及粘贴；操作系统原生候选窗口的位置仍需本机输入法确认。
 - 2026-10-29：显示 IME 预编辑 textarea 后，页面通用 `:focus-visible` 规则会给它画出方框；浏览器组合输入测试复现 `outlineStyle: solid`，给 `.term-surface textarea` 单独设置 `outline: none` 后变为 `none`，中文确认、取消和粘贴测试仍通过。终端卡片继续显示自身的选中及接管状态。
+- 2026-11-17：审批列表很长时，Requests / Plans / Join requests 页签被裁掉且无法点击 → `.approvals` 是纵向 flex 容器，带 overflow 的 `.approval-tabs` 默认允许收缩，实测高度被压到 4px，而按钮仍为 24px → 页签栏设置 `flex: none` 保留自身高度，让外层列表滚动。浏览器回归应使用足够长的审批列表，并检查 `elementFromPoint` 命中按钮及三个面板可切换，不能只断言元素 visible。证据：`internal/board/web/tests/approvals_layout_test.py`，修复前 Requests 命中断言失败，修复后桌面和窄屏通过。

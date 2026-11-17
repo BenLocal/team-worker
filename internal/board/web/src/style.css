@@ -379,7 +379,7 @@ body.rail-collapsed #rail-tools { display: none; }
 /* ---- approvals: decision requests, plans and join requests, one sub-tab each ---- */
 .approvals { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding: 2px; }
 .approvals > .approval-group { width: 100%; max-width: 980px; }
-.approval-tabs { align-self: flex-start; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+.approval-tabs { flex: none; align-self: flex-start; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
 .approval-tabs em { font-style: normal; font-size: 11px; font-weight: 600; color: var(--accent); margin-left: 6px; }
 .approval-group h2 { font-size: 12px; font-weight: 600; color: var(--fg-2); margin: 0 0 8px; display: flex; justify-content: space-between; }
 .approval-group h2 .n { color: var(--muted); font-weight: 500; }
