@@ -119,25 +119,27 @@ type TeamOverview struct {
 
 type Task struct {
 	TaskTracking
-	ExecutionState string           `json:"executionState,omitempty"`
-	NextCheckpoint *Checkpoint      `json:"nextCheckpoint,omitempty"`
-	WaitingRequest *DecisionRequest `json:"waitingRequest,omitempty"`
-	WaitCheckpoint *Checkpoint      `json:"waitCheckpoint,omitempty"`
-	Result         *TaskResult      `json:"result,omitempty"`
-	ID             string           `json:"id"`
-	Subject        string           `json:"subject"`
-	Description    string           `json:"description"`
-	Status         TaskStatus       `json:"status"`
-	Priority       Priority         `json:"priority"`
-	Owner          string           `json:"owner"`
-	LockedBy       string           `json:"lockedBy"`
-	LockedAt       string           `json:"lockedAt"`
-	Blocks         []string         `json:"blocks"`
-	BlockedBy      []string         `json:"blockedBy"`
-	StartedAt      string           `json:"startedAt"`
-	CreatedAt      string           `json:"createdAt"`
-	UpdatedAt      string           `json:"updatedAt"`
-	Metadata       map[string]any   `json:"metadata"`
+	WaitVersion      string           `json:"waitVersion,omitempty"`
+	WaitReviewNeeded bool             `json:"waitReviewNeeded"`
+	ExecutionState   string           `json:"executionState,omitempty"`
+	NextCheckpoint   *Checkpoint      `json:"nextCheckpoint,omitempty"`
+	WaitingRequest   *DecisionRequest `json:"waitingRequest,omitempty"`
+	WaitCheckpoint   *Checkpoint      `json:"waitCheckpoint,omitempty"`
+	Result           *TaskResult      `json:"result,omitempty"`
+	ID               string           `json:"id"`
+	Subject          string           `json:"subject"`
+	Description      string           `json:"description"`
+	Status           TaskStatus       `json:"status"`
+	Priority         Priority         `json:"priority"`
+	Owner            string           `json:"owner"`
+	LockedBy         string           `json:"lockedBy"`
+	LockedAt         string           `json:"lockedAt"`
+	Blocks           []string         `json:"blocks"`
+	BlockedBy        []string         `json:"blockedBy"`
+	StartedAt        string           `json:"startedAt"`
+	CreatedAt        string           `json:"createdAt"`
+	UpdatedAt        string           `json:"updatedAt"`
+	Metadata         map[string]any   `json:"metadata"`
 }
 
 type TaskResult struct {

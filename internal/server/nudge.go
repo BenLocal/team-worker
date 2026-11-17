@@ -226,7 +226,7 @@ func (n *Nudger) checkStall(ctx context.Context, a model.Agent, st *nudgeState, 
 }
 
 // checkCoordination asks an idle leader to account for executable or unexplained work.
-// Registered waits and completed batches do not create work just to keep agents busy.
+// Unreviewed waits need a scope review; reviewed waits and completed batches may rest.
 func (n *Nudger) checkCoordination(ctx context.Context, a model.Agent, st *nudgeState, now time.Time) {
 	agents, err := n.Store.ListAgents(ctx, a.Team)
 	if err != nil {
@@ -246,6 +246,9 @@ func (n *Nudger) checkCoordination(ctx context.Context, a model.Agent, st *nudge
 	for _, task := range tasks {
 		if task.Kind == "goal" || task.Status == model.StatusCompleted || task.Status == model.StatusSuperseded {
 			continue
+		}
+		if task.NeedsWaitReview() {
+			issues = append(issues, task.ID+" @"+task.Owner+" waiting scope needs review (version "+model.TaskWaitVersion(task)+")")
 		}
 		if task.Owner == "" && task.Status == model.StatusPending {
 			issues = append(issues, task.ID+" unassigned")
@@ -282,7 +285,7 @@ func (n *Nudger) checkCoordination(ctx context.Context, a model.Agent, st *nudge
 		return
 	}
 	if st.stallNudges == 0 {
-		text := fmt.Sprintf("Idle coordination review for team %s: %s. Check whether authorized independent work can proceed. Before ending the turn, record each open task's stage or waiting reason, next action and registered checkpoint/request with `team-worker task progress`. Respect scheduled windows; do not run future observations early. Members with completed batches may remain on standby.", a.Team, strings.Join(issues, "; "))
+		text := fmt.Sprintf("Idle coordination review for team %s: %s. For each waiting scope, inspect the remaining deliverables and evidence, split out independent authorized work, then use `team-worker task review-wait` with the current wait version and review evidence only if the remaining work truly needs the trigger. Merely filling in waiting fields does not complete this review. Check whether authorized independent work can proceed. Before ending the turn, record each open task's stage or waiting reason, next action and registered checkpoint/request with `team-worker task progress`. Respect scheduled windows; do not run future observations early. Members with completed batches may remain on standby.", a.Team, strings.Join(issues, "; "))
 		if err := n.Type(a.Target, text); err != nil {
 			n.Log.Warn("coordination reminder failed", "team", a.Team, "err", err)
 			return

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"reflect"
 	"strings"
+	"time"
 
 	"github.com/benlocal/team-worker/internal/model"
 )
@@ -87,10 +88,12 @@ func appendTaskProgress(ctx context.Context, tx *sql.Tx, team string, t *model.T
 	if p.CheckpointID != "" && p.RequestID != "" {
 		return invalidf("Link one waiting trigger per progress report")
 	}
+	p.IndependentTasks = dedupe(p.IndependentTasks)
 	p.Artifacts = dedupe(p.Artifacts)
 	p.ReportedAt = ""
 	p.ReportedBy = ""
 	for _, old := range t.Progress {
+		old.IndependentTasks = dedupe(old.IndependentTasks)
 		old.Artifacts = dedupe(old.Artifacts)
 		old.ReportedAt = ""
 		old.ReportedBy = ""
@@ -118,6 +121,12 @@ func appendTaskProgress(ctx context.Context, tx *sql.Tx, team string, t *model.T
 		if r.Status != "pending" {
 			return invalidf("Waiting request must be pending")
 		}
+	}
+	if p.State != "waiting" && (p.WaitScope != "" || p.IndependentWork != "" || len(p.IndependentTasks) > 0) {
+		return invalidf("Wait scope requires waiting state")
+	}
+	if err := validateIndependentTasks(ctx, tx, team, t.ID, p.IndependentTasks); err != nil {
+		return err
 	}
 	p.ReportedAt = now
 	p.ReportedBy = caller
@@ -215,6 +224,8 @@ func (s *Store) enrichTaskTracking(ctx context.Context, team string, tasks []mod
 				}
 			}
 		}
+		t.WaitVersion = model.TaskWaitVersion(*t)
+		t.WaitReviewNeeded = t.NeedsWaitReview()
 		if cp, ok := cpByID[p.CheckpointID]; ok {
 			t.WaitCheckpoint = &cp
 		}
@@ -230,7 +241,7 @@ func supersessionRetry(t model.Task, in UpdateTaskInput) bool {
 	if in.Status == nil || *in.Status != model.StatusSuperseded || in.SupersededBy == nil || *in.SupersededBy != t.SupersededBy || in.Result == nil || t.Result == nil {
 		return false
 	}
-	if in.Owner != nil || in.Subject != nil || in.Description != nil || in.Priority != nil || in.Kind != nil || in.ParentID != nil || in.Progress != nil || len(in.Metadata) > 0 || len(in.AddBlocks)+len(in.AddBlockedBy)+len(in.RemoveBlockedBy) > 0 {
+	if in.WaitReview != nil || in.Owner != nil || in.Subject != nil || in.Description != nil || in.Priority != nil || in.Kind != nil || in.ParentID != nil || in.Progress != nil || len(in.Metadata) > 0 || len(in.AddBlocks)+len(in.AddBlockedBy)+len(in.RemoveBlockedBy) > 0 {
 		return false
 	}
 	return in.Result.Summary == t.Result.Summary && in.Result.Verification == t.Result.Verification && reflect.DeepEqual(dedupe(in.Result.Artifacts), dedupe(t.Result.Artifacts))
@@ -241,4 +252,71 @@ func progressOnlyUpdate(in UpdateTaskInput) bool {
 	in.Caller = ""
 	in.Force = false
 	return reflect.DeepEqual(in, UpdateTaskInput{})
+}
+
+func validateIndependentTasks(ctx context.Context, q queryer, team, id string, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	encoded, err := json.Marshal(ids)
+	if err != nil {
+		return err
+	}
+	var count int
+	err = q.QueryRowContext(ctx, `SELECT count(*) FROM tasks WHERE team=? AND id != ? AND coalesce(json_extract(tracking, '$.kind'), 'task') != 'goal' AND id IN (SELECT value FROM json_each(?))`, team, id, string(encoded)).Scan(&count)
+	if err != nil {
+		return err
+	}
+	if count != len(ids) {
+		return invalidf("Independent tasks must be other execution tasks in this team")
+	}
+	return nil
+}
+
+func reviewTaskWait(ctx context.Context, tx *sql.Tx, team string, t *model.Task, review model.TaskWaitReview, caller, now string, current time.Time) error {
+	leader, err := joinLeader(ctx, tx, team)
+	if err != nil {
+		return err
+	}
+	if caller == "" || caller != leader.Name {
+		return invalidf("Only the team leader can review a wait")
+	}
+	if t.Kind == "goal" || t.Status == model.StatusCompleted || t.Status == model.StatusSuperseded || len(t.Progress) == 0 {
+		return invalidf("Review requires an open execution task with a waiting report")
+	}
+	p := t.Progress[len(t.Progress)-1]
+	if p.State != "waiting" || strings.TrimSpace(p.WaitScope) == "" || strings.TrimSpace(p.IndependentWork) == "" {
+		return invalidf("Waiting review requires a waiting scope and independent work disposition")
+	}
+	if review.Version != model.TaskWaitVersion(*t) {
+		return conflictf("Task scope or waiting report changed; read the task and review again")
+	}
+	if strings.TrimSpace(review.Summary) == "" {
+		return invalidf("Waiting review requires evidence for the remaining dependencies")
+	}
+	if p.CheckpointID != "" {
+		cp, err := getCheckpoint(ctx, tx, team, p.CheckpointID)
+		if err != nil {
+			return err
+		}
+		if cp.TaskID != t.ID || cp.Owner != t.Owner || cp.Status != "scheduled" || !cp.DueAt.After(current) {
+			return invalidf("Waiting checkpoint must be scheduled in the future for this task and owner")
+		}
+	} else if p.RequestID != "" {
+		r, err := getDecision(ctx, tx, team, p.RequestID)
+		if err != nil {
+			return err
+		}
+		if r.Status != "pending" {
+			return invalidf("Waiting request must be pending")
+		}
+	} else {
+		return invalidf("Waiting review requires a registered trigger")
+	}
+	if err := validateIndependentTasks(ctx, tx, team, t.ID, p.IndependentTasks); err != nil {
+		return err
+	}
+	review.ReviewedBy, review.ReviewedAt = caller, now
+	t.WaitReview = &review
+	return nil
 }

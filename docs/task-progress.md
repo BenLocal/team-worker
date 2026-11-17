@@ -39,7 +39,34 @@ team-worker task progress demo <task-id> \
 
 任务详情、列表和看板批量读取关联记录的当前状态，不把报告时的状态当成最新状态。检查点完成或取消、请示被处理后，显示 `follow_up`，提示成员读结果并记录下一阶段。批准、拒绝和回答都只结束该次等待，不会自动执行动作或通过验收。
 
-`nextCheckpoint` 显示最早尚未结束的检查点，即使旧任务还没有阶段报告，也能看到下一次观察时间。登记检查点不等于成员已经进入等待。恢复工作后，用新 key 追加一份 `--state active` 报告。Stop hook 和空闲提醒会放过已登记且尚未结束的等待，由原检查点或请示消息负责通知；未登记触发条件的等待仍会提醒。触发结束后恢复跟进提醒，不自动推进任务。
+`nextCheckpoint` 显示最早尚未结束的检查点，即使旧任务还没有阶段报告，也能看到下一次观察时间。登记检查点不等于成员已经进入等待。恢复工作后，用新 key 追加一份 `--state active` 报告。成员 Stop hook 和执行催办会放过已登记且尚未结束的等待，由原检查点或请示消息负责通知；未登记触发条件的等待仍会提醒。触发结束后恢复跟进提醒，不自动推进任务。
+
+## 复核等待范围
+
+同一任务里如果混有离线准备、设备观察和结果判读，先按实际依赖、执行窗口或负责人拆成执行任务，关联同一个 goal。离线核对和单测继续推进；只有需要设备窗口的任务登记等待。
+
+等待报告增加三个字段：`--wait-scope` 描述被触发条件阻塞的剩余工作；`--independent-work` 说明独立工作已完成的证据、已拆分的去向，或确实无法提前开展的理由；`--independent-task` 可重复传入独立任务 ID，服务端校验它们属于同一团队、是其他执行任务。字段不会自动创建任务或改变依赖。
+
+```bash
+team-worker task progress demo <task-id> \
+  --key wait-observation-v2 --summary "Device observation remains" \
+  --state waiting --reason "Approved device window" \
+  --next-action "Collect the sample" --checkpoint <checkpoint-id> \
+  --wait-scope "Device sample and comparison" \
+  --independent-work "Offline assertions assigned separately" \
+  --independent-task <offline-task-id>
+
+team-worker --json task get demo <task-id>
+team-worker task review-wait demo <task-id> \
+  --version <waitVersion-from-task-get> \
+  --summary "Inspected remaining checks; offline assertions have a separate owner and device checks need the scheduled sample"
+```
+
+复核命令要求调用者为团队 Leader，并提供当前 `waitVersion` 和非空依据。等待报告必须有等待范围、独立工作说明及有效触发条件；检查点必须尚未到期，请示必须仍为 pending。旧报告仍可读取和重试，但补齐原因、下一步和检查点不会自动通过复核；缺少范围说明时，需用新 key 追加报告。
+
+`waitReview` 保存复核版本、依据、调用者和时间，`waitReviewNeeded` 表示当前等待是否仍需复核。版本绑定任务标题、描述、负责人、类型、父目标、状态、依赖和最新报告。相关内容变更后，旧复核保留供查看，但不再消除复核提醒；同一报告的原样重试不使复核失效。
+
+全员空闲时，未复核等待进入 Leader 协调检查。成员的正常等待仍由检查点或请示唤醒；复核通过且条件未变化的等待不再催办。系统校验记录、版本和引用，Leader 负责判断业务依赖与证据是否成立。复核某个等待任务不会免除其他独立任务的执行责任。
 
 ## 结束旧轮并交接缺口
 
@@ -84,7 +111,7 @@ team-worker task create demo "Check the next release" --parent <goal-id> --owner
 
 下一次观察时间单独展示。只登记未来检查点、未报告本轮任务去向时仍提示 needs_review。触发到期或被取消后恢复跟进；不会提前执行未来观察。
 
-成员停在输入框达到既有空闲阈值后，daemon 检查未结束任务的去向。Leader 也参与：团队存在未分派、可执行或去向不明的任务时，提醒其核对授权范围内可提前推进的事项；同组问题只提醒一次，持续未处理再通知操作员。全部任务有合法等待条件或已完成交付时，不强行制造工作。
+成员停在输入框达到既有空闲阈值后，daemon 检查未结束任务的去向。Leader 也参与：团队存在未分派、可执行、去向不明或等待范围尚未复核的任务时，提醒其核对授权范围内可提前推进的事项；同组问题只提醒一次，持续未处理再通知操作员。全部执行任务的等待范围已复核且条件未变，或已完成交付时，不强行制造工作。
 
 ## 运行中读取新版协作规则
 

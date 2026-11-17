@@ -315,3 +315,107 @@ func TestTaskProgressRetryDoesNotRefreshActivity(t *testing.T) {
 		t.Fatalf("retry manufactured activity: %+v", again)
 	}
 }
+
+func TestWaitReviewValidatesEvidenceAndReferences(t *testing.T) {
+	s := newTestStore(t)
+	newTeam(t, s, "alice")
+	ctx := context.Background()
+	task, err := s.CreateTask(ctx, "demo", CreateTaskInput{Subject: "Observe", Owner: "alice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := s.CreateDecisionRequest(ctx, "demo", CreateDecisionInput{From: "leader", Summary: "Window", Body: "Confirm window"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := model.TaskProgress{Key: "legacy", State: "waiting", Summary: "Prepared", Reason: "Window", NextAction: "Observe", RequestID: request.ID}
+	if _, err := s.UpdateTask(ctx, "demo", task.ID, UpdateTaskInput{Progress: &p}); err != nil {
+		t.Fatal(err)
+	}
+	read := func() model.Task {
+		t.Helper()
+		got, err := s.GetTask(ctx, "demo", task.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	review := func(got model.Task) error {
+		_, err := s.UpdateTask(ctx, "demo", task.ID, UpdateTaskInput{Caller: "leader", WaitReview: &model.TaskWaitReview{Version: got.WaitVersion, Summary: "Checked remaining work"}})
+		return err
+	}
+	if err := review(read()); KindOf(err) != KindInvalid {
+		t.Fatalf("legacy wait without scope reviewed: %v", err)
+	}
+	p.Key, p.WaitScope, p.IndependentWork = "scoped", "Device sample", "Offline report passed"
+	for _, id := range []string{task.ID, "missing"} {
+		p.IndependentTasks = []string{id}
+		if _, err := s.UpdateTask(ctx, "demo", task.ID, UpdateTaskInput{Progress: &p}); KindOf(err) != KindInvalid {
+			t.Fatalf("invalid independent task %s accepted: %v", id, err)
+		}
+	}
+	p.IndependentTasks = nil
+	if _, err := s.UpdateTask(ctx, "demo", task.ID, UpdateTaskInput{Progress: &p}); err != nil {
+		t.Fatal(err)
+	}
+	current := read()
+	for _, in := range []UpdateTaskInput{
+		{Caller: "leader", WaitReview: &model.TaskWaitReview{Version: current.WaitVersion}},
+		{Caller: "leader", WaitReview: &model.TaskWaitReview{Version: current.WaitVersion, Summary: "Checked"}, Description: ptr("Changed scope")},
+		{WaitReview: &model.TaskWaitReview{Version: current.WaitVersion, Summary: "Checked"}},
+	} {
+		if _, err := s.UpdateTask(ctx, "demo", task.ID, in); KindOf(err) != KindInvalid {
+			t.Fatalf("invalid review accepted: %v", err)
+		}
+	}
+	if err := review(read()); err != nil {
+		t.Fatal(err)
+	}
+	if read().WaitReviewNeeded {
+		t.Fatal("review did not settle wait")
+	}
+	p.Key = "revised-wait"
+	p.WaitScope = "Device sample and new runtime check"
+	if _, err := s.UpdateTask(ctx, "demo", task.ID, UpdateTaskInput{Progress: &p}); err != nil {
+		t.Fatal(err)
+	}
+	if !read().WaitReviewNeeded {
+		t.Fatal("new report reused old review")
+	}
+	if err := review(read()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpdateTask(ctx, "demo", task.ID, UpdateTaskInput{Owner: ptr("leader")}); err != nil {
+		t.Fatal(err)
+	}
+	if !read().WaitReviewNeeded {
+		t.Fatal("reassignment reused old review")
+	}
+}
+
+func TestWaitReviewRejectsDueCheckpoint(t *testing.T) {
+	s := newTestStore(t)
+	newTeam(t, s, "alice")
+	ctx := context.Background()
+	task, err := s.CreateTask(ctx, "demo", CreateTaskInput{Subject: "Observe", Owner: "alice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := s.Now()
+	cp, err := s.CreateCheckpoint(ctx, "demo", CreateCheckpointInput{TaskID: task.ID, Key: "sample", DueAt: now.Add(time.Hour), ResultDueAt: now.Add(2 * time.Hour), AckTimeoutSeconds: 300, EscalateAfterSeconds: 600, Action: "Sample", ExpectedEvidence: "Report", Caller: "alice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := model.TaskProgress{Key: "wait", Summary: "Prepared", State: "waiting", Reason: "Window", NextAction: "Observe", CheckpointID: cp.ID, WaitScope: "Device sample", IndependentWork: "Offline checks complete in reports/offline.txt"}
+	if _, err := s.UpdateTask(ctx, "demo", task.ID, UpdateTaskInput{Progress: &p}); err != nil {
+		t.Fatal(err)
+	}
+	current, err := s.GetTask(ctx, "demo", task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Now = func() time.Time { return cp.DueAt }
+	if _, err := s.UpdateTask(ctx, "demo", task.ID, UpdateTaskInput{Caller: "leader", WaitReview: &model.TaskWaitReview{Version: current.WaitVersion, Summary: "Reviewed"}}); KindOf(err) != KindInvalid {
+		t.Fatalf("due checkpoint accepted as future wait: %v", err)
+	}
+}

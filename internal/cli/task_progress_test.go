@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -79,5 +80,69 @@ func TestStopHookAllowsRegisteredWaitWithoutIdleNotice(t *testing.T) {
 	res, _ := h.hook(`{}`, "stop", "--team", "demo", "--agent", "alice", "--wait", "0")
 	if res.Decision != "block" || !strings.Contains(res.Reason, task.ID) {
 		t.Fatalf("resolved wait did not require follow-up: %+v", res)
+	}
+}
+
+func TestWaitReviewCommandsAndScopeChanges(t *testing.T) {
+	h := newHarness(t)
+	h.run("team", "spawn-team", "demo")
+	var task, offline, got model.Task
+	h.json(&task, "task", "create", "demo", "Scheduled observation", "--owner", "alice")
+	h.json(&offline, "task", "create", "demo", "Offline assertions", "--owner", "alice")
+	request, err := h.api.CreateDecisionRequest(context.Background(), "demo", store.CreateDecisionInput{From: "leader", Summary: "Observation window", Body: "Confirm window"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := []string{"task", "progress", "demo", task.ID, "--key", "wait", "--summary", "Prepared inputs", "--state", "waiting", "--reason", "Needs window", "--next-action", "Observe", "--request", request.ID, "--wait-scope", "Device sample only", "--independent-work", "Offline assertions assigned separately", "--independent-task", offline.ID}
+	h.json(&got, report...)
+	h.json(&got, "task", "get", "demo", task.ID)
+	if !got.WaitReviewNeeded || got.WaitVersion == "" {
+		t.Fatalf("unreviewed wait hidden: %+v", got)
+	}
+	version := got.WaitVersion
+	review := []string{"task", "review-wait", "demo", task.ID, "--version", version, "--summary", "Checked remaining deliverables; offline assertions have their own task"}
+	t.Setenv("TEAM_WORKER_AGENT_NAME", "alice")
+	if out, ok := h.run(review...); ok {
+		t.Fatalf("worker reviewed its own wait: %s", out)
+	}
+	t.Setenv("TEAM_WORKER_AGENT_NAME", "leader")
+	for range 2 {
+		h.json(&got, review...)
+	}
+	h.json(&got, "task", "get", "demo", task.ID)
+	if got.WaitReviewNeeded || got.WaitReview == nil || got.WaitReview.ReviewedBy != "leader" {
+		t.Fatalf("review missing: %+v", got)
+	}
+	h.json(&got, report...)
+	h.json(&got, "task", "get", "demo", task.ID)
+	if got.WaitReviewNeeded {
+		t.Fatal("identical report retry invalidated review")
+	}
+	out, ok := h.run("task", "get", "demo", task.ID)
+	if !ok || !strings.Contains(out, "Device sample only") || !strings.Contains(out, offline.ID) || !strings.Contains(out, "Wait review by leader") {
+		t.Fatalf("review evidence hidden: %s", out)
+	}
+	h.json(&got, "task", "update", "demo", task.ID, "--description", "Also verify the parser")
+	h.json(&got, "task", "get", "demo", task.ID)
+	if !got.WaitReviewNeeded || got.WaitVersion == version {
+		t.Fatal("scope change retained old review")
+	}
+	if out, ok := h.run(review...); ok {
+		t.Fatalf("stale review accepted: %s", out)
+	}
+	if _, err := h.api.DecideRequest(context.Background(), "demo", request.ID, store.DecideInput{Action: "reject", Reply: "Do not run", DecidedBy: "operator"}); err != nil {
+		t.Fatal(err)
+	}
+	review[5] = got.WaitVersion
+	if out, ok := h.run(review...); ok {
+		t.Fatalf("resolved trigger accepted: %s", out)
+	}
+	h.json(&got, "task", "get", "demo", task.ID)
+	if got.ExecutionState != "follow_up" || got.WaitReviewNeeded {
+		t.Fatalf("resolved trigger did not require follow-up: %+v", got)
+	}
+	h.json(&got, "task", "get", "demo", offline.ID)
+	if got.ExecutionState == "waiting" || got.Status != model.StatusPending {
+		t.Fatalf("independent work was blocked: %+v", got)
 	}
 }

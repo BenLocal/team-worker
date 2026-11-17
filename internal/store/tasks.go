@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"reflect"
 	"slices"
 	"sort"
 	"strings"
@@ -100,18 +101,19 @@ func (s *Store) GetTask(ctx context.Context, team, id string) (model.Task, error
 }
 
 type UpdateTaskInput struct {
-	Kind         *string             `json:"kind,omitempty"`
-	ParentID     *string             `json:"parentId,omitempty"`
-	SupersededBy *string             `json:"supersededBy,omitempty"`
-	Progress     *model.TaskProgress `json:"progress,omitempty"`
-	Result       *model.TaskResult   `json:"result,omitempty"`
-	Status       *model.TaskStatus   `json:"status,omitempty"`
-	Owner        *string             `json:"owner,omitempty"`
-	Subject      *string             `json:"subject,omitempty"`
-	Description  *string             `json:"description,omitempty"`
-	Priority     *model.Priority     `json:"priority,omitempty"`
-	AddBlocks    []string            `json:"addBlocks,omitempty"`
-	AddBlockedBy []string            `json:"addBlockedBy,omitempty"`
+	WaitReview   *model.TaskWaitReview `json:"waitReview,omitempty"`
+	Kind         *string               `json:"kind,omitempty"`
+	ParentID     *string               `json:"parentId,omitempty"`
+	SupersededBy *string               `json:"supersededBy,omitempty"`
+	Progress     *model.TaskProgress   `json:"progress,omitempty"`
+	Result       *model.TaskResult     `json:"result,omitempty"`
+	Status       *model.TaskStatus     `json:"status,omitempty"`
+	Owner        *string               `json:"owner,omitempty"`
+	Subject      *string               `json:"subject,omitempty"`
+	Description  *string               `json:"description,omitempty"`
+	Priority     *model.Priority       `json:"priority,omitempty"`
+	AddBlocks    []string              `json:"addBlocks,omitempty"`
+	AddBlockedBy []string              `json:"addBlockedBy,omitempty"`
 	// RemoveBlockedBy drops blockers; a blocked task left without any
 	// becomes pending.
 	RemoveBlockedBy []string       `json:"removeBlockedBy,omitempty"`
@@ -137,6 +139,14 @@ func (s *Store) UpdateTask(ctx context.Context, team, id string, in UpdateTaskIn
 	if in.Result != nil && strings.TrimSpace(in.Result.Summary) == "" {
 		return model.Task{}, invalidf("Result summary must not be empty")
 	}
+	if in.WaitReview != nil {
+		rest := in
+		rest.WaitReview = nil
+		rest.Caller = ""
+		if !reflect.DeepEqual(rest, UpdateTaskInput{}) {
+			return model.Task{}, invalidf("Submit a wait review separately from task changes")
+		}
+	}
 	var t model.Task
 	err := s.write(ctx, func(tx *sql.Tx) error {
 		if err := requireTeam(ctx, tx, team); err != nil {
@@ -155,7 +165,7 @@ func (s *Store) UpdateTask(ctx context.Context, team, id string, in UpdateTaskIn
 		if t.Status == model.StatusSuperseded && supersessionRetry(t, in) {
 			return nil
 		}
-		if t.Status == model.StatusSuperseded && (in.Status != nil || in.SupersededBy != nil || in.Progress != nil || in.Kind != nil || in.ParentID != nil) {
+		if t.Status == model.StatusSuperseded && (in.Status != nil || in.SupersededBy != nil || in.Progress != nil || in.WaitReview != nil || in.Kind != nil || in.ParentID != nil) {
 			return conflictf("Superseded task is closed; update its replacement instead")
 		}
 		now := s.timestamp()
@@ -298,6 +308,11 @@ func (s *Store) UpdateTask(ctx context.Context, team, id string, in UpdateTaskIn
 				return invalidf("Superseding a task requires a result describing completed work and remaining gaps")
 			}
 			if err := transferTaskDependents(ctx, tx, team, t.ID, t.SupersededBy, now); err != nil {
+				return err
+			}
+		}
+		if in.WaitReview != nil {
+			if err := reviewTaskWait(ctx, tx, team, &t, *in.WaitReview, in.Caller, now, s.Now()); err != nil {
 				return err
 			}
 		}

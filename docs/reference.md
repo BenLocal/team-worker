@@ -253,6 +253,10 @@ Web 看板（`team-workerd --board` 或 `board serve`）的提示词读取接口
 
 GET 详情、任务列表和看板还返回实时派生的 `executionState`、`nextCheckpoint`、`waitCheckpoint`、`waitingRequest`。executionState 为 active、waiting、unregistered（未登记触发条件）或 follow_up（关联触发已结束，待处理结果）；它不替代任务 status，不代表执行成功。返回的检查点不包含执行 token。
 
+等待报告可附 `waitScope`、`independentWork` 和 `independentTasks`（同团队其他执行任务 ID 数组）。旧客户端省略这些字段仍可登记等待，但不能通过范围复核。GET 详情和列表返回 `waitVersion`、`waitReviewNeeded`，以及已有的 `waitReview`。
+
+Leader 单独 PATCH `{"caller":"<leader-name>","waitReview":{"version":"<waitVersion>","summary":"<核对证据及剩余依赖的依据>"}}` 完成等待范围复核，不能与其他任务修改混传。服务端校验调用者、报告内容、任务引用和触发条件，填写 `reviewedBy`、`reviewedAt`；版本过期返回 409，缺字段或调用者不是 Leader 返回 400。CLI 对应 `task review-wait TEAM TASK_ID --version ... --summary ...`。调用者沿用现有 caller 身份约定，不新增认证机制。未复核等待仍进入 Leader 空闲协调检查；复核不改变执行窗口或任务依赖。
+
 交接用 `{"status":"superseded","supersededBy":"<replacement-task-id>","result":{"summary":"Completed work and remaining gaps"}}`。它释放旧锁、取消旧检查点，并将验收依赖转给接替任务，不产生 TaskCompleted 事件。旧轮保留在任务列表，`task results` 仍只列 completed。
 
 `tasks/stats` 增加 goals、waiting、superseded；total 保留全部记录数，原状态计数只统计普通执行任务。细节及 CLI 用法见 [任务阶段、等待与轮次交接](task-progress.md)。

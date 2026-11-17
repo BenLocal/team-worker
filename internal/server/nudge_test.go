@@ -311,8 +311,15 @@ func TestIdleTeamMayWaitForRegisteredFutureWindows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := model.TaskProgress{Key: "wait", State: "waiting", Summary: "Prepared", Reason: "Scheduled window", NextAction: "Read sample", CheckpointID: cp.ID}
+	p := model.TaskProgress{Key: "wait", State: "waiting", Summary: "Prepared", Reason: "Scheduled window", NextAction: "Read sample", CheckpointID: cp.ID, WaitScope: "Scheduled sample", IndependentWork: "Offline checks passed in reports/offline.txt"}
 	if _, err = st.UpdateTask(ctx, "demo", task.ID, store.UpdateTaskInput{Progress: &p}); err != nil {
+		t.Fatal(err)
+	}
+	current, err := st.GetTask(ctx, "demo", task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpdateTask(ctx, "demo", task.ID, store.UpdateTaskInput{Caller: "leader", WaitReview: &model.TaskWaitReview{Version: current.WaitVersion, Summary: "Checked offline report; only scheduled sample remains"}}); err != nil {
 		t.Fatal(err)
 	}
 	setActivity(t, st, "leader", model.ActivityWaiting)
@@ -323,5 +330,67 @@ func TestIdleTeamMayWaitForRegisteredFutureWindows(t *testing.T) {
 	msgs, err := st.Peek(ctx, "demo", store.OperatorInbox, "")
 	if err != nil || len(msgs) != 0 || len(pane.typed) != 0 {
 		t.Fatalf("legitimate team waiting was disturbed: %q %+v %v", pane.typed, msgs, err)
+	}
+}
+
+func TestUnreviewedWaitRequiresLeaderReview(t *testing.T) {
+	n, st, pane, now := newNudgeFixture(t, true)
+	ctx := context.Background()
+	st.Now = func() time.Time { return *now }
+	if _, err := st.RegisterAgent(ctx, model.Agent{Team: "demo", Name: "leader", Backend: "tmux", Target: "%2", Nudge: true, Command: []string{"codex"}}); err != nil {
+		t.Fatal(err)
+	}
+	task := startTask(t, st, "alice")
+	cp, err := st.CreateCheckpoint(ctx, "demo", store.CreateCheckpointInput{TaskID: task.ID, Key: "future", Caller: "alice", DueAt: now.Add(3 * time.Hour), ResultDueAt: now.Add(4 * time.Hour), AckTimeoutSeconds: 300, EscalateAfterSeconds: 600, Action: "Read scheduled sample", ExpectedEvidence: "Report"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := model.TaskProgress{Key: "wait", State: "waiting", Summary: "Prepared", Reason: "Scheduled window", NextAction: "Read sample", CheckpointID: cp.ID}
+	if _, err = st.UpdateTask(ctx, "demo", task.ID, store.UpdateTaskInput{Progress: &p}); err != nil {
+		t.Fatal(err)
+	}
+	setActivity(t, st, "leader", model.ActivityWaiting)
+	setActivity(t, st, "alice", model.ActivityWaiting)
+	n.Tick(ctx)
+	*now = now.Add(time.Hour)
+	n.Tick(ctx)
+	msgs, err := st.Peek(ctx, "demo", store.OperatorInbox, "")
+	if err != nil || len(msgs) != 0 || len(pane.typed) != 1 || !strings.Contains(pane.typed[0], "waiting scope") {
+		t.Fatalf("unreviewed waiting scope was ignored: %q %+v %v", pane.typed, msgs, err)
+	}
+}
+
+func TestReviewedWaitDoesNotSuppressIndependentTask(t *testing.T) {
+	n, st, pane, now := newNudgeFixture(t, true)
+	ctx := context.Background()
+	st.Now = func() time.Time { return *now }
+	if _, err := st.RegisterAgent(ctx, model.Agent{Team: "demo", Name: "leader", Backend: "tmux", Target: "%2", Nudge: true, Command: []string{"codex"}}); err != nil {
+		t.Fatal(err)
+	}
+	task := startTask(t, st, "alice")
+	cp, err := st.CreateCheckpoint(ctx, "demo", store.CreateCheckpointInput{TaskID: task.ID, Key: "future", Caller: "alice", DueAt: now.Add(3 * time.Hour), ResultDueAt: now.Add(4 * time.Hour), AckTimeoutSeconds: 300, EscalateAfterSeconds: 600, Action: "Read scheduled sample", ExpectedEvidence: "Report"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := model.TaskProgress{Key: "wait", State: "waiting", Summary: "Prepared", Reason: "Scheduled window", NextAction: "Read sample", CheckpointID: cp.ID, WaitScope: "Scheduled sample", IndependentWork: "Offline checks passed in reports/offline.txt"}
+	if _, err = st.UpdateTask(ctx, "demo", task.ID, store.UpdateTaskInput{Progress: &p}); err != nil {
+		t.Fatal(err)
+	}
+	current, err := st.GetTask(ctx, "demo", task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpdateTask(ctx, "demo", task.ID, store.UpdateTaskInput{Caller: "leader", WaitReview: &model.TaskWaitReview{Version: current.WaitVersion, Summary: "Checked offline report; only scheduled sample remains"}}); err != nil {
+		t.Fatal(err)
+	}
+	offline := startTask(t, st, "alice")
+	setActivity(t, st, "leader", model.ActivityWaiting)
+	setActivity(t, st, "alice", model.ActivityWaiting)
+	n.Tick(ctx)
+	*now = now.Add(time.Hour)
+	n.Tick(ctx)
+	msgs, err := st.Peek(ctx, "demo", store.OperatorInbox, "")
+	if err != nil || len(msgs) != 0 || len(pane.typed) == 0 || !strings.Contains(strings.Join(pane.typed, "\n"), offline.ID) || strings.Contains(strings.Join(pane.typed, "\n"), task.ID) {
+		t.Fatalf("independent work was suppressed by reviewed wait: %q %+v %v", pane.typed, msgs, err)
 	}
 }

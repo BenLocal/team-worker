@@ -22,7 +22,7 @@ import (
 func (a *app) taskCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "task", Short: "Task management"}
 	cmd.AddCommand(a.taskCreateCmd(), a.taskGetCmd(), a.taskUpdateCmd(), a.taskListCmd(),
-		a.taskResultsCmd(), a.taskStatsCmd(), a.taskWaitCmd(), a.taskProgressCmd())
+		a.taskResultsCmd(), a.taskStatsCmd(), a.taskWaitCmd(), a.taskProgressCmd(), a.taskReviewWaitCmd())
 	return cmd
 }
 
