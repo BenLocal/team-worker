@@ -115,6 +115,22 @@ Web 看板访问需使用与 CLI HTTP 调用相同的 Key，`board serve` 默认
 
 团队标题旁的 `Team prompt` 按钮显示团队公共提示词。每个 Agent 终端卡片的 `Prompt` 按钮和侧栏成员菜单的 `Show prompt` 显示该成员的专属提示词，未启动或已退出的成员也能查看。内容从 store 按需读取，未设置时显示空状态；弹窗支持长文本滚动及 Escape 关闭。
 
+### 飞书自建应用
+
+在内置看板左下角打开 **Settings → Feishu integration**。首次连接时填写 **App ID** 和 **App Secret**，点击 **Save and connect**。daemon 将凭据保存到数据目录的 `feishu.json`（权限 0600）并自动连接。应用配置好后，设置页只需填写当前应用下允许向所有团队发指令的 `open_id`。清空并保存会暂停飞书收件。群聊和私聊的答复回到原飞书消息。
+
+需要更换应用或密钥时，点击 **Application credentials**。页面预填现有 App ID，App Secret 需要重新输入。由 daemon 环境变量管理的凭据在部署环境中更新。
+
+也可在 daemon 所在的机器或容器中，用同一系统账号运行 `team-worker chat feishu setup`，命令会隐藏密钥输入。通过 `FEISHU_APP_ID` 和 `FEISHU_APP_SECRET` 启动 daemon 时，环境变量优先，Web 页面会显示由服务器管理。同一飞书应用应只运行一个接入实例。
+
+路由 Agent 在 daemon 中独立处理自然语言路由和答复摘要。在数据目录下放置 `feishu-codex/config.toml`，或用 `TEAM_WORKER_FEISHU_ROUTER_CODEX_HOME` 指定专用 Codex 配置目录的绝对路径，重启 daemon 后使用本机 `codex app-server`。该目录需要有效的 Codex 登录或模型服务凭据，且不应配置 MCP。每项工作用独立的临时只读线程和结构化输出。可用 `TEAM_WORKER_FEISHU_ROUTER_MODEL` 覆盖该配置的模型。
+
+未设置专用 Codex 目录时，既有的 `LLM_API_BASE` 和 `TEAM_WORKER_FEISHU_ROUTER_MODEL` 组合继续使用兼容网关。网关需要密钥时提供 `LLM_API_KEY`。 `TEAM_WORKER_FEISHU_ROUTER_ENABLE_THINKING` 默认为 `false`。明确指定团队的 `/tw send <团队> <正文>` 无需等待路由 Agent。
+
+Leader 在本机运行 `team-worker chat reply <团队> <请求编号> "<材料>"` 提交最终结果。用 `--progress` 提交进展。答复到群聊时加 `--group-approved`，确认正文和附件都可以发到发起群。
+
+可重复使用 `--image PATH` 在摘要卡片中预览图片，`--image-reply PATH` 单独回复图片，`--file PATH` 回复可下载的文件，或 `--doc '标题=HTTPS_URL'` 在卡片中显示云文档链接。每次回复最多 8 项。单张图片最多 10 MB，所有本地文件合计最多 30 MB。上传媒体需要飞书应用开通「获取与上传图片或文件资源」权限。详见 [飞书消息工作流](feishu-messaging-spec.md)。
+
 ## 日志
 
 team-workerd 记录这些事件：
@@ -165,9 +181,16 @@ team-workerd 记录这些事件：
 | `GET/POST /v1/teams/{team}/checkpoints` | 列出 / 登记单次检查点；登记字段为 `key`、`taskId`、`caller`、`dueAt`、`ackTimeoutSeconds`、`resultDueAt`、`escalateAfterSeconds`、`action`、`expectedEvidence`；时间为带偏移的 RFC3339，时长为秒 |
 | `GET /v1/teams/{team}/checkpoints/{id}` | 查询状态、负责人、截止时间、接手 token、结果及超时记录 |
 | `POST /v1/teams/{team}/checkpoints/{id}` | `action=ack`（负责人接手）、`complete`（需 `token`、`outcome`、`summary`、`evidence`）或 `cancel`（需 `reason`）；均带 `caller`，空值表示 operator。详见[检查点说明](checkpoints.md) |
-| `POST /v1/teams/{team}/messages` | 发消息 |
+| `POST /v1/teams/{team}/messages` | 发消息。可选 `idempotencyKey` 让同一团队内重试返回原消息，同键不同请求返回 409。可选 `expectedLeader` 校验收件箱仍属于指定的现任 Leader。聊天接入可同时提供 `chatBindingId` 和 `chatSenderId`，在同一事务校验接收开关和发送权限 |
 | `POST /v1/teams/{team}/broadcast` | 广播给除发件人外的所有成员 |
-| `GET /v1/teams/{team}/messages/log` | 消息历史（`limit`、`from`） |
+| `GET /v1/teams/{team}/messages/log` | 消息历史（`limit`、`from`）。传 `cursor=latest` 获取当前水位，或传上次的 `nextCursor` 获取升序分页 `{items,nextCursor,hasMore}`。游标模式支持 `limit` 和 `includeChatEvents=true`，读取不消费收件箱 |
+| `GET /v1/chat/settings` | 读取聊天接入的配置版本和团队绑定，含 daemon 保存的 `bindingId` 和初始水位 `startCursor` |
+| `PUT /v1/chat/settings` | 按当前 `revision` 保存聊天配置。传 `updateFeishuSender: true` 及 `feishuSender` 设置全局发送者，传 `feishuSender: null` 暂停收件。用 `recipient` 设置主动提醒的默认私聊用户，清除时传 `updateRecipient: true` 和 `recipient: null`。版本冲突时返回 409 |
+| `GET /v1/chat/connections` | 读取各聊天应用的连接状态和已应用版本 |
+| `POST /v1/chat/connections` | 聊天接入端登记应用并报告连接和配置状态 |
+| `GET /v1/chat/blocked` | 最近被发送权限拦下的请求或答复，供看板管理员查看 |
+| `POST /v1/teams/{team}/chat/requests/{id}/results` | 本地当前 Leader Run 提交摘要材料。接受 `agentId`、`runId`、`material`、`final`、`groupApproved` 和可选的 `assets`。每项含 `kind`（`preview`、`image`、`file`、`link`）及 `name`，本地文件用 `data` 提交 Base64 编码的字节，链接用 `url` |
+| `GET/PUT /api/chat/feishu/app` | 内置看板的登录会话可读取应用 ID 和配置来源。保存请求包含 `appId` 和 `appSecret`，响应只返回应用 ID 和配置来源。凭据由环境变量提供时，保存返回 409 |
 | `GET /v1/teams/{team}/inboxes/{agent}` | 查看收件箱但不消费 |
 | `POST /v1/teams/{team}/inboxes/{agent}/receive` | 消费消息；`wait=30s` 时长轮询，有新消息立即返回 |
 | `GET/PUT /v1/teams/{team}/prompt` | 读取 / 设置团队说明 |
