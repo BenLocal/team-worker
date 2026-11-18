@@ -18,6 +18,7 @@ sequenceDiagram
     participant L as 团队 Leader
     participant C as team-worker CLI
     F->>D: im.message.receive_v1
+    D-->>F: 在原消息上添加 OK 表情
     opt 自然语言请求
         D->>A: 请求正文和候选团队
         A-->>D: 动作和参数
@@ -49,6 +50,8 @@ sequenceDiagram
 
 daemon 只接收当前应用的用户文本事件。群聊的首次请求须在飞书里实际 @机器人，daemon 按事件中的提及对象 ID 判断。入站请求保存应用、原消息 ID、发送者、会话和是否来自话题。应用和原消息 ID 共同用于生成请求编号，飞书重推同一事件时沿用该编号。
 
+收到授权用户发给机器人的文本后，daemon 在原消息上添加飞书 OK 表情。应用如缺少表情回复权限，可申请 `im:message.reactions:write_only`。调用失败或超时会记日志，正文照常处理。 [飞书表情回复 API](https://open.feishu.cn/document/server-docs/im-v1/message-reaction/create)
+
 | 输入 | daemon 的处理 |
 | --- | --- |
 | `/tw send <团队> <正文>` 且团队在候选名单里 | 直接标记为待投递，跳过路由 Agent |
@@ -66,13 +69,13 @@ daemon 投递时再次检查权限，在同一事务写入当前 Leader 的收�
 
 配置了专用 Codex 目录时，daemon 为每次调用启动本地 `codex app-server`。普通对话首次调用 `thread/start` 保存线程，后续通过 `thread/resume` 续接。每个应用、发送者和会话或话题各有自己的线程。聊天设置修改后开启新线程，按新权限取数据。重启后通过 SQLite 中的映射找到专用 Codex 目录下的历史。后台结果摘要仍用独立的临时线程。
 
-全局授权账号的普通问答可以使用专用 Codex 配置启用的 Skill、MCP 和插件，也可以通过当前 daemon 的 Unix socket 调用本地 `team-worker` CLI。工作目录是专用 Codex 目录下的 `workspace`，沙箱和工具权限由专用配置决定。旧版按团队授权的账号继续通过 daemon 查询授权范围内的数据。后台摘要只整理已有结果。若工具请求交互审批或输入，飞书会告知用户。内置的建队和派活仍使用确认码。
+全局授权账号可以在飞书里向 Codex 提问，也可以请它直接读文档、写草稿或处理工作区文件。Codex 使用专用配置启用的 Skill、MCP、插件和其他工具，工作目录是专用 Codex 目录下的 `workspace`。涉及团队时，它也可通过 daemon 的 Unix socket 调用本地 `team-worker` CLI。直接答复保留 Markdown 格式并省略卡片标题。旧版按团队授权的账号继续通过 daemon 查询授权范围内的数据。消息分类和后台摘要使用已有材料。若工具请求交互审批或输入，飞书会告知用户。内置的建队和派活仍使用确认码。
 
 其余部署可用 `LLM_API_BASE` 与 `TEAM_WORKER_FEISHU_ROUTER_MODEL` 走兼容网关的 `POST /chat/completions`，每次只传当前请求。助手暂时不可用时，明确指定团队的消息仍可进入 Leader 收件箱，待路由和待摘要任务留在队列中。 [路由模型配置](reference.md#飞书自建应用)
 
 ## 团队助手查询与确认
 
-团队助手识别「现在有几个团队」等查询后，daemon 调用同机 `team-worker` CLI，通过当前 daemon 的 Unix socket 读取数据。回复只列出发起人有权访问的信息。团队、成员和任务列表显示总数及前 20 项。询问指定团队的现状时，daemon 调用 `board show`，汇总在线成员、当前任务、等待和阻塞情况，以及最近一次完成的任务。
+团队助手识别「现在有几个团队」等查询后，daemon 调用同机 `team-worker` CLI，通过当前 daemon 的 Unix socket 读取数据。回复只列出发起人有权访问的信息。团队、成员和任务列表显示总数及前 20 项。直接问指定团队的状态时，daemon 从 `board show` 生成回复，列出进程在线数、任务执行状态和检查点。已确认的检查点会标明结果仍待提交，时间统一用 UTC。
 
 创建团队和派发任务只对全局授权的飞书账号开放。daemon 先保存待确认操作，再把具体参数发到原会话。同一发送者在原会话回复 `/tw confirm <确认码>` 才会消费该确认码。确认码 10 分钟有效，群聊确认须 @机器人。执行前再次检查权限，任务负责人必须是当前团队成员。执行中断后，队列保留结果未知的状态，避免自动执行两次。
 
