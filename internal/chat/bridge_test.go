@@ -13,6 +13,8 @@ import (
 
 	"github.com/benlocal/team-worker/internal/model"
 	"github.com/benlocal/team-worker/internal/store"
+	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
+	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
 )
 
 func chatFixture(t *testing.T) (*Bridge, *[]Outbound, model.Agent) {
@@ -279,16 +281,19 @@ func TestAssistantWritesRequireOriginalSenderConfirmation(t *testing.T) {
 		action assistantAction
 		args   []string
 		result string
+		card   bool
 	}{
 		{"create team", assistantAction{Action: "create_team", Team: "new team"},
-			[]string{"team", "spawn-team", "--agent-name=leader", "--", "new-team"}, `{"team":"new-team","status":"created"}`},
+			[]string{"team", "spawn-team", "--agent-name=leader", "--", "new-team"}, `{"team":"new-team","status":"created"}`, false},
 		{"assign task", assistantAction{Action: "create_task", Alias: "alpha", Subject: "--literal title", Owner: "leader"},
 			[]string{"task", "create", "--owner=leader", "--description=", "--", "alpha", "--literal title"},
-			`{"id":"task-1","owner":"leader","subject":"--literal title"}`},
+			`{"id":"task-1","owner":"leader","subject":"--literal title"}`, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx := t.Context()
 			b, outbound, _ := chatFixture(t)
+			now := b.Store.Now()
+			b.Store.Now = func() time.Time { return now }
 			settings, err := b.Store.ChatSettings(ctx)
 			if err != nil {
 				t.Fatal(err)
@@ -311,7 +316,8 @@ func TestAssistantWritesRequireOriginalSenderConfirmation(t *testing.T) {
 			}
 			accept := func(id, sender, conversation, text string) {
 				t.Helper()
-				if err := b.Accept(ctx, Inbound{ID: id, Sender: sender, Conversation: conversation, Text: text}); err != nil {
+				if err := b.Accept(ctx, Inbound{ID: id, Sender: sender, Conversation: conversation, Text: text,
+					Group: test.card, Mentioned: test.card, Thread: test.card}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -329,6 +335,10 @@ func TestAssistantWritesRequireOriginalSenderConfirmation(t *testing.T) {
 			if calls != 0 || len(*outbound) != 1 || !strings.Contains((*outbound)[0].Text, string(jobJSON(test.args))) {
 				t.Fatalf("Expected only the exact operation preview before confirmation, got %d calls and %+v", calls, *outbound)
 			}
+			prompt := (*outbound)[0]
+			if prompt.CardTitle != "待确认操作" || prompt.ConfirmToken == "" {
+				t.Fatalf("Expected a confirmation card, got %+v", (*outbound)[0])
+			}
 			_, suffix, ok := strings.Cut((*outbound)[0].Text, "/tw confirm ")
 			if !ok || suffix == "" {
 				t.Fatalf("Preview missing confirmation command: %+v", *outbound)
@@ -340,8 +350,43 @@ func TestAssistantWritesRequireOriginalSenderConfirmation(t *testing.T) {
 			if calls != 0 {
 				t.Fatal("Another sender or conversation confirmed the operation")
 			}
-			accept("confirmed", "ou_owner", "original-chat", confirmation)
-			accept("confirmed", "ou_owner", "original-chat", confirmation)
+			if test.card {
+				events := dispatcher.NewEventDispatcher("", "").OnP2CardActionTrigger(b.confirmFeishuCard)
+				click := func(id, sender, chat, card, want string) {
+					t.Helper()
+					raw := jobJSON(map[string]any{
+						"schema": "2.0",
+						"header": map[string]string{"event_id": id, "event_type": "card.action.trigger", "app_id": b.Account.Application},
+						"event": map[string]any{
+							"host": "im_message", "operator": map[string]string{"open_id": sender},
+							"context": map[string]string{"open_chat_id": chat, "open_message_id": card},
+							"action":  map[string]any{"tag": "button", "value": map[string]string{feishuConfirmKey: prompt.ConfirmToken}},
+						},
+					})
+					result, err := events.Do(ctx, raw)
+					resp, ok := result.(*callback.CardActionTriggerResponse)
+					if err != nil || !ok || resp == nil || resp.Toast == nil || resp.Toast.Type != want {
+						t.Fatalf("Click %s returned %+v (%v), expected %s", id, result, err, want)
+					}
+				}
+				click("wrong-card", "ou_owner", "original-chat", "om_copied", "error")
+				click("wrong-card-room", "ou_owner", "other-chat", "om_request", "error")
+				click("wrong-card-sender", "ou_other", "original-chat", "om_request", "error")
+				beforeExpiry := now
+				now = now.Add(11 * time.Minute)
+				click("expired", "ou_owner", "original-chat", "om_request", "error")
+				now = beforeExpiry
+				sync()
+				if calls != 0 {
+					t.Fatal("An invalid card click confirmed the operation")
+				}
+				click("accepted", "ou_owner", "original-chat", "om_request", "success")
+				click("accepted", "ou_owner", "original-chat", "om_request", "success")
+				click("second-click", "ou_owner", "original-chat", "om_request", "error")
+			} else {
+				accept("confirmed", "ou_owner", "original-chat", confirmation)
+				accept("confirmed", "ou_owner", "original-chat", confirmation)
+			}
 			sync()
 			accept("token-reused", "ou_owner", "original-chat", confirmation)
 			sync()

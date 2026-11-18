@@ -191,6 +191,40 @@ func TestFeishuSeparatesPrivateNoticesAndQuotedReplies(t *testing.T) {
 				t.Errorf("Unexpected private delivery target %s %s", r.URL.RawQuery, body.ReceiveID)
 			}
 			fmt.Fprint(w, `{"code":0,"data":{"message_id":"om_notice"}}`)
+		case "/open-apis/im/v1/messages/om_confirmation/reply":
+			var body struct {
+				Type    string `json:"msg_type"`
+				Content string `json:"content"`
+			}
+			var card struct {
+				Schema string
+				Body   struct {
+					Elements []struct {
+						Tag       string
+						Text      struct{ Tag, Content string }
+						Behaviors []struct {
+							Type  string
+							Value map[string]string
+						}
+					}
+				}
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Error(err)
+			}
+			if err := json.Unmarshal([]byte(body.Content), &card); err != nil || body.Type != "interactive" ||
+				card.Schema != "2.0" || len(card.Body.Elements) != 2 {
+				t.Errorf("Unexpected confirmation card: %s (%v)", body.Content, err)
+			} else {
+				preview, button := card.Body.Elements[0], card.Body.Elements[1]
+				if preview.Text.Tag != "plain_text" || preview.Text.Content != "**Preview**" ||
+					button.Tag != "button" || button.Text.Content != "确认执行" ||
+					len(button.Behaviors) != 1 || button.Behaviors[0].Type != "callback" ||
+					button.Behaviors[0].Value[feishuConfirmKey] != "fixture-token" {
+					t.Errorf("Unexpected preview or button: %s", body.Content)
+				}
+			}
+			fmt.Fprint(w, `{"code":0,"data":{"message_id":"om_card"}}`)
 		case "/open-apis/im/v1/messages/om_original/reply":
 			var body struct {
 				Thread  bool   `json:"reply_in_thread"`
@@ -250,6 +284,10 @@ func TestFeishuSeparatesPrivateNoticesAndQuotedReplies(t *testing.T) {
 	}
 	if id, err := deliver(t.Context(), Outbound{Text: "**Hello**", Markdown: true, ReplyTo: "om_original", Thread: true}); err != nil || id != "om_reply" {
 		t.Fatalf("Quoted card without a title: %s %v", id, err)
+	}
+	if id, err := deliver(t.Context(), Outbound{Text: "**Preview**", CardTitle: "待确认操作", ConfirmToken: "fixture-token",
+		ReplyTo: "om_confirmation"}); err != nil || id != "om_card" {
+		t.Fatalf("Confirmation card: %s %v", id, err)
 	}
 }
 

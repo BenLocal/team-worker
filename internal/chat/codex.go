@@ -41,7 +41,11 @@ func codexTeamAssistant(home, model, dataDir, socket string, st *store.Store) Ch
 		if info, err := os.Stat(home); err != nil || !info.IsDir() {
 			return agentOutput{}, errors.New("The dedicated team assistant Codex home does not exist")
 		}
-		ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+		timeout := time.Minute
+		if codexToolsAllowed(kind, input) {
+			timeout = 10 * time.Minute
+		}
+		ctx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
 		var key, previousThread string
 		if input.SessionKey != "" {
@@ -65,6 +69,8 @@ func codexTeamAssistant(home, model, dataDir, socket string, st *store.Store) Ch
 				return agentOutput{}, err
 			}
 			args = append(args, restrictions...)
+		} else if input.interact != nil {
+			args = append(args, "--enable", "default_mode_request_user_input")
 		}
 		cmd := exec.CommandContext(ctx, "codex", args...)
 		cmd.Dir = workDir
@@ -198,9 +204,6 @@ func requestCodexTurn(ctx context.Context, stdin io.Writer, stdout io.Reader, wo
 			if !ok {
 				return msg, errors.New("Codex app-server closed its output")
 			}
-			if msg.Method != "" && len(msg.ID) > 0 {
-				return msg, errCodexInteraction
-			}
 			return msg, nil
 		}
 	}
@@ -214,8 +217,12 @@ func requestCodexTurn(ctx context.Context, stdin io.Writer, stdout io.Reader, wo
 			if err != nil {
 				return err
 			}
-			if string(msg.ID) != fmt.Sprint(id) {
-				if method == "turn/start" && (msg.Method == "item/started" || msg.Method == "item/completed" || msg.Method == "turn/completed") {
+			serverRequest := msg.Method != "" && len(msg.ID) > 0
+			if serverRequest && method != "turn/start" {
+				return errCodexInteraction
+			}
+			if serverRequest || string(msg.ID) != fmt.Sprint(id) {
+				if method == "turn/start" && (serverRequest || msg.Method == "item/started" || msg.Method == "item/completed" || msg.Method == "turn/completed") {
 					if len(early) == 128 {
 						return errors.New("Too many Codex events before turn acknowledgement")
 					}
@@ -232,15 +239,17 @@ func requestCodexTurn(ctx context.Context, stdin io.Writer, stdout io.Reader, wo
 			return nil
 		}
 	}
-	if err := rpc(1, "initialize", map[string]any{"clientInfo": map[string]string{
-		"name": "team-worker", "version": "1",
-	}}, nil); err != nil {
+	allowTools := codexToolsAllowed(kind, input)
+	initialize := map[string]any{"clientInfo": map[string]string{"name": "team-worker", "version": "1"}}
+	if allowTools && input.interact != nil {
+		initialize["capabilities"] = map[string]bool{"experimentalApi": true}
+	}
+	if err := rpc(1, "initialize", initialize, nil); err != nil {
 		return agentOutput{}, err
 	}
 	if err := send(0, "initialized", map[string]any{}); err != nil {
 		return agentOutput{}, err
 	}
-	allowTools := codexToolsAllowed(kind, input)
 	if !allowTools {
 		var config struct {
 			Config struct {
@@ -268,7 +277,11 @@ func requestCodexTurn(ctx context.Context, stdin io.Writer, stdout io.Reader, wo
 		"cwd":                   workDir,
 		"developerInstructions": prompt,
 	}
-	if input.Scoped {
+	if allowTools {
+		thread["approvalPolicy"] = "on-request"
+		thread["approvalsReviewer"] = "user"
+		thread["sandbox"] = "danger-full-access"
+	} else {
 		thread["approvalPolicy"] = "never"
 		thread["sandbox"] = "read-only"
 	}
@@ -324,6 +337,7 @@ func requestCodexTurn(ctx context.Context, stdin io.Writer, stdout io.Reader, wo
 		return agentOutput{}, errors.New("Codex app-server returned no turn ID")
 	}
 	var text string
+	fileChanges := make(map[string][]string)
 	for {
 		var msg codexMessage
 		if len(early) > 0 {
@@ -335,14 +349,34 @@ func requestCodexTurn(ctx context.Context, stdin io.Writer, stdout io.Reader, wo
 				return agentOutput{}, err
 			}
 		}
+		if msg.Method != "" && len(msg.ID) > 0 {
+			if !allowTools || input.interact == nil {
+				return agentOutput{}, errCodexInteraction
+			}
+			interaction, err := parseCodexInteraction(msg, start.Thread.ID, turn.Turn.ID, fileChanges)
+			if err != nil {
+				return agentOutput{}, err
+			}
+			result, err := input.interact(ctx, interaction)
+			if err != nil {
+				return agentOutput{}, err
+			}
+			if err := encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": result}); err != nil {
+				return agentOutput{}, err
+			}
+			continue
+		}
 		if msg.Method != "item/started" && msg.Method != "item/completed" && msg.Method != "turn/completed" {
 			continue
 		}
 		var event struct {
-			ThreadID string                      `json:"threadId"`
-			TurnID   string                      `json:"turnId"`
-			Turn     codexTurn                   `json:"turn"`
-			Item     struct{ Type, Text string } `json:"item"`
+			ThreadID string    `json:"threadId"`
+			TurnID   string    `json:"turnId"`
+			Turn     codexTurn `json:"turn"`
+			Item     struct {
+				ID, Type, Text string
+				Changes        []struct{ Path, Diff string }
+			} `json:"item"`
 		}
 		if err := json.Unmarshal(msg.Params, &event); err != nil {
 			return agentOutput{}, err
@@ -376,6 +410,13 @@ func requestCodexTurn(ctx context.Context, stdin io.Writer, stdout io.Reader, wo
 		case "commandExecution", "fileChange", "mcpToolCall", "dynamicToolCall", "collabAgentToolCall", "webSearch", "imageView", "imageGeneration":
 			if !allowTools {
 				return agentOutput{}, errCodexToolInInternalTurn
+			}
+			if event.Item.Type == "fileChange" && msg.Method == "item/started" {
+				var previews []string
+				for _, change := range event.Item.Changes {
+					previews = append(previews, change.Path+"\n"+change.Diff)
+				}
+				fileChanges[event.Item.ID] = previews
 			}
 		}
 	}

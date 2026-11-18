@@ -40,6 +40,11 @@ func (b *Bridge) answerAssistantQuestion(ctx context.Context, request model.Chat
 	if err != nil || !claimed {
 		return err
 	}
+	if !input.Scoped && b.Account.Provider == "feishu" && b.Deliver != nil {
+		input.interact = func(ctx context.Context, interaction codexInteraction) (any, error) {
+			return b.waitForCodexCard(ctx, request.Origin, settings.Revision, interaction)
+		}
+	}
 	answer, err := b.Agent(ctx, "answer", input)
 	text := strings.TrimSpace(answer.Summary)
 	if err != nil || text == "" || len(text) > 16000 {
@@ -52,8 +57,11 @@ func (b *Bridge) answerAssistantQuestion(ctx context.Context, request model.Chat
 }
 
 func assistantFailureText(err error) string {
+	if errors.Is(err, errCodexCardExpired) {
+		return "这次 Codex 交互等待超时，回合已结束。"
+	}
 	if errors.Is(err, errCodexInteraction) {
-		return "Codex 请求交互审批或输入。请到专用 Codex 环境处理后再试。"
+		return "这次交互无法在飞书完成，Codex 回合已结束。"
 	}
 	return "这次没有收到完整的答复。如果请求涉及操作，请先查实际结果再重试。"
 }

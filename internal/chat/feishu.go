@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -19,6 +20,7 @@ import (
 	lark "github.com/larksuite/oapi-sdk-go/v3"
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
+	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
 )
@@ -102,17 +104,73 @@ func feishuReaction(client *lark.Client) func(context.Context, string) error {
 	}
 }
 
+const feishuConfirmKey = "tw_confirm"
+
+func (b *Bridge) confirmFeishuCard(ctx context.Context, event *callback.CardActionTriggerEvent) (*callback.CardActionTriggerResponse, error) {
+	if event == nil || event.EventV2Base == nil || event.EventV2Base.Header == nil || event.Event == nil {
+		return nil, nil
+	}
+	header := event.EventV2Base.Header
+	if header.AppID != b.Account.Application || header.EventID == "" {
+		return nil, nil
+	}
+	click := event.Event
+	if click.Host != "im_message" || click.Action == nil || click.Action.Tag != "button" ||
+		click.Operator == nil || click.Operator.OpenID == "" || click.Context == nil ||
+		click.Context.OpenChatID == "" || click.Context.OpenMessageID == "" {
+		return nil, nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	if token, ok := click.Action.Value[feishuCodexInteractionKey].(string); ok && token != "" && len(token) <= 128 {
+		return b.receiveCodexCard(ctx, click, token), nil
+	}
+	token, ok := click.Action.Value[feishuConfirmKey].(string)
+	if !ok || token == "" || len(token) > 128 {
+		return nil, nil
+	}
+	sender, chatID, cardID := click.Operator.OpenID, click.Context.OpenChatID, click.Context.OpenMessageID
+	receipt := digest(feishuConfirmKey, header.EventID, sender, chatID, cardID, token)
+	incoming := model.ChatRequest{Account: b.accountKey(), Origin: model.ChatOrigin{
+		MessageID: receipt, Sender: sender, Conversation: chatID,
+	}}
+	accepted, err := b.Store.ConfirmChatAction(ctx, b.Account, incoming, token, cardID)
+	toast := &callback.Toast{Type: "error", Content: "此确认已使用、已过期，或你无权确认。"}
+	if err != nil {
+		b.Log.Warn("confirm Feishu card", "err", err)
+		toast.Content = "暂时无法提交确认，请稍后重试。"
+	} else if accepted {
+		toast.Type, toast.Content = "success", "已提交确认，执行结果会回复原消息。"
+	}
+	return &callback.CardActionTriggerResponse{Toast: toast}, nil
+}
+
 func feishuDelivery(client *lark.Client) func(context.Context, Outbound) (string, error) {
 	return func(ctx context.Context, out Outbound) (string, error) {
 		replacer := strings.NewReplacer("<", "‹", ">", "›")
 		text := replacer.Replace(out.Text)
 		msgType := "text"
 		var body any = map[string]string{"text": text}
-		if out.Markdown || out.CardTitle != "" {
+		if out.Markdown || out.CardTitle != "" || out.ConfirmToken != "" || out.CodexCard != nil {
 			msgType = "interactive"
-			elements := []map[string]string{{"tag": "markdown", "content": text}}
+			elements := []map[string]any{{"tag": "markdown", "content": text}}
+			if out.ConfirmToken != "" {
+				elements = []map[string]any{
+					{"tag": "div", "text": map[string]string{"tag": "plain_text", "content": out.Text}},
+					{
+						"tag": "button", "type": "primary",
+						"text": map[string]string{"tag": "plain_text", "content": "确认执行"},
+						"behaviors": []map[string]any{{
+							"type": "callback", "value": map[string]string{feishuConfirmKey: out.ConfirmToken},
+						}},
+					},
+				}
+			}
+			if out.CodexCard != nil {
+				elements = feishuCodexElements(out.Text, out.CodexCard)
+			}
 			for _, asset := range out.Assets {
-				elements = append(elements, map[string]string{"tag": "markdown", "content": feishuAssetMarkdown(asset)})
+				elements = append(elements, map[string]any{"tag": "markdown", "content": feishuAssetMarkdown(asset)})
 			}
 			card := map[string]any{
 				"schema": "2.0",
@@ -165,6 +223,56 @@ func feishuDelivery(client *lark.Client) func(context.Context, Outbound) (string
 			Message:   fmt.Sprintf("Feishu rejected delivery (HTTP %d, code %d)", status, code),
 		}
 	}
+}
+
+func feishuCodexElements(detail string, card *model.ChatCodexCard) []map[string]any {
+	plain := func(text string) map[string]string { return map[string]string{"tag": "plain_text", "content": text} }
+	button := func(label, choice, style string) map[string]any {
+		return map[string]any{
+			"tag": "button", "text": plain(label), "type": style,
+			"behaviors": []map[string]any{{"type": "callback", "value": map[string]string{
+				feishuCodexInteractionKey: card.Token, "choice": choice,
+			}}},
+		}
+	}
+	if len(card.Questions) == 0 {
+		elements := []map[string]any{{"tag": "div", "text": plain(detail)}}
+		if card.Approve {
+			elements = append(elements, button("仅批准本次", "accept", "primary"))
+		}
+		return append(elements, button("拒绝", "deny", "default"))
+	}
+	var fields []map[string]any
+	for n, q := range card.Questions {
+		name := codexFieldName(n)
+		text := q.Question
+		if q.Header != "" {
+			text = q.Header + "\n" + text
+		}
+		fields = append(fields, map[string]any{"tag": "markdown", "content": feishuMarkdownLabel.Replace(text)})
+		if len(q.Options) == 0 {
+			fields = append(fields, map[string]any{"tag": "input", "name": name, "required": true, "placeholder": plain("请输入")})
+			continue
+		}
+		var options []map[string]any
+		for index, option := range q.Options {
+			label := option.Label
+			if option.Description != "" {
+				label += " · " + option.Description
+			}
+			options = append(options, map[string]any{"text": plain(label), "value": strconv.Itoa(index)})
+		}
+		if q.Other {
+			options = append(options, map[string]any{"text": plain("其他，请在下方填写"), "value": "other"})
+		}
+		fields = append(fields, map[string]any{"tag": "select_static", "name": name, "required": true, "placeholder": plain("请选择"), "options": options})
+		if q.Other {
+			fields = append(fields, map[string]any{"tag": "input", "name": name + "_other", "placeholder": plain("选了其他时请填写")})
+		}
+	}
+	submit := button("提交", "submit", "primary")
+	submit["name"], submit["form_action_type"] = "submit_answers", "submit"
+	return []map[string]any{{"tag": "form", "name": "codex_input", "elements": append(fields, submit)}}
 }
 
 var feishuMarkdownLabel = strings.NewReplacer(
@@ -233,6 +341,7 @@ func runFeishu(ctx context.Context, st *store.Store, log *slog.Logger, board, da
 		return err
 	}
 	events := dispatcher.NewEventDispatcher("", "")
+	events.OnP2CardActionTrigger(bridge.confirmFeishuCard)
 	events.OnP2MessageReceiveV1(func(eventCtx context.Context, event *larkim.P2MessageReceiveV1) error {
 		if msg, ok := feishuInbound(event, app.AppID, botID); ok {
 			return bridge.Accept(eventCtx, msg)

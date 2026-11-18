@@ -58,10 +58,29 @@ type ChatOrigin struct {
 type ChatOutbound struct {
 	Conversation, Text, ReplyTo, OpenID string
 	Thread                              bool
-	Markdown                            bool        `json:",omitempty"`
-	CardTitle                           string      `json:",omitempty"`
-	HasAssets                           bool        `json:",omitempty"`
-	Assets                              []ChatAsset `json:"-"`
+	Markdown                            bool           `json:",omitempty"`
+	CardTitle                           string         `json:",omitempty"`
+	ConfirmToken                        string         `json:",omitempty"`
+	CodexCard                           *ChatCodexCard `json:"-"`
+	HasAssets                           bool           `json:",omitempty"`
+	Assets                              []ChatAsset    `json:"-"`
+}
+
+type ChatCodexCard struct {
+	Token     string
+	Approve   bool
+	Questions []ChatCodexQuestion
+}
+
+type ChatCodexQuestion struct {
+	ID, Header, Question string
+	Options              []ChatCodexOption
+	Other                bool `json:"isOther"`
+	Secret               bool `json:"isSecret"`
+}
+
+type ChatCodexOption struct {
+	Label, Description string
 }
 
 const (

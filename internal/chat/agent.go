@@ -23,6 +23,7 @@ type agentInput struct {
 	Context    string   `json:"context,omitempty"`
 	SessionKey string   `json:"-"`
 	Scoped     bool     `json:"-"`
+	interact   func(context.Context, codexInteraction) (any, error)
 }
 
 type agentOutput struct {

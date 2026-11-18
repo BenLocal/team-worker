@@ -16,7 +16,8 @@ func ChatAssistantWriteAllowed(settings model.ChatSettings, account model.ChatAc
 		request.BindingID == globalSenderPrefix+settings.FeishuSenderGrant+"-pending"
 }
 
-func (s *Store) ConfirmChatAction(ctx context.Context, app model.ChatAccount, incoming model.ChatRequest, token string) (bool, error) {
+// ConfirmChatAction accepts either a text reply or a click on the delivered prompt.
+func (s *Store) ConfirmChatAction(ctx context.Context, app model.ChatAccount, incoming model.ChatRequest, token, cardMessageID string) (bool, error) {
 	var accepted bool
 	err := s.write(ctx, func(tx *sql.Tx) error {
 		origin := incoming.Origin
@@ -31,10 +32,11 @@ func (s *Store) ConfirmChatAction(ctx context.Context, app model.ChatAccount, in
 		res, err := tx.ExecContext(ctx, `UPDATE chat_jobs SET kind='assistant-write'
 			WHERE id=? AND account=? AND kind='assistant-confirm' AND state='pending' AND queued_at>?
 			AND EXISTS (SELECT 1 FROM chat_requests r JOIN chat_jobs prompt ON prompt.id=r.id||'-confirm'
-				WHERE r.id=chat_jobs.request_id AND r.sender=? AND r.conversation=? AND r.is_group=?
-				AND r.binding_id=? AND prompt.state='sent')`,
-			token, incoming.Account, s.Now().Add(-chatConfirmWindow).Unix(), origin.Sender, origin.Conversation, origin.Group,
-			globalSenderPrefix+settings.FeishuSenderGrant+"-pending")
+				WHERE r.id=chat_jobs.request_id AND r.sender=? AND r.conversation=?
+				AND r.binding_id=? AND prompt.state='sent'
+				AND CASE WHEN ?='' THEN r.is_group=? ELSE prompt.result=? END)`,
+			token, incoming.Account, s.Now().Add(-chatConfirmWindow).Unix(), origin.Sender, origin.Conversation,
+			globalSenderPrefix+settings.FeishuSenderGrant+"-pending", cardMessageID, origin.Group, cardMessageID)
 		if err != nil {
 			return err
 		}

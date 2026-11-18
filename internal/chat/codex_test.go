@@ -19,6 +19,7 @@ func TestRoutingCodexAppServerProtocol(t *testing.T) {
 	for _, test := range []struct {
 		name, sessionKey, previousThread, mode string
 		tool, approval, scoped, routeFormat    bool
+		interactive                            string
 	}{
 		{name: "temporary thread for background work"},
 		{name: "first conversation turn", sessionKey: "session-key"},
@@ -28,6 +29,8 @@ func TestRoutingCodexAppServerProtocol(t *testing.T) {
 		{name: "tool invocation in intent classification", tool: true},
 		{name: "team-scoped reply keeps restricted permissions", mode: "answer", scoped: true, tool: true},
 		{name: "interactive approval", mode: "answer", approval: true},
+		{name: "approve once and resume the turn", mode: "answer", interactive: "approval", previousThread: "thread-1"},
+		{name: "submit form and resume the turn", mode: "answer", interactive: "input"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			mode := test.mode
@@ -62,6 +65,10 @@ func TestRoutingCodexAppServerProtocol(t *testing.T) {
 					}
 					var result any = map[string]any{}
 					switch method {
+					case "initialize":
+						if test.interactive != "" && !strings.Contains(string(request.Params), `"experimentalApi":true`) {
+							t.Error("Interactive server requests were not enabled")
+						}
 					case "initialized":
 						continue
 					case "config/read":
@@ -71,11 +78,12 @@ func TestRoutingCodexAppServerProtocol(t *testing.T) {
 						if err := json.Unmarshal(request.Params, &fields); err != nil {
 							t.Errorf("Invalid thread params: %v", err)
 						}
-						if test.scoped && (fields["sandbox"] != "read-only" || fields["approvalPolicy"] != "never") {
+						if (test.scoped || mode != "answer") && (fields["sandbox"] != "read-only" || fields["approvalPolicy"] != "never") {
 							t.Errorf("Scoped thread must use restricted permissions, got %s", request.Params)
 						}
-						if !test.scoped && (fields["sandbox"] != nil || fields["approvalPolicy"] != nil) {
-							t.Errorf("Thread must use configured permissions, got %s", request.Params)
+						if !test.scoped && mode == "answer" && (fields["sandbox"] != "danger-full-access" ||
+							fields["approvalPolicy"] != "on-request" || fields["approvalsReviewer"] != "user") {
+							t.Errorf("Authorized answers must use Full Access with user approvals, got %s", request.Params)
 						}
 						if method == "thread/start" && fields["ephemeral"] != (test.sessionKey == "") {
 							t.Errorf("Unexpected thread persistence: %s", request.Params)
@@ -120,6 +128,24 @@ func TestRoutingCodexAppServerProtocol(t *testing.T) {
 					}})
 					return
 				}
+				if test.interactive != "" {
+					method := "item/commandExecution/requestApproval"
+					params := map[string]any{"threadId": "thread-1", "turnId": "turn-1", "itemId": "item-1", "command": "pwd"}
+					want := `{"decision":"accept"}`
+					if test.interactive == "input" {
+						method = "item/tool/requestUserInput"
+						params["questions"] = []map[string]string{{"id": "topic", "header": "Topic", "question": "What should we work on?"}}
+						want = `{"answers":{"topic":{"answers":["documentation"]}}}`
+					}
+					if err := out.Encode(map[string]any{"id": "server-99", "method": method, "params": params}); err != nil {
+						finished <- err
+						return
+					}
+					var response codexMessage
+					if err := in.Decode(&response); err != nil || string(response.ID) != `"server-99"` || response.Method != "" || string(response.Result) != want {
+						t.Errorf("Wrong response to the original server request: %+v, %v", response, err)
+					}
+				}
 				if test.tool {
 					if err := out.Encode(map[string]any{"method": "item/completed", "params": map[string]any{
 						"threadId": "thread-1", "turnId": "turn-1", "item": map[string]string{"type": "commandExecution"},
@@ -149,8 +175,23 @@ func TestRoutingCodexAppServerProtocol(t *testing.T) {
 			if mode == "answer" {
 				request = "Read the document in your workspace and summarize it"
 			}
-			result, err := requestCodexTurn(ctx, client, client, "/fixture", "example-model", mode, test.previousThread,
-				agentInput{Request: request, Teams: []string{"alpha"}, SessionKey: test.sessionKey, Scoped: test.scoped})
+			input := agentInput{Request: request, Teams: []string{"alpha"}, SessionKey: test.sessionKey, Scoped: test.scoped}
+			if test.interactive != "" {
+				input.interact = func(_ context.Context, i codexInteraction) (any, error) {
+					choice := "accept"
+					if test.interactive == "input" {
+						choice = "submit"
+					} else if i.text != "pwd" {
+						t.Errorf("Approval card must show the command, got %q", i.text)
+					}
+					result, ok := i.response(choice, map[string]any{"answer_0": "documentation"})
+					if !ok {
+						return nil, errors.New("Invalid fixture answer")
+					}
+					return result, nil
+				}
+			}
+			result, err := requestCodexTurn(ctx, client, client, "/fixture", "example-model", mode, test.previousThread, input)
 			switch {
 			case test.approval:
 				if !errors.Is(err, errCodexInteraction) {

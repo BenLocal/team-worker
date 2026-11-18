@@ -97,12 +97,14 @@ func (b *Bridge) queueAssistantAction(ctx context.Context, r model.ChatRequest, 
 		return b.Store.FinishChatAssistant(ctx, r, job, store.ChatJob{})
 	}
 	job.ID, job.Kind = rand.Text(), "assistant-confirm"
-	preview := fmt.Sprintf("待确认操作\nteam-worker %s\n\n请在本会话于 10 分钟内回复 /tw confirm %s", jobJSON(args), job.ID)
+	preview := fmt.Sprintf("team-worker %s\n\n请在 10 分钟内点击「确认执行」。按钮不可用时，在本会话回复\n/tw confirm %s", jobJSON(args), job.ID)
 	if a.Action == "create_team" && a.Team != requestedTeam {
 		preview = fmt.Sprintf("团队名里的空格会换成连字符，使用 %s。\n\n%s", a.Team, preview)
 	}
+	confirmation := r.Origin.Reply(preview)
+	confirmation.CardTitle, confirmation.ConfirmToken = "待确认操作", job.ID
 	return b.Store.FinishChatAssistant(ctx, r, job, store.ChatJob{
-		ID: r.ID + "-confirm", Kind: "reply", Payload: jobJSON(r.Origin.Reply(preview)),
+		ID: r.ID + "-confirm", Kind: "reply", Payload: jobJSON(confirmation),
 	})
 }
 

@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -46,6 +47,7 @@ type Bridge struct {
 	lastReported     time.Time
 	reportedRevision int64
 	reportedOnline   bool
+	codexCards       sync.Map
 }
 
 type command struct {
@@ -137,7 +139,7 @@ func (b *Bridge) Accept(ctx context.Context, msg Inbound) error {
 		if op == "confirm" {
 			token, extra := word(body)
 			if token != "" && extra == "" {
-				ok, err := b.Store.ConfirmChatAction(ctx, b.Account, r, token)
+				ok, err := b.Store.ConfirmChatAction(ctx, b.Account, r, token, "")
 				if err != nil || ok {
 					return err
 				}
