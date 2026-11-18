@@ -45,9 +45,14 @@ type ChatRecipient struct {
 	OpenID string `json:"openId"`
 }
 
+func (s ChatSettings) AllowsFeishuSender(account ChatAccount, openID string) bool {
+	return s.FeishuSenderGrant != "" && s.FeishuSender != nil &&
+		s.FeishuSender.ChatAccount == account && s.FeishuSender.OpenID == openID
+}
+
 type ChatOrigin struct {
-	MessageID, Sender, Conversation string
-	Group, Thread                   bool
+	MessageID, Sender, Conversation, ThreadID string
+	Group, Thread                             bool
 }
 
 type ChatOutbound struct {

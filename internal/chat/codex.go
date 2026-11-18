@@ -14,10 +14,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/benlocal/team-worker/internal/model"
+	"github.com/benlocal/team-worker/internal/store"
 	"github.com/benlocal/team-worker/internal/sysproc"
 )
 
-func configuredChatAgent(dataDir string) ChatAgent {
+func configuredChatAgent(dataDir, socket string, st *store.Store) ChatAgent {
 	home := strings.TrimSpace(os.Getenv("TEAM_WORKER_FEISHU_ROUTER_CODEX_HOME"))
 	if home == "" {
 		local := filepath.Join(dataDir, "feishu-codex")
@@ -28,31 +30,44 @@ func configuredChatAgent(dataDir string) ChatAgent {
 	if home == "" {
 		return configuredGatewayAgent()
 	}
-	return codexRouter(home, strings.TrimSpace(os.Getenv("TEAM_WORKER_FEISHU_ROUTER_MODEL")))
+	return codexTeamAssistant(home, strings.TrimSpace(os.Getenv("TEAM_WORKER_FEISHU_ROUTER_MODEL")), dataDir, socket, st)
 }
 
-func codexRouter(home, model string) ChatAgent {
+func codexTeamAssistant(home, model, dataDir, socket string, st *store.Store) ChatAgent {
 	return func(ctx context.Context, kind string, input agentInput) (agentOutput, error) {
 		if !filepath.IsAbs(home) {
-			return agentOutput{}, errors.New("The routing Codex home must be an absolute path")
+			return agentOutput{}, errors.New("The team assistant Codex home must be an absolute path")
 		}
 		if info, err := os.Stat(home); err != nil || !info.IsDir() {
-			return agentOutput{}, errors.New("The dedicated routing Codex home does not exist")
+			return agentOutput{}, errors.New("The dedicated team assistant Codex home does not exist")
 		}
 		ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 		defer cancel()
-		workDir, err := os.MkdirTemp("", "tw-feishu-codex-")
-		if err != nil {
+		var key, previousThread string
+		if input.SessionKey != "" {
+			key = digest(filepath.Clean(home), input.SessionKey)
+			var err error
+			previousThread, err = st.ChatAssistantSession(ctx, key)
+			if err != nil {
+				return agentOutput{}, err
+			}
+		}
+		workDir := filepath.Join(home, "workspace")
+		if err := os.MkdirAll(workDir, 0o700); err != nil {
 			return agentOutput{}, err
 		}
-		defer os.RemoveAll(workDir)
-		cmd := exec.CommandContext(ctx, "codex", "app-server", "--listen", "stdio://",
-			"--disable", "shell_tool", "--disable", "unified_exec", "--disable", "plugins", "--disable", "apps",
-			"--disable", "multi_agent", "--disable", "multi_agent_v2", "--disable", "goals",
-			"--disable", "view_image", "--disable", "image_generation", "-c", `web_search="disabled"`,
-			"-c", "mcp_servers={}")
+		args := []string{"app-server", "--listen", "stdio://"}
+		env := assistantCodexEnv(home, dataDir, socket, input.Scoped)
+		if input.Scoped {
+			restrictions, err := scopedCodexArgs(ctx, workDir, env)
+			if err != nil {
+				return agentOutput{}, err
+			}
+			args = append(args, restrictions...)
+		}
+		cmd := exec.CommandContext(ctx, "codex", args...)
 		cmd.Dir = workDir
-		cmd.Env = routingCodexEnv(home)
+		cmd.Env = env
 		cmd.SysProcAttr = sysproc.Detached()
 		cmd.Cancel = func() error { return sysproc.TerminateGroup(cmd.Process.Pid) }
 		cmd.WaitDelay = 2 * time.Second
@@ -74,12 +89,49 @@ func codexRouter(home, model string) ChatAgent {
 			cancel()
 			_ = cmd.Wait()
 		}()
-		return requestCodexTurn(ctx, inputPipe, outputPipe, workDir, model, kind, input)
+		out, err := requestCodexTurn(ctx, inputPipe, outputPipe, workDir, model, kind, previousThread, input)
+		if err != nil || key == "" || previousThread != "" {
+			return out, err
+		}
+		return out, st.SaveChatAssistantSession(ctx, key, out.threadID)
 	}
 }
 
-func routingCodexEnv(home string) []string {
-	env := []string{"HOME=" + home, "CODEX_HOME=" + home}
+func scopedCodexArgs(ctx context.Context, workDir string, env []string) ([]string, error) {
+	args := []string{"--disable", "shell_tool", "--disable", "unified_exec", "--disable", "plugins", "--disable", "apps",
+		"--disable", "multi_agent", "--disable", "multi_agent_v2", "--disable", "goals", "--disable", "skill_mcp_dependency_install",
+		"--disable", "view_image", "--disable", "image_generation", "-c", `web_search="disabled"`}
+	cmd := exec.CommandContext(ctx, "codex", append([]string{"mcp", "list", "--json"}, args...)...)
+	cmd.Dir, cmd.Env = workDir, env
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("Read the assistant MCP configuration: %w", err)
+	}
+	var servers []struct {
+		Name    string `json:"name"`
+		Enabled bool   `json:"enabled"`
+	}
+	if err := json.Unmarshal(output, &servers); err != nil {
+		return nil, errors.New("Codex returned an invalid MCP server list")
+	}
+	// Codex merges config tables, so an empty override does not remove configured servers.
+	for _, server := range servers {
+		if !server.Enabled {
+			continue
+		}
+		if strings.Contains(server.Name, ".") || model.ValidateIdentifier(server.Name, "MCP server name", false) != nil {
+			return nil, errors.New("Cannot disable a scoped MCP server with an unsupported name")
+		}
+		args = append(args, "-c", "mcp_servers."+server.Name+".enabled=false")
+	}
+	return args, nil
+}
+
+func assistantCodexEnv(home, dataDir, socket string, scoped bool) []string {
+	env := []string{"HOME=" + home, "CODEX_HOME=" + home, "TEAM_WORKER_SERVER_URL=", "TEAM_WORKER_NO_AUTOSTART=1"}
+	if !scoped {
+		env = append(env, "TEAM_WORKER_DATA_DIR="+dataDir, "TEAM_WORKER_SOCKET="+socket)
+	}
 	for _, entry := range os.Environ() {
 		key, _, _ := strings.Cut(entry, "=")
 		if slices.Contains([]string{"PATH", "TMPDIR", "LANG", "LC_ALL", "SSL_CERT_FILE", "SSL_CERT_DIR"}, key) {
@@ -102,7 +154,10 @@ type codexTurn struct {
 	Status string `json:"status"`
 }
 
-func requestCodexTurn(ctx context.Context, stdin io.Writer, stdout io.Reader, workDir, model, kind string, input agentInput) (agentOutput, error) {
+var errCodexInteraction = errors.New("Codex requested interactive approval or input")
+var errCodexToolInInternalTurn = errors.New("Codex attempted to use a tool in an internal turn")
+
+func requestCodexTurn(ctx context.Context, stdin io.Writer, stdout io.Reader, workDir, model, kind, previousThread string, input agentInput) (agentOutput, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	stream := make(chan codexMessage)
@@ -139,7 +194,7 @@ func requestCodexTurn(ctx context.Context, stdin io.Writer, stdout io.Reader, wo
 				return msg, errors.New("Codex app-server closed its output")
 			}
 			if msg.Method != "" && len(msg.ID) > 0 {
-				return msg, errors.New("Routing Codex requested client-side interaction")
+				return msg, errCodexInteraction
 			}
 			return msg, nil
 		}
@@ -180,36 +235,53 @@ func requestCodexTurn(ctx context.Context, stdin io.Writer, stdout io.Reader, wo
 	if err := send(0, "initialized", map[string]any{}); err != nil {
 		return agentOutput{}, err
 	}
-	var config struct {
-		Config struct {
-			MCPServers map[string]json.RawMessage `json:"mcp_servers"`
-		} `json:"config"`
-	}
-	if err := rpc(2, "config/read", map[string]string{"cwd": workDir}, &config); err != nil {
-		return agentOutput{}, err
-	}
-	if len(config.Config.MCPServers) > 0 {
-		return agentOutput{}, errors.New("The routing Codex configuration must have no MCP servers")
+	if input.Scoped {
+		var config struct {
+			Config struct {
+				MCPServers map[string]struct {
+					Enabled *bool `json:"enabled"`
+				} `json:"mcp_servers"`
+			} `json:"config"`
+		}
+		if err := rpc(2, "config/read", map[string]string{"cwd": workDir}, &config); err != nil {
+			return agentOutput{}, err
+		}
+		for _, server := range config.Config.MCPServers {
+			if server.Enabled == nil || *server.Enabled {
+				return agentOutput{}, errors.New("Scoped Codex turn unexpectedly has enabled MCP servers")
+			}
+		}
 	}
 	var start struct {
 		Thread struct {
 			ID string `json:"id"`
 		} `json:"thread"`
 	}
-	field, prompt := routingPrompt(kind)
+	field, prompt := teamAssistantPromptFor(kind)
 	thread := map[string]any{
-		"ephemeral": true, "cwd": workDir, "approvalPolicy": "never", "sandbox": "read-only",
-		"baseInstructions":      "You classify and summarize support messages. Use only the supplied data. Do not use tools.",
+		"cwd":                   workDir,
 		"developerInstructions": prompt,
+	}
+	if input.Scoped {
+		thread["approvalPolicy"] = "never"
+		thread["sandbox"] = "read-only"
 	}
 	if model != "" {
 		thread["model"] = model
 	}
-	if err := rpc(3, "thread/start", thread, &start); err != nil {
+	method := "thread/start"
+	if previousThread == "" {
+		thread["ephemeral"] = input.SessionKey == ""
+	} else {
+		method = "thread/resume"
+		thread["threadId"] = previousThread
+		thread["excludeTurns"] = true
+	}
+	if err := rpc(3, method, thread, &start); err != nil {
 		return agentOutput{}, err
 	}
-	if start.Thread.ID == "" {
-		return agentOutput{}, errors.New("Codex app-server returned no thread ID")
+	if start.Thread.ID == "" || (previousThread != "" && start.Thread.ID != previousThread) {
+		return agentOutput{}, errors.New("Codex app-server returned an unexpected thread ID")
 	}
 	data, err := json.Marshal(input)
 	if err != nil {
@@ -218,14 +290,19 @@ func requestCodexTurn(ctx context.Context, stdin io.Writer, stdout io.Reader, wo
 	var turn struct {
 		Turn codexTurn `json:"turn"`
 	}
-	property := map[string]any{"type": "string"}
+	fields := []string{field}
+	properties := map[string]any{field: map[string]any{"type": "string"}}
 	if kind == "route" {
-		property["enum"] = append([]string{""}, input.Teams...)
+		fields = append(fields, "action", "team", "leader", "subject", "owner", "description", "runtime")
+		for _, name := range fields[1:] {
+			properties[name] = map[string]any{"type": "string"}
+		}
+		properties["action"] = map[string]any{"type": "string", "enum": teamAssistantActions}
+		properties["alias"] = map[string]any{"type": "string", "enum": append([]string{""}, input.Teams...)}
 	}
 	if err := rpc(4, "turn/start", map[string]any{
 		"threadId": start.Thread.ID, "input": []map[string]string{{"type": "text", "text": string(data)}},
-		"outputSchema": map[string]any{"type": "object", "additionalProperties": false, "required": []string{field},
-			"properties": map[string]any{field: property}},
+		"outputSchema": map[string]any{"type": "object", "additionalProperties": false, "required": fields, "properties": properties},
 	}, &turn); err != nil {
 		return agentOutput{}, err
 	}
@@ -267,19 +344,21 @@ func requestCodexTurn(ctx context.Context, stdin io.Writer, stdout io.Reader, wo
 			if err := json.Unmarshal([]byte(text), &out); err != nil {
 				return out, errors.New("Codex app-server returned invalid routing JSON")
 			}
+			out.threadID = start.Thread.ID
 			return out, nil
 		}
 		if event.TurnID != turn.Turn.ID {
 			continue
 		}
 		switch event.Item.Type {
-		case "userMessage", "reasoning", "plan":
 		case "agentMessage":
 			if msg.Method == "item/completed" {
 				text = event.Item.Text
 			}
-		default:
-			return agentOutput{}, errors.New("Routing Codex attempted to use a tool")
+		case "commandExecution", "fileChange", "mcpToolCall", "dynamicToolCall", "collabAgentToolCall", "webSearch", "imageView", "imageGeneration":
+			if kind != "answer" || input.Scoped {
+				return agentOutput{}, errCodexToolInInternalTurn
+			}
 		}
 	}
 }

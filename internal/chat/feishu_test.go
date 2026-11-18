@@ -209,7 +209,8 @@ func TestFeishuEventUsesVerifiedMentionAndApplication(t *testing.T) {
 		t.Fatal(err)
 	}
 	msg, ok := feishuInbound(&event, "cli_fixture", "test-bot")
-	if !ok || !msg.Mentioned || !msg.Group || !msg.Thread || msg.Text != " /tw send test report" || msg.Sender != "test-user" {
+	if !ok || !msg.Mentioned || !msg.Group || !msg.Thread || msg.ThreadID != "test-thread" ||
+		msg.Text != " /tw send test report" || msg.Sender != "test-user" {
 		t.Fatalf("normalized message = %+v, accepted = %t", msg, ok)
 	}
 	if _, ok := feishuInbound(&event, "cli_other", "test-bot"); ok {

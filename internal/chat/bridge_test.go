@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"path/filepath"
@@ -83,7 +84,7 @@ func TestBridgeReturnsConcurrentResultsToTheirOrigins(t *testing.T) {
 			if !slices.Equal(in.Teams, []string{"alpha", "beta"}) || in.Request != dm.Text {
 				t.Fatalf("unexpected routing input %+v", in)
 			}
-			return agentOutput{Alias: "alpha"}, nil
+			return agentOutput{assistantAction: assistantAction{Alias: "alpha"}}, nil
 		}
 		if in.Result != "approved group material" && in.Result != "private material" {
 			t.Fatalf("unexpected summary material %+v", in)
@@ -197,6 +198,282 @@ func TestBridgeReturnsConcurrentResultsToTheirOrigins(t *testing.T) {
 	}
 }
 
+func TestBridgeAnswersTeamCountInOriginalConversation(t *testing.T) {
+	ctx := t.Context()
+	b, outbound, _ := chatFixture(t)
+	const question = "看下现在有几个team"
+	b.RunCLI = func(ctx context.Context, args []string) ([]byte, error) {
+		if !slices.Equal(args, []string{"team", "discover"}) {
+			t.Fatalf("Unexpected CLI arguments: %q", args)
+		}
+		teams, err := b.Store.ListTeams(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(teams)
+	}
+	b.Agent = func(_ context.Context, kind string, in agentInput) (agentOutput, error) {
+		if kind != "route" || in.Request != question || !slices.Equal(in.Teams, []string{"alpha", "beta"}) {
+			t.Fatalf("Unexpected router input: %s %+v", kind, in)
+		}
+		var out agentOutput
+		err := json.Unmarshal([]byte(`{"action":"list_teams","alias":""}`), &out)
+		return out, err
+	}
+	msg := Inbound{ID: "list", Sender: "sender", Conversation: "group", Text: question, Group: true, Thread: true, Mentioned: true}
+	for range 2 {
+		if err := b.Accept(ctx, msg); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := b.processAgentJobs(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.sync(ctx, true); err != nil {
+		t.Fatal(err)
+	}
+	if len(*outbound) != 1 {
+		t.Fatalf("Expected one answer: %+v", *outbound)
+	}
+	out := (*outbound)[0]
+	if out.ReplyTo != msg.ID || !out.Thread || !strings.Contains(out.Text, "2 个团队") ||
+		!strings.Contains(out.Text, "alpha") || !strings.Contains(out.Text, "beta") || strings.Contains(out.Text, "restricted") {
+		t.Fatalf("Expected the count and visible teams in the original conversation, got %+v", out)
+	}
+	inbox, err := b.Store.Peek(ctx, "alpha", "leader", "")
+	if err != nil || len(inbox) != 0 {
+		t.Fatalf("Team lookup reached a Leader inbox: %+v %v", inbox, err)
+	}
+}
+
+func TestAssistantSessionScope(t *testing.T) {
+	first := model.ChatRequest{Account: "application", Origin: model.ChatOrigin{
+		MessageID: "first-message", Sender: "sender", Conversation: "chat", Thread: true, ThreadID: "topic"}}
+	second := first
+	second.Origin.MessageID = "followup"
+	want := assistantSessionKey(first, 1)
+	if assistantSessionKey(second, 1) != want {
+		t.Fatal("A follow-up in the same topic must reuse the session")
+	}
+	changes := []func(*model.ChatRequest){
+		func(r *model.ChatRequest) { r.Account = "other-application" },
+		func(r *model.ChatRequest) { r.Origin.Sender = "other-sender" },
+		func(r *model.ChatRequest) { r.Origin.Conversation = "other-chat" },
+		func(r *model.ChatRequest) { r.Origin.ThreadID = "other-topic" },
+	}
+	for i, change := range changes {
+		request := second
+		change(&request)
+		if assistantSessionKey(request, 1) == want {
+			t.Fatalf("Session was shared across scope change %d", i)
+		}
+	}
+	if assistantSessionKey(second, 2) == want {
+		t.Fatal("Updated chat permissions must begin a new session")
+	}
+}
+
+func TestAssistantWritesRequireOriginalSenderConfirmation(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		action assistantAction
+		args   []string
+		result string
+	}{
+		{"create team", assistantAction{Action: "create_team", Team: "new team"},
+			[]string{"team", "spawn-team", "--agent-name=leader", "--", "new-team"}, `{"team":"new-team","status":"created"}`},
+		{"assign task", assistantAction{Action: "create_task", Alias: "alpha", Subject: "--literal title", Owner: "leader"},
+			[]string{"task", "create", "--owner=leader", "--description=", "--", "alpha", "--literal title"},
+			`{"id":"task-1","owner":"leader","subject":"--literal title"}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := t.Context()
+			b, outbound, _ := chatFixture(t)
+			settings, err := b.Store.ChatSettings(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			settings.FeishuSender = &model.ChatRecipient{ChatAccount: b.Account, OpenID: "ou_owner"}
+			settings.UpdateFeishuSender = true
+			if _, err := b.Store.SetChatSettings(ctx, settings); err != nil {
+				t.Fatal(err)
+			}
+			b.Agent = func(context.Context, string, agentInput) (agentOutput, error) {
+				return agentOutput{assistantAction: test.action}, nil
+			}
+			calls := 0
+			b.RunCLI = func(_ context.Context, args []string) ([]byte, error) {
+				calls++
+				if !slices.Equal(args, test.args) {
+					t.Fatalf("CLI got %q, want %q", args, test.args)
+				}
+				return []byte(test.result), nil
+			}
+			accept := func(id, sender, conversation, text string) {
+				t.Helper()
+				if err := b.Accept(ctx, Inbound{ID: id, Sender: sender, Conversation: conversation, Text: text}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			sync := func() {
+				t.Helper()
+				if err := b.sync(ctx, true); err != nil {
+					t.Fatal(err)
+				}
+			}
+			accept("request", "ou_owner", "original-chat", test.name)
+			if err := b.processAgentJobs(ctx); err != nil {
+				t.Fatal(err)
+			}
+			sync()
+			if calls != 0 || len(*outbound) != 1 || !strings.Contains((*outbound)[0].Text, string(jobJSON(test.args))) {
+				t.Fatalf("Expected only the exact operation preview before confirmation, got %d calls and %+v", calls, *outbound)
+			}
+			_, suffix, ok := strings.Cut((*outbound)[0].Text, "/tw confirm ")
+			if !ok || suffix == "" {
+				t.Fatalf("Preview missing confirmation command: %+v", *outbound)
+			}
+			confirmation := "/tw confirm " + suffix
+			accept("wrong-room", "ou_owner", "other-chat", confirmation)
+			accept("wrong-sender", "ou_other", "original-chat", confirmation)
+			sync()
+			if calls != 0 {
+				t.Fatal("Another sender or conversation confirmed the operation")
+			}
+			accept("confirmed", "ou_owner", "original-chat", confirmation)
+			accept("confirmed", "ou_owner", "original-chat", confirmation)
+			sync()
+			accept("token-reused", "ou_owner", "original-chat", confirmation)
+			sync()
+			if calls != 1 {
+				t.Fatalf("Confirmed operation executed %d times", calls)
+			}
+			if !slices.ContainsFunc(*outbound, func(out Outbound) bool {
+				return out.ReplyTo == "request" && strings.Contains(out.Text, "已") && !strings.Contains(out.Text, "确认码")
+			}) {
+				t.Fatalf("Operation result did not return to its original message: %+v", *outbound)
+			}
+		})
+	}
+}
+
+func TestAssistantAnswersTeamStatusFromCurrentBoard(t *testing.T) {
+	ctx := t.Context()
+	b, outbound, _ := chatFixture(t)
+	const question = "alpha现在的状态"
+	b.Agent = func(_ context.Context, kind string, in agentInput) (agentOutput, error) {
+		if kind != "route" || in.Request != question {
+			t.Fatalf("Unexpected router input: %s %+v", kind, in)
+		}
+		return agentOutput{assistantAction: assistantAction{Action: "team_status", Alias: "alpha"}}, nil
+	}
+	live := true
+	b.RunCLI = func(_ context.Context, args []string) ([]byte, error) {
+		if !slices.Equal(args, []string{"board", "show", "--messages=1", "--", "alpha"}) {
+			t.Fatalf("Unexpected CLI arguments: %q", args)
+		}
+		return json.Marshal(model.Board{
+			Team:    model.Team{Name: "alpha"},
+			Members: []model.BoardMember{{Agent: &model.Agent{Alive: &live}}, {}},
+			Stats:   model.TaskStats{InProgress: 2, Waiting: 1, Pending: 1, Blocked: 1, Completed: 2},
+			Tasks: []model.Task{
+				{Subject: "Earlier completed task", Status: model.StatusCompleted, UpdatedAt: "2026-01-01T09:00:00Z"},
+				{Subject: "Validate the current fix", Status: model.StatusInProgress, Owner: "tester",
+					TaskTracking: model.TaskTracking{Progress: []model.TaskProgress{{Summary: "Two cases passed"}}}},
+				{Subject: "Collect approval", Status: model.StatusInProgress, ExecutionState: "waiting",
+					TaskTracking: model.TaskTracking{Progress: []model.TaskProgress{{Reason: "Waiting for review"}}}},
+				{Subject: "Canary deployment", Status: model.StatusBlocked, BlockedBy: []string{"task-1"}},
+				{Subject: "Most recent completion", Status: model.StatusCompleted, UpdatedAt: "2026-01-02T09:00:00Z"},
+			},
+			Messages: []model.Message{{Content: "Private inbox content"}},
+		})
+	}
+	msg := Inbound{ID: "status", Sender: "sender", Conversation: "private", Text: question}
+	if err := b.Accept(ctx, msg); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.processAgentJobs(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.sync(ctx, true); err != nil {
+		t.Fatal(err)
+	}
+	if len(*outbound) != 1 || (*outbound)[0].ReplyTo != msg.ID {
+		t.Fatalf("Expected one reply to the original message, got %+v", *outbound)
+	}
+	text := (*outbound)[0].Text
+	for _, want := range []string{"alpha 当前状态", "1/2", "进行中 1", "Validate the current fix", "Two cases passed",
+		"Collect approval", "Waiting for review", "Canary deployment", "Most recent completion"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("Team status is missing %q: %s", want, text)
+		}
+	}
+	for _, unwanted := range []string{"Earlier completed task", "Private inbox content", "请回复团队别名"} {
+		if strings.Contains(text, unwanted) {
+			t.Errorf("Team status included %q: %s", unwanted, text)
+		}
+	}
+}
+
+func TestAssistantAnswersOpenQuestionsAndKeepsCompoundRequestsTogether(t *testing.T) {
+	for _, test := range []struct {
+		request string
+		action  assistantAction
+		want    string
+	}{
+		{"alpha 最后交付的东西有验过吗？", assistantAction{Action: "answer", Alias: "alpha"}, "最后一项跑了回归测试。"},
+		{"帮我建一个叫 test team 的队，Agent 都用 Codex", assistantAction{Action: "create_team", Team: "test team", Runtime: "codex"},
+			"团队名可以用 test-team。建队和启动 Codex 成员是两步。"},
+	} {
+		t.Run(test.request, func(t *testing.T) {
+			ctx := t.Context()
+			b, outbound, _ := chatFixture(t)
+			b.Agent = func(_ context.Context, kind string, input agentInput) (agentOutput, error) {
+				if input.Request != test.request || !slices.Equal(input.Teams, []string{"alpha", "beta"}) {
+					t.Fatalf("Wrong scope: %+v", input)
+				}
+				switch kind {
+				case "route":
+					return agentOutput{assistantAction: test.action}, nil
+				case "answer":
+					if test.action.Alias != "" && (!strings.Contains(input.Context, "Passed regression tests") ||
+						strings.Contains(input.Context, "Private inbox content")) {
+						t.Fatalf("Wrong facts for the answer: %s", input.Context)
+					}
+					return agentOutput{Summary: test.want}, nil
+				default:
+					t.Fatalf("Unexpected mode %q", kind)
+					return agentOutput{}, nil
+				}
+			}
+			b.RunCLI = func(_ context.Context, args []string) ([]byte, error) {
+				if test.action.Alias == "" || !slices.Equal(args, []string{"board", "show", "--messages=1", "--", "alpha"}) {
+					t.Fatalf("Unexpected command: %q", args)
+				}
+				return json.Marshal(model.Board{
+					Team: model.Team{Name: "alpha"},
+					Tasks: []model.Task{{Subject: "Deliver fix", Status: model.StatusCompleted,
+						Result: &model.TaskResult{Verification: "Passed regression tests"}}},
+					Messages: []model.Message{{Content: "Private inbox content"}},
+				})
+			}
+			msg := Inbound{ID: "question", Sender: "sender", Conversation: "private", Text: test.request}
+			if err := b.Accept(ctx, msg); err != nil {
+				t.Fatal(err)
+			}
+			if err := b.processAgentJobs(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if err := b.sync(ctx, true); err != nil {
+				t.Fatal(err)
+			}
+			if len(*outbound) != 1 || (*outbound)[0].ReplyTo != msg.ID || (*outbound)[0].Text != test.want {
+				t.Fatalf("Expected a direct answer, got %+v", *outbound)
+			}
+		})
+	}
+}
+
 func TestBridgeClarifiesThenBlocksRevokedReply(t *testing.T) {
 	ctx := t.Context()
 	b, outbound, leader := chatFixture(t)
@@ -219,7 +496,7 @@ func TestBridgeClarifiesThenBlocksRevokedReply(t *testing.T) {
 		if mode == "summary" {
 			return agentOutput{Summary: in.Result}, nil
 		}
-		return agentOutput{}, nil
+		return agentOutput{assistantAction: assistantAction{Action: "route"}}, nil
 	}
 	if err := b.processAgentJobs(ctx); err != nil {
 		t.Fatal(err)
@@ -327,7 +604,7 @@ func TestFeishuGlobalSenderCoversFutureTeamsAndCanBeCleared(t *testing.T) {
 		if kind != "route" || !slices.Contains(in.Teams, "new-team") || !slices.Contains(in.Teams, "restricted") {
 			t.Fatalf("Global routing candidates: %+v", in)
 		}
-		return agentOutput{Alias: "new-team"}, nil
+		return agentOutput{assistantAction: assistantAction{Alias: "new-team"}}, nil
 	}
 	for _, inbound := range []Inbound{
 		{ID: "by-name", Sender: sender.OpenID, Conversation: "private", Text: "/tw send alpha status"},

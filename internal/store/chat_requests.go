@@ -12,12 +12,12 @@ import (
 	"github.com/benlocal/team-worker/internal/model"
 )
 
-const chatRequestColumns = "id,account,message_id,sender,conversation,is_group,thread,body,state,team,binding_id,created_at"
+const chatRequestColumns = "id,account,message_id,sender,conversation,is_group,thread,body,state,team,binding_id,created_at,thread_id"
 
 func scanChatRequest(row scanner) (model.ChatRequest, error) {
 	var r model.ChatRequest
 	err := row.Scan(&r.ID, &r.Account, &r.Origin.MessageID, &r.Origin.Sender, &r.Origin.Conversation,
-		&r.Origin.Group, &r.Origin.Thread, &r.Body, &r.State, &r.Team, &r.BindingID, &r.CreatedAt)
+		&r.Origin.Group, &r.Origin.Thread, &r.Body, &r.State, &r.Team, &r.BindingID, &r.CreatedAt, &r.Origin.ThreadID)
 	return r, err
 }
 
@@ -50,11 +50,11 @@ func (s *Store) QueueChatRequest(ctx context.Context, r model.ChatRequest, app m
 				}
 			}
 		}
-		res, err := tx.ExecContext(ctx, `INSERT INTO chat_requests (`+chatRequestColumns+`) SELECT ?,?,?,?,?,?,?,?,?,?,?,?
+		res, err := tx.ExecContext(ctx, `INSERT INTO chat_requests (`+chatRequestColumns+`) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?
 			WHERE NOT EXISTS (SELECT 1 FROM chat_jobs WHERE id=?)
 			AND NOT EXISTS (SELECT 1 FROM chat_followups WHERE account=? AND message_id=?)
 			ON CONFLICT DO NOTHING`, r.ID, r.Account, o.MessageID, o.Sender, o.Conversation, o.Group, o.Thread,
-			r.Body, r.State, r.Team, r.BindingID, s.Now().Unix(), r.ID, r.Account, o.MessageID)
+			r.Body, r.State, r.Team, r.BindingID, s.Now().Unix(), o.ThreadID, r.ID, r.Account, o.MessageID)
 		if err != nil {
 			return err
 		}
@@ -122,8 +122,15 @@ func (s *Store) ChatRequestAllowed(ctx context.Context, r model.ChatRequest) (bo
 }
 
 func (s *Store) FinishChatRoute(ctx context.Context, r model.ChatRequest, binding *model.ChatBinding, response ChatJob) error {
+	return s.finishChatRoute(ctx, r, binding, "clarifying", response, ChatJob{})
+}
+
+func (s *Store) FinishChatAssistant(ctx context.Context, r model.ChatRequest, action, response ChatJob) error {
+	return s.finishChatRoute(ctx, r, nil, "answered", action, response)
+}
+
+func (s *Store) finishChatRoute(ctx context.Context, r model.ChatRequest, binding *model.ChatBinding, state string, response, additional ChatJob) error {
 	return s.write(ctx, func(tx *sql.Tx) error {
-		state := "clarifying"
 		if binding != nil {
 			r.Team, r.BindingID = binding.Team, binding.BindingID
 			allowed, err := chatRequestAllowed(ctx, tx, r)
@@ -146,6 +153,11 @@ func (s *Store) FinishChatRoute(ctx context.Context, r model.ChatRequest, bindin
 		}
 		if response.ID != "" {
 			if err := insertChatJob(ctx, tx, r.Account, response); err != nil {
+				return err
+			}
+		}
+		if additional.ID != "" {
+			if err := insertChatJob(ctx, tx, r.Account, additional); err != nil {
 				return err
 			}
 		}
@@ -368,15 +380,24 @@ func (s *Store) QueueChatTimers(ctx context.Context, account string) error {
 	now := s.Now()
 	const lateJobs = `j.account=? AND j.state='pending' AND j.kind IN ('route','progress','final') AND j.queued_at<=?
 		AND NOT EXISTS(SELECT 1 FROM chat_jobs w WHERE w.id=j.id||'-wait')`
-	expiry, warningAt := now.Add(-24*time.Hour).Unix(), now.Add(-2*time.Minute).Unix()
+	const staleConfirmation = "account=? AND kind='assistant-confirm' AND state='pending' AND queued_at<=?"
+	expiry, warningAt, confirmAt := now.Add(-24*time.Hour).Unix(), now.Add(-2*time.Minute).Unix(), now.Add(-chatConfirmWindow).Unix()
 	var due bool
 	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM chat_requests
 		WHERE account=? AND state IN ('routing','clarifying','ready') AND created_at<=?)
-		OR EXISTS(SELECT 1 FROM chat_jobs j WHERE `+lateJobs+`)`, account, expiry, account, warningAt).Scan(&due)
+		OR EXISTS(SELECT 1 FROM chat_jobs j WHERE `+lateJobs+`)
+		OR EXISTS(SELECT 1 FROM chat_jobs WHERE `+staleConfirmation+`)`, account, expiry, account, warningAt, account, confirmAt).Scan(&due)
 	if err != nil || !due {
 		return err
 	}
 	return s.write(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, "UPDATE chat_jobs SET state='expired',payload='' WHERE state='pending' AND id IN "+
+			"(SELECT request_id||'-confirm' FROM chat_jobs WHERE "+staleConfirmation+")", account, confirmAt); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, "UPDATE chat_jobs SET state='expired',payload='' WHERE "+staleConfirmation, account, confirmAt); err != nil {
+			return err
+		}
 		expired, err := tx.QueryContext(ctx, "UPDATE chat_requests SET state='expired' WHERE account=? AND state IN ('routing','clarifying','ready') AND created_at<=? RETURNING "+chatRequestColumns,
 			account, expiry)
 		if err != nil {

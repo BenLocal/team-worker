@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -18,8 +19,8 @@ import (
 )
 
 type Inbound struct {
-	ID, Sender, Conversation, Text, Parent string
-	Group, Mentioned, Thread               bool
+	ID, Sender, Conversation, Text, Parent, ThreadID string
+	Group, Mentioned, Thread                         bool
 }
 
 type Outbound = model.ChatOutbound
@@ -39,6 +40,7 @@ type Bridge struct {
 	Deliver func(context.Context, Outbound) (string, error)
 	Upload  func(context.Context, model.ChatAsset) (string, error)
 	Agent   ChatAgent
+	RunCLI  func(context.Context, []string) ([]byte, error)
 
 	lastReported     time.Time
 	reportedRevision int64
@@ -103,7 +105,8 @@ func (b *Bridge) Accept(ctx context.Context, msg Inbound) error {
 		return err
 	}
 	r := model.ChatRequest{ID: digest(b.accountKey(), msg.ID), Account: b.accountKey(), Body: text, State: "routing",
-		Origin: model.ChatOrigin{MessageID: msg.ID, Sender: msg.Sender, Conversation: msg.Conversation, Group: msg.Group, Thread: msg.Thread}}
+		Origin: model.ChatOrigin{MessageID: msg.ID, Sender: msg.Sender, Conversation: msg.Conversation, Group: msg.Group,
+			Thread: msg.Thread, ThreadID: msg.ThreadID}}
 	bindings, err := b.Store.ChatBindingsForSender(ctx, settings, b.Account, msg.Sender)
 	if err != nil {
 		return err
@@ -123,6 +126,16 @@ func (b *Bridge) Accept(ctx context.Context, msg Inbound) error {
 	prefix, rest := word(text)
 	if prefix == "/tw" {
 		op, body := word(rest)
+		if op == "confirm" {
+			token, extra := word(body)
+			if token != "" && extra == "" {
+				ok, err := b.Store.ConfirmChatAction(ctx, b.Account, r, token)
+				if err != nil || ok {
+					return err
+				}
+			}
+			return b.Store.RejectChatInbound(ctx, r, "确认码无效、已使用或已过期。请在发起操作的会话确认。")
+		}
 		if op != "send" || body == "" {
 			return b.Store.RejectChatInbound(ctx, r, "用法：/tw send <团队> <正文>。也可以直接描述你要发给团队的请求。")
 		}
@@ -148,7 +161,7 @@ func (b *Bridge) Accept(ctx context.Context, msg Inbound) error {
 			r.Body = body
 		}
 	}
-	if len(bindings) == 0 {
+	if len(bindings) == 0 && (r.State != "routing" || !settings.AllowsFeishuSender(b.Account, r.Origin.Sender)) {
 		return b.Store.RejectChatInbound(ctx, r, "没有权限或该团队暂未启用飞书收件。")
 	}
 	return b.Store.QueueChatRequest(ctx, r, b.Account)
@@ -365,20 +378,19 @@ func (b *Bridge) sync(ctx context.Context, online bool) error {
 		}
 	}
 	if online {
-		replies, err := b.Store.PendingChatJobs(ctx, b.accountKey(), "reply", "")
-		if err != nil {
+		if err := b.sendQueuedReplies(ctx, "reply"); err != nil {
 			return err
 		}
-		for _, job := range replies {
-			var out Outbound
-			if err := json.Unmarshal(job.Payload, &out); err != nil {
-				return err
-			}
-			if err := b.send(ctx, job, out); err != nil {
-				return err
-			}
+		if err := b.sendQueuedReplies(ctx, "assistant-answer"); err != nil {
+			return err
 		}
 		if err := b.sendTeamReplies(ctx); err != nil {
+			return err
+		}
+		if err := b.runAssistantJobs(ctx, "assistant-read"); err != nil {
+			return err
+		}
+		if err := b.runAssistantJobs(ctx, "assistant-write"); err != nil {
 			return err
 		}
 	}
@@ -401,11 +413,36 @@ func (b *Bridge) sync(ctx context.Context, online bool) error {
 	return nil
 }
 
-func (b *Bridge) Run(ctx context.Context, online func() bool) {
-	if err := b.Store.RecoverChatJobs(ctx, b.accountKey()); err != nil {
-		b.Log.Warn("recover chat deliveries", "err", err)
-		return
+func (b *Bridge) sendQueuedReplies(ctx context.Context, kind string) error {
+	jobs, err := b.Store.PendingChatJobs(ctx, b.accountKey(), kind, "")
+	if err != nil {
+		return err
 	}
+	for _, job := range jobs {
+		if kind == "assistant-answer" {
+			settings, err := b.Store.ChatSettings(ctx)
+			if err != nil {
+				return err
+			}
+			if strconv.FormatInt(settings.Revision, 10) != job.BindingID {
+				if err := b.Store.SetChatJobState(ctx, job.ID, "blocked", "Chat settings changed before delivery"); err != nil {
+					return err
+				}
+				continue
+			}
+		}
+		var out Outbound
+		if err := json.Unmarshal(job.Payload, &out); err != nil {
+			return err
+		}
+		if err := b.send(ctx, job, out); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (b *Bridge) Run(ctx context.Context, online func() bool) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 	registered := false

@@ -29,7 +29,7 @@ func (s *Store) ChatBindingsForSender(ctx context.Context, settings model.ChatSe
 		}
 		return out, nil
 	}
-	if settings.FeishuSender == nil || settings.FeishuSender.ChatAccount != account || settings.FeishuSender.OpenID != sender {
+	if !settings.AllowsFeishuSender(account, sender) {
 		return out, nil
 	}
 	rows, err := s.db.QueryContext(ctx, "SELECT name,created_at FROM teams")

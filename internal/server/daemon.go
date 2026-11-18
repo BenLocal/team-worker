@@ -154,7 +154,7 @@ func Run(ctx context.Context, opts Options) error {
 		if boardURL != "" {
 			boardURL += opts.WebBasePath + "/"
 		}
-		chat.RunFeishu(baseCtx, st, log, opts.DataDir, boardURL)
+		chat.RunFeishu(baseCtx, st, log, opts.DataDir, opts.Socket, boardURL)
 	})
 	log.Info("team-workerd started", "socket", opts.Socket, "db", config.DBPath(opts.DataDir), "pid", os.Getpid())
 

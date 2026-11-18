@@ -65,7 +65,8 @@ func feishuInbound(event *larkim.P2MessageReceiveV1, appID, botID string) (Inbou
 		content.Text = strings.Replace(content.Text, value(mention.Key), "", 1)
 	}
 	return Inbound{ID: value(message.MessageId), Sender: value(sender.SenderId.OpenId), Conversation: value(message.ChatId),
-		Text: content.Text, Parent: value(message.ParentId), Group: chatType == "group", Mentioned: mentioned, Thread: value(message.ThreadId) != ""}, true
+		Text: content.Text, Parent: value(message.ParentId), Group: chatType == "group", Mentioned: mentioned,
+		Thread: value(message.ThreadId) != "", ThreadID: value(message.ThreadId)}, true
 }
 
 func feishuBot(ctx context.Context, client *lark.Client) (string, error) {
@@ -198,7 +199,7 @@ func feishuUpload(client *lark.Client) func(context.Context, model.ChatAsset) (s
 	}
 }
 
-func runFeishu(ctx context.Context, st *store.Store, log *slog.Logger, board, dataDir string, app config.FeishuApp) error {
+func runFeishu(ctx context.Context, st *store.Store, log *slog.Logger, board, dataDir, socket string, app config.FeishuApp) error {
 	client := lark.NewClient(app.AppID, app.AppSecret, lark.WithLogger(quietSDK{}), lark.WithReqTimeout(10*time.Second))
 	botID, err := feishuBot(ctx, client)
 	if err != nil {
@@ -206,7 +207,11 @@ func runFeishu(ctx context.Context, st *store.Store, log *slog.Logger, board, da
 	}
 
 	bridge := &Bridge{Store: st, Account: model.ChatAccount{Provider: "feishu", Tenant: "app-scoped", Application: app.AppID},
-		Board: board, Log: log, Deliver: feishuDelivery(client), Upload: feishuUpload(client), Agent: configuredChatAgent(dataDir)}
+		Board: board, Log: log, Deliver: feishuDelivery(client), Upload: feishuUpload(client), Agent: configuredChatAgent(dataDir, socket, st),
+		RunCLI: assistantCLI(dataDir, socket)}
+	if err := st.RecoverChatJobs(ctx, bridge.accountKey()); err != nil {
+		return err
+	}
 	events := dispatcher.NewEventDispatcher("", "")
 	events.OnP2MessageReceiveV1(func(eventCtx context.Context, event *larkim.P2MessageReceiveV1) error {
 		if msg, ok := feishuInbound(event, app.AppID, botID); ok {
@@ -236,7 +241,7 @@ func runFeishu(ctx context.Context, st *store.Store, log *slog.Logger, board, da
 }
 
 // RunFeishu supervises the built-in connector and reloads changed credentials.
-func RunFeishu(ctx context.Context, st *store.Store, log *slog.Logger, dataDir, board string) {
+func RunFeishu(ctx context.Context, st *store.Store, log *slog.Logger, dataDir, socket, board string) {
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 	var active config.FeishuApp
@@ -270,7 +275,7 @@ func RunFeishu(ctx context.Context, st *store.Store, log *slog.Logger, dataDir, 
 				go func() {
 					defer close(wait)
 					for runCtx.Err() == nil {
-						err := runFeishu(runCtx, st, log, board, dataDir, app)
+						err := runFeishu(runCtx, st, log, board, dataDir, socket, app)
 						status := model.ChatConnection{ChatAccount: account}
 						if err != nil {
 							status.LastError = err.Error()
