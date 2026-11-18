@@ -55,6 +55,7 @@ func newHandler(c *client.Client, terminals http.Handler) http.Handler {
 		fileServer.ServeHTTP(w, r)
 	})
 	mux.HandleFunc("GET /api/service-keys", serviceKeys)
+	chatRoutes(mux, c)
 	mux.HandleFunc("GET /api/service-auth/magpie", magpieAuth)
 	mux.HandleFunc("GET /api/openbao/login", openbaoLogin)
 	if terminals != nil {

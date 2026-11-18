@@ -4,6 +4,7 @@ import { AgentTerminal, describe, selectCard, setBoardHost } from "./terminals.j
 import { openMemberPrompt, openTeamPrompt } from "./prompt-dialog.js";
 import { workLabel, activityLabel, protocolLabel } from "./member-work.js";
 import { openServiceKeys } from "./service-keys.js";
+import { openSettings } from "./settings.js";
 
 const $ = (id) => document.getElementById(id);
 const SVG = "http://www.w3.org/2000/svg";
@@ -1226,6 +1227,7 @@ function showTerminal(team, name) {
 }
 window.addEventListener("pagehide", disposeTerminals);
 $("rail-toggle").addEventListener("click", () => setRail(!state.railOpen));
+$("rail-settings").addEventListener("click", (event) => openSettings(event.currentTarget, el));
 setRail(state.railOpen);
 
 api("api/host").then((h) => { setBoardHost(h); state.keys = {}; update(); renderRail(); }).catch(() => {});

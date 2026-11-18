@@ -75,14 +75,20 @@ button, input, select { font: inherit; color: inherit; }
 
 /* ---- rail: teams, then members of an expanded team; collapses to a strip ---- */
 .rail { background: var(--bg); border-right: .5px solid var(--line); padding: 0 10px 14px;
-  height: 100vh; overflow-y: auto; position: sticky; top: 0; }
-.rail-head { display: flex; align-items: center; gap: 8px; height: 46px; margin: 0 0 6px; padding: 0 4px 0 6px; }
+  height: 100vh; min-width: 0; display: flex; flex-direction: column; position: sticky; top: 0; }
+.rail-head { display: flex; flex: none; align-items: center; gap: 8px; height: 46px; margin: 0 0 6px; padding: 0 4px 0 6px; }
 .brand { font-weight: 600; font-size: 13.5px; letter-spacing: .01em; color: var(--fg); white-space: nowrap; }
 .brand span { color: var(--muted); font-weight: 400; }
 .rail-toggle { margin-left: auto; background: none; border: 0; border-radius: 7px; color: var(--muted);
   cursor: pointer; width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center; line-height: 0; }
 .rail-toggle:hover { color: var(--fg); background: var(--pill); }
-.teams { list-style: none; margin: 0; padding: 0; display: grid; gap: 1px; }
+.teams { list-style: none; margin: 0; padding: 0; display: grid; gap: 1px; min-height: 0; overflow-y: auto; }
+.rail-footer { margin-top: auto; flex: none; border-top: 1px solid var(--line); padding-top: 8px; }
+.rail-settings { width: 100%; display: flex; align-items: center; gap: 9px; padding: 7px 8px; border: 0;
+  border-radius: 7px; background: none; color: var(--fg-2); text-align: left; cursor: pointer; }
+.rail-settings:hover { color: var(--fg); background: var(--pill); }
+body.rail-collapsed .rail-settings { justify-content: center; }
+body.rail-collapsed .rail-settings span { display: none; }
 /* Teams are rows of Magpie's sidebar: an icon, the name and a count; the
    open team is the raised white row, its members the thin-lined sub-rows
    under it. */
@@ -365,6 +371,25 @@ body.rail-collapsed #rail-tools { display: none; }
 .prompt-body.loading, .prompt-body.empty { color: var(--muted); font-style: italic; }
 .prompt-body.error { color: var(--red); font-style: normal; }
 .service-keys .prompt-head h2 { flex: 1; }
+.prompt-dialog.chat-settings { position: fixed; inset: 0; margin: 0; width: 100%; max-width: none;
+  height: 100dvh; max-height: none; border-radius: 0; box-shadow: none; }
+.chat-settings .prompt-card { height: 100%; max-height: none; }
+.chat-settings .prompt-head { align-items: center; padding-inline: clamp(16px, 5vw, 64px); }
+.chat-settings .prompt-head h2 { flex: 1; font-size: 17px; }
+.chat-settings .prompt-body { flex: 1; white-space: normal; padding: clamp(20px, 5vw, 56px) 16px 36px;
+  font-family: inherit; }
+.chat-settings-pane { width: min(100%, 680px); margin: 0 auto; }
+.chat-settings h3 { margin: 0 0 6px; color: var(--fg); font-size: 22px; }
+.chat-status { color: var(--muted); margin: 0 0 18px; }
+.chat-form { display: grid; gap: 12px; }
+.chat-form label { display: grid; gap: 5px; }
+.chat-form input {
+  width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--bg); color: var(--fg); font: inherit; }
+.chat-form > p { margin: 0; }
+.chat-actions { display: flex; align-items: center; gap: 8px; }
+.chat-feedback { min-height: 1.4em; margin: 0; color: var(--muted); }
+.chat-feedback.error { color: var(--red); }
 .service-keys-body { padding: 8px 18px 20px; overflow: auto; }
 .service-keys-body section { padding: 16px 0; border-bottom: 1px solid var(--line-2); }
 .service-keys-body section:last-child { border-bottom: 0; }
