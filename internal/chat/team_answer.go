@@ -60,7 +60,6 @@ func assistantFailureText(err error) string {
 
 func (b *Bridge) finishAssistantAnswer(ctx context.Context, request model.ChatRequest, revision int64, text string) error {
 	reply := request.Origin.Reply(text)
-	reply.CardTitle = "团队助手"
 	return b.Store.FinishChatAssistant(ctx, request, store.ChatJob{}, store.ChatJob{
 		ID: request.ID + "-answer", Kind: "assistant-answer", RequestID: request.ID,
 		BindingID: strconv.FormatInt(revision, 10), Payload: jobJSON(reply),
@@ -81,7 +80,7 @@ func teamAnswerContext(board model.Board) string {
 		}
 	}
 	slices.SortStableFunc(completed, func(a, b model.Task) int {
-		return strings.Compare(b.UpdatedAt, a.UpdatedAt)
+		return strings.Compare(taskCompletionTime(b), taskCompletionTime(a))
 	})
 	if len(completed) > 0 {
 		text.WriteString("\n最近完成（最多 5 项）\n")

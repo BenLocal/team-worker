@@ -86,23 +86,42 @@ func feishuBot(ctx context.Context, client *lark.Client) (string, error) {
 	return data.Bot.OpenID, nil
 }
 
+func feishuReaction(client *lark.Client) func(context.Context, string) error {
+	return func(ctx context.Context, messageID string) error {
+		emoji := larkim.NewEmojiBuilder().EmojiType("OK").Build()
+		body := larkim.NewCreateMessageReactionReqBodyBuilder().ReactionType(emoji).Build()
+		request := larkim.NewCreateMessageReactionReqBuilder().MessageId(messageID).Body(body).Build()
+		resp, err := client.Im.MessageReaction.Create(ctx, request)
+		if err != nil || resp == nil {
+			return errors.New("Feishu reaction request failed")
+		}
+		if resp.StatusCode != http.StatusOK || !resp.Success() {
+			return fmt.Errorf("Feishu rejected reaction (HTTP %d, code %d)", resp.StatusCode, resp.Code)
+		}
+		return nil
+	}
+}
+
 func feishuDelivery(client *lark.Client) func(context.Context, Outbound) (string, error) {
 	return func(ctx context.Context, out Outbound) (string, error) {
 		replacer := strings.NewReplacer("<", "‹", ">", "›")
 		text := replacer.Replace(out.Text)
 		msgType := "text"
 		var body any = map[string]string{"text": text}
-		if out.CardTitle != "" {
+		if out.Markdown || out.CardTitle != "" {
 			msgType = "interactive"
 			elements := []map[string]string{{"tag": "markdown", "content": text}}
 			for _, asset := range out.Assets {
 				elements = append(elements, map[string]string{"tag": "markdown", "content": feishuAssetMarkdown(asset)})
 			}
-			body = map[string]any{
+			card := map[string]any{
 				"schema": "2.0",
-				"header": map[string]any{"template": "blue", "title": map[string]string{"tag": "plain_text", "content": out.CardTitle}},
 				"body":   map[string]any{"elements": elements},
 			}
+			if out.CardTitle != "" {
+				card["header"] = map[string]any{"template": "blue", "title": map[string]string{"tag": "plain_text", "content": out.CardTitle}}
+			}
+			body = card
 		} else if len(out.Assets) == 1 {
 			asset := out.Assets[0]
 			msgType = asset.Kind
@@ -207,7 +226,8 @@ func runFeishu(ctx context.Context, st *store.Store, log *slog.Logger, board, da
 	}
 
 	bridge := &Bridge{Store: st, Account: model.ChatAccount{Provider: "feishu", Tenant: "app-scoped", Application: app.AppID},
-		Board: board, Log: log, Deliver: feishuDelivery(client), Upload: feishuUpload(client), Agent: configuredChatAgent(dataDir, socket, st),
+		Board: board, Log: log, React: feishuReaction(client), Deliver: feishuDelivery(client), Upload: feishuUpload(client),
+		Agent:  configuredChatAgent(dataDir, socket, st),
 		RunCLI: assistantCLI(dataDir, socket)}
 	if err := st.RecoverChatJobs(ctx, bridge.accountKey()); err != nil {
 		return err

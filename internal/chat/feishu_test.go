@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/benlocal/team-worker/internal/model"
+	"github.com/benlocal/team-worker/internal/store"
 	lark "github.com/larksuite/oapi-sdk-go/v3"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
@@ -128,6 +129,51 @@ func TestFeishuUploadsAssetsAndSendsQuotedReplies(t *testing.T) {
 	}
 }
 
+func TestFeishuAcknowledgesBeforeQueueing(t *testing.T) {
+	b, _, _ := chatFixture(t)
+	msg := Inbound{ID: "om_example", Sender: "sender", Conversation: "private", Text: "你好"}
+	requestID := digest(b.accountKey(), msg.ID)
+	calls := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/open-apis/auth/v3/tenant_access_token/internal":
+			fmt.Fprint(w, `{"code":0,"tenant_access_token":"test-token","expire":7200}`)
+		case "/open-apis/im/v1/messages/om_example/reactions":
+			var body larkim.CreateMessageReactionReqBody
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil || r.Method != http.MethodPost ||
+				body.ReactionType == nil || value(body.ReactionType.EmojiType) != "OK" {
+				t.Errorf("Invalid reaction request: %+v, %v", body, err)
+			}
+			if _, err := b.Store.ChatRequest(r.Context(), requestID); store.KindOf(err) != store.KindNotFound {
+				t.Errorf("Reaction must run before the request is queued, got %v", err)
+			}
+			calls <- struct{}{}
+			fmt.Fprint(w, `{"code":99991672,"msg":"Permission denied"}`)
+		default:
+			t.Errorf("Unexpected request: %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	b.React = feishuReaction(lark.NewClient("cli_reaction", "fake-secret", lark.WithOpenBaseUrl(server.URL)))
+	ignored := msg
+	ignored.ID, ignored.Group = "om_unmentioned", true
+	denied := msg
+	denied.ID, denied.Sender = "om_denied", "unknown"
+	for _, inbound := range []Inbound{ignored, denied, msg} {
+		if err := b.Accept(t.Context(), inbound); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(calls) != 1 {
+		t.Fatalf("Expected one reaction, got %d", len(calls))
+	}
+	if queued, err := b.Store.ChatRequest(t.Context(), requestID); err != nil || queued.Body != msg.Text {
+		t.Fatalf("The request must be queued even if its reaction fails: %+v, %v", queued, err)
+	}
+}
+
 func TestFeishuSeparatesPrivateNoticesAndQuotedReplies(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -160,16 +206,27 @@ func TestFeishuSeparatesPrivateNoticesAndQuotedReplies(t *testing.T) {
 			if body.Type == "interactive" {
 				var card struct {
 					Schema string
-					Header struct{ Title struct{ Tag, Content string } }
+					Header *struct{ Title struct{ Tag, Content string } }
 					Body   struct {
 						Elements []struct{ Tag, Content string }
 					}
 				}
 				if err := json.Unmarshal([]byte(body.Content), &card); err != nil || card.Schema != "2.0" ||
-					card.Header.Title.Tag != "plain_text" || card.Header.Title.Content != "Final result" ||
-					len(card.Body.Elements) != 1 || card.Body.Elements[0].Tag != "markdown" ||
-					card.Body.Elements[0].Content != "**Status**\n- Online" {
+					len(card.Body.Elements) != 1 || card.Body.Elements[0].Tag != "markdown" {
 					t.Errorf("Unexpected reply card: %s (%v)", body.Content, err)
+				} else {
+					switch card.Body.Elements[0].Content {
+					case "**Status**\n- Online":
+						if card.Header == nil || card.Header.Title.Tag != "plain_text" || card.Header.Title.Content != "Final result" {
+							t.Errorf("Expected the result title: %s", body.Content)
+						}
+					case "**Hello**":
+						if card.Header != nil {
+							t.Errorf("Unexpected header in a direct answer: %s", body.Content)
+						}
+					default:
+						t.Errorf("Unexpected reply body: %s", body.Content)
+					}
 				}
 			} else if body.Type != "text" || body.Content != `{"text":"Reply"}` {
 				t.Errorf("Unexpected plain reply: %s %s", body.Type, body.Content)
@@ -190,6 +247,9 @@ func TestFeishuSeparatesPrivateNoticesAndQuotedReplies(t *testing.T) {
 	}
 	if id, err := deliver(t.Context(), Outbound{Text: "**Status**\n- Online", CardTitle: "Final result", ReplyTo: "om_original", Thread: true}); err != nil || id != "om_reply" {
 		t.Fatalf("Quoted card: %s %v", id, err)
+	}
+	if id, err := deliver(t.Context(), Outbound{Text: "**Hello**", Markdown: true, ReplyTo: "om_original", Thread: true}); err != nil || id != "om_reply" {
+		t.Fatalf("Quoted card without a title: %s %v", id, err)
 	}
 }
 

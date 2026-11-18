@@ -12,18 +12,19 @@ import (
 
 func TestRoutingCodexAppServerProtocol(t *testing.T) {
 	_, answer := teamAssistantPromptFor("answer")
-	if !strings.Contains(answer, "Reply to the sender in Feishu") || !strings.Contains(answer, "task results") ||
+	if !strings.Contains(answer, "reply in Feishu") || !strings.Contains(answer, "task results") ||
 		strings.Contains(answer, "## Summarize a result") {
 		t.Fatal("Answer mode must receive its own prompt and the team-worker CLI guidance")
 	}
 	for _, test := range []struct {
 		name, sessionKey, previousThread, mode string
-		tool, approval, scoped                 bool
+		tool, approval, scoped, routeFormat    bool
 	}{
 		{name: "temporary thread for background work"},
 		{name: "first conversation turn", sessionKey: "session-key"},
 		{name: "resume conversation", sessionKey: "session-key", previousThread: "thread-1"},
-		{name: "tool events in a reply", mode: "answer", tool: true},
+		{name: "tools for a request unrelated to teams", mode: "answer", tool: true, sessionKey: "session-key", previousThread: "thread-1"},
+		{name: "resumed answer uses route format", mode: "answer", sessionKey: "session-key", previousThread: "thread-1", routeFormat: true},
 		{name: "tool invocation in intent classification", tool: true},
 		{name: "team-scoped reply keeps restricted permissions", mode: "answer", scoped: true, tool: true},
 		{name: "interactive approval", mode: "answer", approval: true},
@@ -46,7 +47,7 @@ func TestRoutingCodexAppServerProtocol(t *testing.T) {
 					threadMethod = "thread/resume"
 				}
 				expect := []string{"initialize", "initialized"}
-				if test.scoped {
+				if mode != "answer" || test.scoped {
 					expect = append(expect, "config/read")
 				}
 				expect = append(expect, threadMethod, "turn/start")
@@ -95,6 +96,11 @@ func TestRoutingCodexAppServerProtocol(t *testing.T) {
 							!strings.Contains(string(fields["outputSchema"]), `"team_status"`) || !strings.Contains(string(fields["outputSchema"]), `"create_task"`)) {
 							t.Errorf("The schema is missing assistant actions: %s", fields["outputSchema"])
 						}
+						if mode == "answer" && (!strings.Contains(string(fields["outputSchema"]), `"summary"`) ||
+							!strings.Contains(string(fields["input"]), "single string field summary") ||
+							!strings.Contains(string(fields["input"]), "use the tools allowed by your profile")) {
+							t.Errorf("The answer turn must state its output format: %s", request.Params)
+						}
 						result = map[string]any{"turn": map[string]string{"id": "turn-1"}}
 						if err := out.Encode(map[string]any{"method": "item/started", "params": map[string]any{
 							"threadId": "thread-1", "turnId": "turn-1", "item": map[string]string{"type": "userMessage"},
@@ -126,6 +132,9 @@ func TestRoutingCodexAppServerProtocol(t *testing.T) {
 				if mode == "answer" {
 					text = `{"summary":"Verified the result"}`
 				}
+				if test.routeFormat {
+					text = `{"action":"answer","alias":"","team":"","leader":"","subject":"","owner":"","description":"Verified the result","runtime":""}`
+				}
 				if err := out.Encode(map[string]any{"method": "item/completed", "params": map[string]any{
 					"threadId": "thread-1", "turnId": "turn-1", "item": map[string]string{"type": "agentMessage", "text": text},
 				}}); err != nil {
@@ -136,8 +145,12 @@ func TestRoutingCodexAppServerProtocol(t *testing.T) {
 					"threadId": "thread-1", "turn": map[string]string{"id": "turn-1", "status": "completed"},
 				}})
 			}()
+			request := "Ask alpha"
+			if mode == "answer" {
+				request = "Read the document in your workspace and summarize it"
+			}
 			result, err := requestCodexTurn(ctx, client, client, "/fixture", "example-model", mode, test.previousThread,
-				agentInput{Request: "Ask alpha", Teams: []string{"alpha"}, SessionKey: test.sessionKey, Scoped: test.scoped})
+				agentInput{Request: request, Teams: []string{"alpha"}, SessionKey: test.sessionKey, Scoped: test.scoped})
 			switch {
 			case test.approval:
 				if !errors.Is(err, errCodexInteraction) {

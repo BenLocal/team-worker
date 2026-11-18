@@ -58,6 +58,7 @@ type ChatOrigin struct {
 type ChatOutbound struct {
 	Conversation, Text, ReplyTo, OpenID string
 	Thread                              bool
+	Markdown                            bool        `json:",omitempty"`
 	CardTitle                           string      `json:",omitempty"`
 	HasAssets                           bool        `json:",omitempty"`
 	Assets                              []ChatAsset `json:"-"`

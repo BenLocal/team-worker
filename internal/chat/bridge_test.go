@@ -360,12 +360,12 @@ func TestAssistantWritesRequireOriginalSenderConfirmation(t *testing.T) {
 func TestAssistantAnswersTeamStatusFromCurrentBoard(t *testing.T) {
 	ctx := t.Context()
 	b, outbound, _ := chatFixture(t)
-	const question = "alpha现在的状态"
+	const question = "帮我看下alpha的状态"
 	b.Agent = func(_ context.Context, kind string, in agentInput) (agentOutput, error) {
 		if kind != "route" || in.Request != question {
 			t.Fatalf("Unexpected router input: %s %+v", kind, in)
 		}
-		return agentOutput{assistantAction: assistantAction{Action: "team_status", Alias: "alpha"}}, nil
+		return agentOutput{assistantAction: assistantAction{Action: "answer", Alias: "alpha"}}, nil
 	}
 	live := true
 	b.RunCLI = func(_ context.Context, args []string) ([]byte, error) {
@@ -375,11 +375,16 @@ func TestAssistantAnswersTeamStatusFromCurrentBoard(t *testing.T) {
 		return json.Marshal(model.Board{
 			Team:    model.Team{Name: "alpha"},
 			Members: []model.BoardMember{{Agent: &model.Agent{Alive: &live}}, {}},
-			Stats:   model.TaskStats{InProgress: 2, Waiting: 1, Pending: 1, Blocked: 1, Completed: 2},
+			Stats:   model.TaskStats{InProgress: 4, Waiting: 2, Pending: 1, Blocked: 1, Completed: 2},
 			Tasks: []model.Task{
 				{Subject: "Earlier completed task", Status: model.StatusCompleted, UpdatedAt: "2026-01-01T09:00:00Z"},
-				{Subject: "Validate the current fix", Status: model.StatusInProgress, Owner: "tester",
+				{Subject: "Validate the current fix", Status: model.StatusInProgress, Owner: "tester", ExecutionState: "active",
 					TaskTracking: model.TaskTracking{Progress: []model.TaskProgress{{Summary: "Two cases passed"}}}},
+				{Subject: "Continue after precheck", Status: model.StatusInProgress, Owner: "ops", ExecutionState: "follow_up",
+					WaitCheckpoint: &model.Checkpoint{Status: "completed", Outcome: "passed", Summary: "Precheck passed"}},
+				{Subject: "Run the scheduled canary", Status: model.StatusInProgress, ExecutionState: "waiting",
+					TaskTracking:   model.TaskTracking{Progress: []model.TaskProgress{{Reason: "Still waiting for the canary window"}}},
+					WaitCheckpoint: &model.Checkpoint{Status: "acknowledged", DueAt: time.Date(2026, 1, 2, 13, 25, 0, 0, time.UTC)}},
 				{Subject: "Collect approval", Status: model.StatusInProgress, ExecutionState: "waiting",
 					TaskTracking: model.TaskTracking{Progress: []model.TaskProgress{{Reason: "Waiting for review"}}}},
 				{Subject: "Canary deployment", Status: model.StatusBlocked, BlockedBy: []string{"task-1"}},
@@ -402,13 +407,14 @@ func TestAssistantAnswersTeamStatusFromCurrentBoard(t *testing.T) {
 		t.Fatalf("Expected one reply to the original message, got %+v", *outbound)
 	}
 	text := (*outbound)[0].Text
-	for _, want := range []string{"alpha 当前状态", "1/2", "进行中 1", "Validate the current fix", "Two cases passed",
+	for _, want := range []string{"alpha 当前状态", "1/2", "执行中 1，待跟进 1，等待 2", "Validate the current fix", "Two cases passed",
+		"Continue after precheck", "Precheck passed", "01-02 13:25 UTC", "已确认，待提交结果",
 		"Collect approval", "Waiting for review", "Canary deployment", "Most recent completion"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("Team status is missing %q: %s", want, text)
 		}
 	}
-	for _, unwanted := range []string{"Earlier completed task", "Private inbox content", "请回复团队别名"} {
+	for _, unwanted := range []string{"Earlier completed task", "Private inbox content", "请回复团队别名", "Still waiting for the canary window"} {
 		if strings.Contains(text, unwanted) {
 			t.Errorf("Team status included %q: %s", unwanted, text)
 		}
@@ -421,6 +427,8 @@ func TestAssistantAnswersOpenQuestionsAndKeepsCompoundRequestsTogether(t *testin
 		action  assistantAction
 		want    string
 	}{
+		{"请把工作区里的说明文档总结成三点。", assistantAction{Action: "answer"}, "文档介绍了安装、运行和测试。"},
+		{"看下 alpha 的状态并写成邮件草稿", assistantAction{Action: "answer", Alias: "alpha"}, "邮件草稿已整理。"},
 		{"alpha 最后交付的东西有验过吗？", assistantAction{Action: "answer", Alias: "alpha"}, "最后一项跑了回归测试。"},
 		{"帮我建一个叫 test team 的队，Agent 都用 Codex", assistantAction{Action: "create_team", Team: "test team", Runtime: "codex"},
 			"团队名可以用 test-team。建队和启动 Codex 成员是两步。"},
@@ -467,7 +475,8 @@ func TestAssistantAnswersOpenQuestionsAndKeepsCompoundRequestsTogether(t *testin
 			if err := b.sync(ctx, true); err != nil {
 				t.Fatal(err)
 			}
-			if len(*outbound) != 1 || (*outbound)[0].ReplyTo != msg.ID || (*outbound)[0].Text != test.want {
+			if len(*outbound) != 1 || (*outbound)[0].ReplyTo != msg.ID || (*outbound)[0].Text != test.want ||
+				(*outbound)[0].CardTitle != "" || !(*outbound)[0].Markdown {
 				t.Fatalf("Expected a direct answer, got %+v", *outbound)
 			}
 		})

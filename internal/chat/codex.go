@@ -57,8 +57,9 @@ func codexTeamAssistant(home, model, dataDir, socket string, st *store.Store) Ch
 			return agentOutput{}, err
 		}
 		args := []string{"app-server", "--listen", "stdio://"}
-		env := assistantCodexEnv(home, dataDir, socket, input.Scoped)
-		if input.Scoped {
+		restricted := !codexToolsAllowed(kind, input)
+		env := assistantCodexEnv(home, dataDir, socket, restricted)
+		if restricted {
 			restrictions, err := scopedCodexArgs(ctx, workDir, env)
 			if err != nil {
 				return agentOutput{}, err
@@ -157,6 +158,10 @@ type codexTurn struct {
 var errCodexInteraction = errors.New("Codex requested interactive approval or input")
 var errCodexToolInInternalTurn = errors.New("Codex attempted to use a tool in an internal turn")
 
+func codexToolsAllowed(kind string, input agentInput) bool {
+	return kind == "answer" && !input.Scoped
+}
+
 func requestCodexTurn(ctx context.Context, stdin io.Writer, stdout io.Reader, workDir, model, kind, previousThread string, input agentInput) (agentOutput, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -235,7 +240,8 @@ func requestCodexTurn(ctx context.Context, stdin io.Writer, stdout io.Reader, wo
 	if err := send(0, "initialized", map[string]any{}); err != nil {
 		return agentOutput{}, err
 	}
-	if input.Scoped {
+	allowTools := codexToolsAllowed(kind, input)
+	if !allowTools {
 		var config struct {
 			Config struct {
 				MCPServers map[string]struct {
@@ -287,6 +293,14 @@ func requestCodexTurn(ctx context.Context, stdin io.Writer, stdout io.Reader, wo
 	if err != nil {
 		return agentOutput{}, err
 	}
+	turnText := string(data)
+	// A resumed thread can still carry the instructions from its previous mode.
+	switch kind {
+	case "answer":
+		turnText = assistantAnswerInstructions + "\n\n" + assistantReplyContract + "\n\n" + turnText
+	case "route":
+		turnText = assistantRouteInstructions + "\n\n" + turnText
+	}
 	var turn struct {
 		Turn codexTurn `json:"turn"`
 	}
@@ -301,7 +315,7 @@ func requestCodexTurn(ctx context.Context, stdin io.Writer, stdout io.Reader, wo
 		properties["alias"] = map[string]any{"type": "string", "enum": append([]string{""}, input.Teams...)}
 	}
 	if err := rpc(4, "turn/start", map[string]any{
-		"threadId": start.Thread.ID, "input": []map[string]string{{"type": "text", "text": string(data)}},
+		"threadId": start.Thread.ID, "input": []map[string]string{{"type": "text", "text": turnText}},
 		"outputSchema": map[string]any{"type": "object", "additionalProperties": false, "required": fields, "properties": properties},
 	}, &turn); err != nil {
 		return agentOutput{}, err
@@ -344,6 +358,10 @@ func requestCodexTurn(ctx context.Context, stdin io.Writer, stdout io.Reader, wo
 			if err := json.Unmarshal([]byte(text), &out); err != nil {
 				return out, errors.New("Codex app-server returned invalid routing JSON")
 			}
+			// Some resumed answer turns return the reply in the previous route format.
+			if kind == "answer" && out.Action == "answer" && strings.TrimSpace(out.Summary) == "" {
+				out.Summary = out.Description
+			}
 			out.threadID = start.Thread.ID
 			return out, nil
 		}
@@ -356,7 +374,7 @@ func requestCodexTurn(ctx context.Context, stdin io.Writer, stdout io.Reader, wo
 				text = event.Item.Text
 			}
 		case "commandExecution", "fileChange", "mcpToolCall", "dynamicToolCall", "collabAgentToolCall", "webSearch", "imageView", "imageGeneration":
-			if kind != "answer" || input.Scoped {
+			if !allowTools {
 				return agentOutput{}, errCodexToolInInternalTurn
 			}
 		}

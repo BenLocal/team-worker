@@ -37,6 +37,7 @@ type Bridge struct {
 	Account model.ChatAccount
 	Board   string
 	Log     *slog.Logger
+	React   func(context.Context, string) error
 	Deliver func(context.Context, Outbound) (string, error)
 	Upload  func(context.Context, model.ChatAsset) (string, error)
 	Agent   ChatAgent
@@ -113,12 +114,19 @@ func (b *Bridge) Accept(ctx context.Context, msg Inbound) error {
 	}
 	if binding, ok := bindings[text]; ok && (!msg.Group || msg.Parent != "") {
 		handled, err := b.Store.ResolveChatFollowup(ctx, r, msg.Parent, binding)
-		if err != nil || handled {
+		if err != nil {
 			return err
+		}
+		if handled {
+			b.acknowledge(ctx, msg.ID)
+			return nil
 		}
 	}
 	if msg.Group && !msg.Mentioned {
 		return nil
+	}
+	if len(bindings) > 0 || settings.AllowsFeishuSender(b.Account, msg.Sender) {
+		b.acknowledge(ctx, msg.ID)
 	}
 	if len(text) > 16000 {
 		return b.Store.RejectChatInbound(ctx, r, "消息过长，请缩短后重新发送。")
@@ -165,6 +173,17 @@ func (b *Bridge) Accept(ctx context.Context, msg Inbound) error {
 		return b.Store.RejectChatInbound(ctx, r, "没有权限或该团队暂未启用飞书收件。")
 	}
 	return b.Store.QueueChatRequest(ctx, r, b.Account)
+}
+
+func (b *Bridge) acknowledge(ctx context.Context, messageID string) {
+	if b.React == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	if err := b.React(ctx, messageID); err != nil {
+		b.Log.Warn("acknowledge chat message", "provider", b.Account.Provider, "err", err)
+	}
 }
 
 func reply(msg Inbound, text string) Outbound {
@@ -434,6 +453,9 @@ func (b *Bridge) sendQueuedReplies(ctx context.Context, kind string) error {
 		var out Outbound
 		if err := json.Unmarshal(job.Payload, &out); err != nil {
 			return err
+		}
+		if kind == "assistant-answer" {
+			out.Markdown, out.CardTitle = true, ""
 		}
 		if err := b.send(ctx, job, out); err != nil {
 			return err

@@ -104,6 +104,10 @@ func (b *Bridge) routeRequest(ctx context.Context, r model.ChatRequest, job stor
 	aliases := slices.Sorted(maps.Keys(candidates))
 	out, err := b.Agent(ctx, "route", agentInput{Request: r.Body, Teams: aliases, SessionKey: assistantSessionKey(r, settings.Revision),
 		Scoped: !settings.AllowsFeishuSender(b.Account, r.Origin.Sender)})
+	// Keep the turn in the conversation, but use the board for an explicit status query.
+	if alias := directTeamStatusAlias(r.Body, candidates); alias != "" {
+		return b.queueAssistantAction(ctx, r, settings, candidates, assistantAction{Action: "team_status", Alias: alias})
+	}
 	if err != nil {
 		if errors.Is(err, errCodexInteraction) || errors.Is(err, errCodexToolInInternalTurn) {
 			return b.finishAssistantAnswer(ctx, r, settings.Revision, assistantFailureText(err))
@@ -257,17 +261,20 @@ func (b *Bridge) prepareReplyAssets(ctx context.Context, out *Outbound) error {
 //go:embed team-assistant-prompt.md
 var teamAssistantPrompt string
 
+const assistantReplyContract = "Return a JSON object with a single string field summary containing the reply."
+const assistantAnswerInstructions = "Handle the sender's request directly and reply in Feishu. For work the sender asks you to do, use the tools allowed by your profile, verify the result when possible, and report what happened."
+const assistantRouteInstructions = "Classify this request without using tools. Use team_status when the sender asks for an overview of one team's current state, such as '帮我看下 alpha 的状态'. Choose answer for general questions or work the sender asks you to do yourself. Choose route only when the sender asks you to forward a message or have a team do the work."
+
 func teamAssistantPromptFor(kind string) (field, prompt string) {
 	assistant, summary, _ := strings.Cut(teamAssistantPrompt, "\n## Summarize a result\n")
-	const replyContract = "\n\nReturn a JSON object with a single string field summary."
 	switch kind {
 	case "summary":
-		return "summary", strings.TrimSpace(summary) + replyContract
+		return "summary", strings.TrimSpace(summary) + "\n\n" + assistantReplyContract
 	case "answer":
-		return "summary", strings.TrimSpace(assistant) + "\n\nReply to the sender in Feishu using the data supplied for this turn." + replyContract
+		return "summary", strings.TrimSpace(assistant) + "\n\n" + assistantAnswerInstructions + "\n\n" + assistantReplyContract
 	}
-	contract := "\n\nChoose how to handle the request in this turn. Use the answer action when you need tools. Output JSON with string fields action, alias, team, leader, subject, owner, description, runtime. " +
+	contract := "\n\n" + assistantRouteInstructions + " Output JSON with string fields action, alias, team, leader, subject, owner, description, runtime. " +
 		"Actions: " + strings.Join(teamAssistantActions, ", ") +
-		". Use answer for conversational replies and route for forwarding. Use an exact existing team alias for an existing team, and empty strings for missing values."
+		". Use an exact existing team alias for an existing team, and empty strings for missing values."
 	return "alias", strings.TrimSpace(assistant) + contract
 }

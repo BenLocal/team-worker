@@ -187,7 +187,9 @@ func (b *Bridge) runAssistantJob(ctx context.Context, job store.ChatJob) error {
 	if latest.Revision != settings.Revision {
 		return nil
 	}
-	return b.send(ctx, job, r.Origin.Reply(text))
+	reply := r.Origin.Reply(text)
+	reply.Markdown = a.Action == "team_status"
+	return b.send(ctx, job, reply)
 }
 
 func (a assistantAction) result(output []byte, bindings map[string]model.ChatBinding, fallback string) string {
