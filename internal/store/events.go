@@ -155,14 +155,17 @@ func EventPayload(typ, team, timestamp string, fields map[string]any) map[string
 	return p
 }
 
-// emit records an event in the caller's transaction, so it is kept exactly
-// when the change that caused it commits. Events no hook listens to are not
-// recorded.
+// emit records hook and chat notifications in the transaction that caused them.
 func (s *Store) emit(ctx context.Context, tx *sql.Tx, team, typ string, fields map[string]any) error {
 	now := s.timestamp()
 	body, err := json.Marshal(EventPayload(typ, team, now, fields))
 	if err != nil {
 		return err
+	}
+	if typ == "TaskCompleted" || typ == "WorkerCrash" || typ == "BudgetExceeded" {
+		if _, err := tx.ExecContext(ctx, "INSERT INTO events (team,kind,body,created_at) VALUES (?,'chat-event',?,?)", team, string(body), now); err != nil {
+			return err
+		}
 	}
 	_, err = tx.ExecContext(ctx,
 		`INSERT INTO event_outbox (team, type, body, created_at)

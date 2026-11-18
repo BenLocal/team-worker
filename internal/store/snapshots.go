@@ -193,7 +193,7 @@ func (s *Store) RestoreSnapshot(ctx context.Context, team, id string, dryRun boo
 				return fmt.Errorf("restore %s: %w", table, err)
 			}
 		}
-		return nil
+		return resetTeamChatBinding(ctx, tx, team, true)
 	})
 	return sum, err
 }

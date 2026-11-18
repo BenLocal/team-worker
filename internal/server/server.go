@@ -226,6 +226,7 @@ func (s *Server) routes() {
 	s.decisionRoutes()
 	s.checkpointRoutes()
 	s.costRoutes(m)
+	s.chatRoutes()
 	s.harnessRoutes(m)
 }
 
@@ -580,6 +581,15 @@ func (s *Server) broadcast(w http.ResponseWriter, r *http.Request) {
 func (s *Server) messageLog(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	limit, _ := strconv.Atoi(q.Get("limit"))
+	if q.Has("cursor") {
+		if q.Get("from") != "" {
+			writeError(w, http.StatusBadRequest, "The from filter is unavailable in cursor mode")
+			return
+		}
+		page, err := s.store.MessageLogAfter(r.Context(), r.PathValue("team"), q.Get("cursor"), limit, q.Get("includeChatEvents") == "true")
+		respond(w, page, err)
+		return
+	}
 	msgs, err := s.store.MessageLog(r.Context(), r.PathValue("team"), limit, q.Get("from"))
 	respond(w, msgs, err)
 }

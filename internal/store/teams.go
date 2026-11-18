@@ -343,6 +343,9 @@ func (s *Store) DeleteTeam(ctx context.Context, name string) (bool, error) {
 		if err != nil || n == 0 {
 			return err
 		}
+		if err := resetTeamChatBinding(ctx, tx, name, false); err != nil {
+			return err
+		}
 		deleted = true
 		return s.emit(ctx, tx, name, "TeamShutdown", nil)
 	})

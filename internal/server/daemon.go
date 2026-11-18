@@ -9,12 +9,14 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/benlocal/team-worker/internal/board"
 	"github.com/benlocal/team-worker/internal/board/live"
+	"github.com/benlocal/team-worker/internal/chat"
 	"github.com/benlocal/team-worker/internal/config"
 	"github.com/benlocal/team-worker/internal/proc"
 	"github.com/benlocal/team-worker/internal/runner"
@@ -147,6 +149,13 @@ func Run(ctx context.Context, opts Options) error {
 	workers.Go(func() { NewDeliverer(st, handler.hub, log).Run(baseCtx) })
 	workers.Go(func() { NewHookRunner(st, handler.hub, log).Run(baseCtx) })
 	workers.Go(func() { NewAutoReviewer(st, handler.hub, log).Run(baseCtx) })
+	workers.Go(func() {
+		boardURL := strings.TrimRight(os.Getenv("TEAM_WORKER_WEB_URL"), "/")
+		if boardURL != "" {
+			boardURL += opts.WebBasePath + "/"
+		}
+		chat.RunFeishu(baseCtx, st, log, opts.DataDir, boardURL)
+	})
 	log.Info("team-workerd started", "socket", opts.Socket, "db", config.DBPath(opts.DataDir), "pid", os.Getpid())
 
 	select {
