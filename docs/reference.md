@@ -123,7 +123,7 @@ Web 看板访问需使用与 CLI HTTP 调用相同的 Key，`board serve` 默认
 
 也可在 daemon 所在的机器或容器中，用同一系统账号运行 `team-worker chat feishu setup`，命令会隐藏密钥输入。通过 `FEISHU_APP_ID` 和 `FEISHU_APP_SECRET` 启动 daemon 时，环境变量优先，Web 页面会显示由服务器管理。同一飞书应用应只运行一个接入实例。
 
-团队助手处理自然语言路由、团队查询、需确认的团队操作和答复摘要。在数据目录下放置 `feishu-codex/config.toml`，或用 `TEAM_WORKER_FEISHU_ROUTER_CODEX_HOME` 指定专用 Codex 配置目录的绝对路径，重启 daemon 后使用本机 `codex app-server`。该目录需要有效的 Codex 登录或模型服务凭据。Codex 模式会保存并续接飞书会话，工具、Skill、MCP、插件和权限由专用配置管理。需要交互审批时，飞书回复会提示审批要求。可用 `TEAM_WORKER_FEISHU_ROUTER_MODEL` 覆盖该配置的模型。 [查询与确认流程](feishu-call-flow.md#团队助手查询与确认)
+团队助手处理自然语言路由、通用问答、团队查询、需确认的团队操作和答复摘要。在数据目录下放置 `feishu-codex/config.toml`，或用 `TEAM_WORKER_FEISHU_ROUTER_CODEX_HOME` 指定专用 Codex 配置目录的绝对路径，重启 daemon 后使用本机 `codex app-server`。该目录需要有效的 Codex 登录或模型服务凭据。Codex 模式会保存并续接飞书会话，工具、Skill、MCP 和插件由专用配置管理。全局授权的问答回合使用 Full Access 和按需审批。在飞书应用启用 `card.action.trigger` 后，可在原会话提交审批或补充信息。可用 `TEAM_WORKER_FEISHU_ROUTER_MODEL` 覆盖该配置的模型。 [查询与确认流程](feishu-call-flow.md#团队助手查询与确认)
 
 未设置专用 Codex 目录时，既有的 `LLM_API_BASE` 和 `TEAM_WORKER_FEISHU_ROUTER_MODEL` 组合继续使用兼容网关。网关需要密钥时提供 `LLM_API_KEY`。 `TEAM_WORKER_FEISHU_ROUTER_ENABLE_THINKING` 默认为 `false`。明确指定团队的 `/tw send <团队> <正文>` 无需等待路由 Agent。
 
