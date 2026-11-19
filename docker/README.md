@@ -230,11 +230,11 @@ cd docker/ops && go test ./...
 |---|---|---|---|
 | Node.js（Debian 12 bookworm） | 26 | 基础镜像 `node:26-bookworm-slim` | 运行 Claude Code、Codex、pi、dsh |
 | Claude Code | 2.1.318（`CLAUDE_VERSION`） | npm `@anthropic-ai/claude-code` | Leader 和默认的 Worker |
-| Codex | 0.166.0（`CODEX_VERSION`） | npm `@openai/codex` | Worker |
+| Codex | 0.170.0（`CODEX_VERSION`） | npm `@openai/codex` | Worker |
 | pi | 1.5.0（`PI_VERSION`） | npm `@earendil-works/pi-coding-agent` | Worker |
 | DeepSeek Harness（dsh）、dsh-tui | 0.2.1-rc.5、0.18.0（`DSH_VERSION`、`DSH_TUI_VERSION`） | npm `@deepseek-ai/dsh`、`@deepseek-harness-tui/dsh-tui` | Worker（`dsh tui`） |
 | pnpm | 12.16.1（`PNPM_VERSION`） | npm | 安装 dsh 插件 |
-| Magpie | 0.1.2925（`MAGPIE_VERSION`） | 镜像 `ghcr.io/yetone/magpie` | 模型网关和管理界面，统一给各个 Agent 配模型 |
+| Magpie | 0.1.4506（`MAGPIE_VERSION`） | 镜像 `ghcr.io/yetone/magpie` | 模型网关和管理界面，统一给各个 Agent 配模型 |
 | Bun | 1.4.4（`BUN_VERSION`） | GitHub release，校验 SHA256 | Magpie 插件运行时 |
 | agent-desktop | 1.2.0（`AGENT_DESKTOP_VERSION`） | npm `agent-desktop` | 成员操作虚拟桌面里的图形程序（见《虚拟桌面》） |
 | Xvfb、AT-SPI、Openbox | Debian 12 软件包 | apt `xvfb`、`at-spi2-core`、`openbox`、`libreoffice-gtk3` | 虚拟桌面 |
