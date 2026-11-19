@@ -35,6 +35,7 @@ type agentOutput struct {
 type ChatAgent func(context.Context, string, agentInput) (agentOutput, error)
 
 var teamAssistantActions = []string{"answer", "route", "list_teams", "team_status", "list_members", "list_tasks", "create_team", "create_task"}
+var teamAssistantRouteFields = []string{"action", "alias", "team", "leader", "subject", "owner", "description", "runtime"}
 
 func assistantSessionKey(r model.ChatRequest, revision int64) string {
 	topic := r.Origin.ThreadID
@@ -262,20 +263,21 @@ func (b *Bridge) prepareReplyAssets(ctx context.Context, out *Outbound) error {
 //go:embed team-assistant-prompt.md
 var teamAssistantPrompt string
 
-const assistantReplyContract = "Return a JSON object with a single string field summary containing the reply."
-const assistantAnswerInstructions = "Handle the sender's request directly and reply in Feishu. For work the sender asks you to do, use the tools allowed by your profile, verify the result when possible, and report what happened."
-const assistantRouteInstructions = "Classify this request without using tools. Use team_status when the sender asks for an overview of one team's current state, such as '帮我看下 alpha 的状态'. Choose answer for general questions or work the sender asks you to do yourself. Choose route only when the sender asks you to forward a message or have a team do the work."
-
-func teamAssistantPromptFor(kind string) (field, prompt string) {
-	assistant, summary, _ := strings.Cut(teamAssistantPrompt, "\n## Summarize a result\n")
+func teamAssistantPromptFor(kind string) (prompt, turnInstructions string) {
+	assistant, modes, _ := strings.Cut(teamAssistantPrompt, "\n## Summarize a result\n")
+	summary, modes, _ := strings.Cut(modes, "\n## Classify a request\n")
+	route, modes, _ := strings.Cut(modes, "\n## Answer a request\n")
+	answer, replyFormat, _ := strings.Cut(modes, "\n## Reply format\n")
 	switch kind {
 	case "summary":
-		return "summary", strings.TrimSpace(summary) + "\n\n" + assistantReplyContract
+		return strings.TrimSpace(summary) + "\n\n" + strings.TrimSpace(replyFormat), ""
 	case "answer":
-		return "summary", strings.TrimSpace(assistant) + "\n\n" + assistantAnswerInstructions + "\n\n" + assistantReplyContract
+		turnInstructions = strings.TrimSpace(answer) + "\n\n" + strings.TrimSpace(replyFormat)
+	default:
+		turnInstructions = strings.NewReplacer(
+			"{{fields}}", strings.Join(teamAssistantRouteFields, ", "),
+			"{{actions}}", strings.Join(teamAssistantActions, ", "),
+		).Replace(strings.TrimSpace(route))
 	}
-	contract := "\n\n" + assistantRouteInstructions + " Output JSON with string fields action, alias, team, leader, subject, owner, description, runtime. " +
-		"Actions: " + strings.Join(teamAssistantActions, ", ") +
-		". Use an exact existing team alias for an existing team, and empty strings for missing values."
-	return "alias", strings.TrimSpace(assistant) + contract
+	return strings.TrimSpace(assistant) + "\n\n" + turnInstructions, turnInstructions
 }

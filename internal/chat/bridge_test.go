@@ -405,22 +405,28 @@ func TestAssistantWritesRequireOriginalSenderConfirmation(t *testing.T) {
 func TestAssistantAnswersTeamStatusFromCurrentBoard(t *testing.T) {
 	ctx := t.Context()
 	b, outbound, _ := chatFixture(t)
-	const question = "帮我看下alpha的状态"
+	const question = "看下 alpha team 中每个 agent 的状态"
 	b.Agent = func(_ context.Context, kind string, in agentInput) (agentOutput, error) {
 		if kind != "route" || in.Request != question {
 			t.Fatalf("Unexpected router input: %s %+v", kind, in)
 		}
 		return agentOutput{assistantAction: assistantAction{Action: "answer", Alias: "alpha"}}, nil
 	}
-	live := true
+	live, offline := true, false
 	b.RunCLI = func(_ context.Context, args []string) ([]byte, error) {
 		if !slices.Equal(args, []string{"board", "show", "--messages=1", "--", "alpha"}) {
 			t.Fatalf("Unexpected CLI arguments: %q", args)
 		}
 		return json.Marshal(model.Board{
-			Team:    model.Team{Name: "alpha"},
-			Members: []model.BoardMember{{Agent: &model.Agent{Alive: &live}}, {}},
-			Stats:   model.TaskStats{InProgress: 4, Waiting: 2, Pending: 1, Blocked: 1, Completed: 2},
+			Team: model.Team{Name: "alpha"},
+			Members: []model.BoardMember{
+				{Member: model.Member{Name: "leader"}, Agent: &model.Agent{Alive: &live}},
+				{Member: model.Member{Name: "tester"}, Agent: &model.Agent{Alive: &live, Activity: model.ActivityBlocked}},
+				{Member: model.Member{Name: "reviewer"}, Agent: &model.Agent{Alive: &offline, Activity: model.ActivityWorking}},
+				{Member: model.Member{Name: "ops"}, Agent: &model.Agent{}},
+				{Member: model.Member{Name: "analyst"}},
+			},
+			Stats: model.TaskStats{InProgress: 4, Waiting: 2, Pending: 1, Blocked: 1, Completed: 2},
 			Tasks: []model.Task{
 				{Subject: "Earlier completed task", Status: model.StatusCompleted, UpdatedAt: "2026-01-01T09:00:00Z"},
 				{Subject: "Validate the current fix", Status: model.StatusInProgress, Owner: "tester", ExecutionState: "active",
@@ -452,7 +458,9 @@ func TestAssistantAnswersTeamStatusFromCurrentBoard(t *testing.T) {
 		t.Fatalf("Expected one reply to the original message, got %+v", *outbound)
 	}
 	text := (*outbound)[0].Text
-	for _, want := range []string{"alpha 当前状态", "1/2", "执行中 1，待跟进 1，等待 2", "Validate the current fix", "Two cases passed",
+	for _, want := range []string{"alpha 当前状态", "2/5", "leader · 在线 · 活动未知", "tester · 在线 · 最近上报为阻塞",
+		"reviewer · 离线\n", "ops · 进程状态未知", "analyst · 无进程记录",
+		"执行中 1，待跟进 1，等待 2", "Validate the current fix", "Two cases passed",
 		"Continue after precheck", "Precheck passed", "01-02 13:25 UTC", "已确认，待提交结果",
 		"Collect approval", "Waiting for review", "Canary deployment", "Most recent completion"} {
 		if !strings.Contains(text, want) {

@@ -76,7 +76,7 @@ func (b *Bridge) finishAssistantAnswer(ctx context.Context, request model.ChatRe
 
 func teamAnswerContext(board model.Board) string {
 	var text strings.Builder
-	text.WriteString(summarizeTeamStatus(board))
+	text.WriteString(summarizeTeamStatus(board, false))
 	fmt.Fprintf(&text, "\n\n成员（最多 20 项）\n")
 	for _, member := range board.Members[:min(20, len(board.Members))] {
 		fmt.Fprintf(&text, "- %s (%s)\n", member.InboxName(), member.AgentType)

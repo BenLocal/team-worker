@@ -40,7 +40,7 @@ func configuredGatewayAgent() ChatAgent {
 	var readContext sync.Once
 	var limit int
 	return func(ctx context.Context, kind string, input agentInput) (agentOutput, error) {
-		_, prompt := teamAssistantPromptFor(kind)
+		prompt, _ := teamAssistantPromptFor(kind)
 		user, err := json.Marshal(input)
 		if err != nil {
 			return agentOutput{}, err

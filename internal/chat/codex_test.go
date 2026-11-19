@@ -11,7 +11,7 @@ import (
 )
 
 func TestRoutingCodexAppServerProtocol(t *testing.T) {
-	_, answer := teamAssistantPromptFor("answer")
+	answer, _ := teamAssistantPromptFor("answer")
 	if !strings.Contains(answer, "reply in Feishu") || !strings.Contains(answer, "task results") ||
 		strings.Contains(answer, "## Summarize a result") {
 		t.Fatal("Answer mode must receive its own prompt and the team-worker CLI guidance")
@@ -103,6 +103,9 @@ func TestRoutingCodexAppServerProtocol(t *testing.T) {
 						if mode == "route" && (!strings.Contains(string(fields["outputSchema"]), `"list_teams"`) ||
 							!strings.Contains(string(fields["outputSchema"]), `"team_status"`) || !strings.Contains(string(fields["outputSchema"]), `"create_task"`)) {
 							t.Errorf("The schema is missing assistant actions: %s", fields["outputSchema"])
+						}
+						if mode == "route" && !strings.Contains(string(fields["input"]), "每个 agent 的状态") {
+							t.Errorf("The route turn is missing the per-agent status example: %s", fields["input"])
 						}
 						if mode == "answer" && (!strings.Contains(string(fields["outputSchema"]), `"summary"`) ||
 							!strings.Contains(string(fields["input"]), "single string field summary") ||

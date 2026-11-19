@@ -201,7 +201,7 @@ func (a assistantAction) result(output []byte, bindings map[string]model.ChatBin
 		if json.Unmarshal(output, &board) != nil || board.Team.Name != a.Team {
 			return fallback
 		}
-		return summarizeTeamStatus(board)
+		return summarizeTeamStatus(board, true)
 	case "list_teams":
 		var teams []model.TeamSummary
 		if json.Unmarshal(output, &teams) != nil {

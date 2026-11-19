@@ -9,7 +9,10 @@ import (
 	"github.com/benlocal/team-worker/internal/model"
 )
 
-var directTeamStatus = regexp.MustCompile(`(?i)^(?:请\s*)?(?:帮我\s*)?(?:(?:看下|看一下|看看|查看|查下|查一下)\s*)?([a-z0-9._-]+)\s*(?:(?:team|团队)\s*)?(?:的\s*)?(?:(?:当前|现在)\s*的?\s*)?状态\s*[？?。]?$`)
+var directTeamStatus = regexp.MustCompile(
+	`(?i)^(?:请\s*)?(?:帮我\s*)?(?:(?:看下|看一下|看看|查看|查下|查一下)\s*)?([a-z0-9._-]+)\s*` +
+		`(?:(?:team|团队)\s*)?(?:(?:中|里|内)\s*)?(?:的\s*)?` +
+		`(?:(?:每个|各个|各)\s*(?:agent|成员)\s*(?:的\s*)?)?(?:(?:当前|现在)\s*的?\s*)?状态\s*[？?。]?$`)
 
 func directTeamStatusAlias(text string, teams map[string]model.ChatBinding) string {
 	match := directTeamStatus.FindStringSubmatch(strings.TrimSpace(text))
@@ -26,22 +29,43 @@ func directTeamStatusAlias(text string, teams map[string]model.ChatBinding) stri
 	return ""
 }
 
-func summarizeTeamStatus(board model.Board) string {
+func summarizeTeamStatus(board model.Board, includeMembers bool) string {
 	online, unknown := 0, 0
+	var members strings.Builder
 	for _, member := range board.Members {
-		if member.Agent == nil {
-			continue
-		}
-		if member.Agent.Alive == nil {
+		state := "无进程记录"
+		switch agent := member.Agent; {
+		case agent == nil:
+		case agent.Alive == nil:
+			state = "进程状态未知"
 			unknown++
-		} else if *member.Agent.Alive {
+		case !*agent.Alive:
+			state = "离线"
+		default:
+			state = "在线 · 活动未知"
 			online++
+			switch agent.Activity {
+			case model.ActivityWorking:
+				state = "在线 · 最近上报为工作中"
+			case model.ActivityWaiting:
+				state = "在线 · 最近上报为等待输入"
+			case model.ActivityBlocked:
+				state = "在线 · 最近上报为阻塞"
+			}
+		}
+		if includeMembers {
+			fmt.Fprintf(&members, "\n- %s · %s", member.InboxName(), state)
 		}
 	}
 	var text strings.Builder
 	fmt.Fprintf(&text, "%s 当前状态\n进程在线 %d/%d", board.Team.Name, online, len(board.Members))
 	if unknown > 0 {
 		fmt.Fprintf(&text, "，%d 人状态未知", unknown)
+	}
+	if members.Len() > 0 {
+		text.WriteByte('\n')
+		text.WriteString(members.String())
+		text.WriteByte('\n')
 	}
 	var active, followUp, waiting, unreported, blocked []model.Task
 	var completed model.Task

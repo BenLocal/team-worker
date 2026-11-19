@@ -272,7 +272,7 @@ func requestCodexTurn(ctx context.Context, stdin io.Writer, stdout io.Reader, wo
 			ID string `json:"id"`
 		} `json:"thread"`
 	}
-	field, prompt := teamAssistantPromptFor(kind)
+	prompt, turnInstructions := teamAssistantPromptFor(kind)
 	thread := map[string]any{
 		"cwd":                   workDir,
 		"developerInstructions": prompt,
@@ -308,22 +308,21 @@ func requestCodexTurn(ctx context.Context, stdin io.Writer, stdout io.Reader, wo
 	}
 	turnText := string(data)
 	// A resumed thread can still carry the instructions from its previous mode.
-	switch kind {
-	case "answer":
-		turnText = assistantAnswerInstructions + "\n\n" + assistantReplyContract + "\n\n" + turnText
-	case "route":
-		turnText = assistantRouteInstructions + "\n\n" + turnText
+	if turnInstructions != "" {
+		turnText = turnInstructions + "\n\n" + turnText
 	}
 	var turn struct {
 		Turn codexTurn `json:"turn"`
 	}
-	fields := []string{field}
-	properties := map[string]any{field: map[string]any{"type": "string"}}
+	fields := []string{"summary"}
 	if kind == "route" {
-		fields = append(fields, "action", "team", "leader", "subject", "owner", "description", "runtime")
-		for _, name := range fields[1:] {
-			properties[name] = map[string]any{"type": "string"}
-		}
+		fields = teamAssistantRouteFields
+	}
+	properties := make(map[string]any, len(fields))
+	for _, name := range fields {
+		properties[name] = map[string]any{"type": "string"}
+	}
+	if kind == "route" {
 		properties["action"] = map[string]any{"type": "string", "enum": teamAssistantActions}
 		properties["alias"] = map[string]any{"type": "string", "enum": append([]string{""}, input.Teams...)}
 	}
