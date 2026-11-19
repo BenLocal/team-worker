@@ -1,6 +1,9 @@
 # Agent 画面状态判断
 > 从 tmux 画面和终端标题判断 Agent 空闲 / 工作 / 等用户时踩过的坑与实测结论。
 
+- 2026-11-18：Codex 终端实测持续显示 `Working (125h…)`，看板没有进行中的任务，但会话记录有 `task_started` 且该轮没有 `task_complete`。按会话查 `~/.codex/logs_2.sqlite` 的 `codex_core::responses_retry`，确认模型请求返回 `429 Too Many Requests` 后进入数十小时的重试等待。进程存活、计时仍在走、通知仍写入会话，都不足以证明模型仍在产出。查只读日志时可先用 `idx_logs_thread_id_ts` 取该会话最近的记录，再筛选重试日志。
+- 2026-11-18：实测普通续接可能沿用会话里的旧模型，即使共享默认模型已变更。单独给成员换版本和模型时，在 `spawn --replace --keepalive` 中指定 Codex 二进制绝对路径、`resume <会话ID>` 和 `--model <模型>`，用终端版本、会话 `turn_context` 和后续 `agent resume --dry-run` 核验。只把新版目录加进 `PATH` 可能仍启动旧版，因为 team-worker 会把自己的二进制目录放在最前面。
+
 - 2026-10-30：旧的 `InputPromptVisible` 只认 `>`/`❯`/`›` 提示符，把 Claude 回复末尾的编号列表误判成菜单、又认不出各 CLI 自己的菜单；改为按 CLI 加载 herdr 的检测清单（`internal/agent/builtin/detect/*.toml`，取自 herdr 9c38bbc64e3b，之后上游 15 个提交未改清单和 `manifest.rs`）。daemon 只在命中规则带 `visible_idle` 时打字，规则都不命中的「idle 兜底」不算数，因为没见过的菜单也是这个结果。
 - 2026-10-30：`tmux display-message -p '#{pane_title}'` 在 `LANG=C` 等非 UTF-8 环境下把非 ASCII 字符输出成 `_`，Claude 的 `✳`/盲文转圈全丢；加 `tmux -u` 解决（`internal/tmux/tmux.go` 的 `Title`）。`capture-pane -p` 不受影响。
 - 2026-10-30：Claude Code 2.1.302 在 tmux 里只发 OSC 0 标题（空闲 `✳ `，工作时 U+2800–28FF 盲文或 `◐◑◒◓`）和一次 OSC 7501 查询 `?`，不发 OSC 9 进度。按规范回 `OSC 7501 ; ? : states=…:kinds=… ST` 的 5 种写法在 pty 里实测都没让它开始上报状态，原因待验证（需要看 Claude 源码）；目前只用标题 + 画面。
