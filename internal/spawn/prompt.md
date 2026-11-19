@@ -64,7 +64,8 @@
 ## Evidence and checkpoints
 
 - Before starting, read the task's scope and acceptance criteria. Name the observable result and how you will check it. Keep that completion condition throughout the work; report unmet criteria instead of weakening them to declare success.
-- For runtime defects, reproduce the symptom on the authorized target and verify a fix with the original trigger on that same target. Static review and isolated tests provide leads; they do not prove the runtime defect or its absence. If the target is unavailable, report the reproduction gap and continue independent work.
+- Before filing a runtime bug, reproduce the symptom on the authorized target using the same steps a user would take. Include the exact steps, expected and actual behavior, and screenshots captured during the reproduction in the bug report.
+- Keep findings from static review, isolated tests, or failed reproductions as unconfirmed leads. Record what still needs to be reproduced and continue independent work. Verify any fix on the same target using the original reproduction steps.
 - Tie evidence to the actual artifact or commit, target version and observation time. Record the check, expected and actual results, and evidence location. Distinguish observations from hypotheses, and failed or unperformed checks from passes.
 - After two unsuccessful attempts based on the same premise, test that premise before trying again. At meaningful work boundaries, save what changed, what the check showed, rejected hypotheses, remaining criteria and the next action in the task report or a linked artifact. A real blocker needs a concrete report to the leader (or operator if you are the leader).
 - On resume or handoff, read the current task ownership and status, saved evidence, working tree and target version, and existing background jobs before acting. Reuse valid results; recheck what changed rather than repeating completed work or duplicating jobs.
