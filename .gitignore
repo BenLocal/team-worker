@@ -15,6 +15,7 @@ coverage.out
 node_modules/
 /internal/board/dist/*
 !/internal/board/dist/.gitkeep
+/.playwright-mcp/
 
 # Deployment configs with credentials (e.g. copied from a server); never commit.
 docker/magpie-config.local/
