@@ -104,7 +104,13 @@ func Run(ctx context.Context, opts Options) error {
 	servers := []*http.Server{httpSrv}
 	listeners := []net.Listener{ln}
 	if tcp != nil {
-		var web http.Handler = Authenticate(handler, accessKey)
+		api := Authenticate(handler, accessKey)
+		web := http.NewServeMux()
+		hooks, err := config.ReadVikunjaHooks(opts.DataDir)
+		if err != nil {
+			log.Warn("read Vikunja webhook configuration", "err", err)
+		}
+		web.HandleFunc(vikunjaHookRoute, vikunjaHook(st, hooks))
 		if opts.Board {
 			// The daemon's board runs where the agents run, so it has live terminals.
 			local := LocalClient(handler)
@@ -112,10 +118,10 @@ func Run(ctx context.Context, opts Options) error {
 			if err != nil {
 				return err
 			}
-			mux := http.NewServeMux()
-			mux.Handle("/v1/", web)
-			mux.Handle("/", site)
-			web = mux
+			web.Handle("/v1/", api)
+			web.Handle("/", site)
+		} else {
+			web.Handle("/", api)
 		}
 		servers = append(servers, &http.Server{Handler: web, ReadHeaderTimeout: 10 * time.Second,
 			BaseContext: func(net.Listener) context.Context { return baseCtx }})
@@ -144,6 +150,7 @@ func Run(ctx context.Context, opts Options) error {
 	})
 	workers.Go(func() { handler.runMemory(baseCtx) })
 	workers.Go(func() { runCheckpoints(baseCtx, st, log) })
+	workers.Go(func() { runVikunjaHooks(baseCtx, st, log) })
 	workers.Go(func() { NewNudger(st, log).Run(baseCtx) })
 	workers.Go(func() { NewAnnouncer(st, log).Run(baseCtx) })
 	workers.Go(func() { NewDeliverer(st, handler.hub, log).Run(baseCtx) })

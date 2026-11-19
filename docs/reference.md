@@ -131,6 +131,21 @@ Leader 在本机运行 `team-worker chat reply <团队> <请求编号> "<材料>
 
 可重复使用 `--image PATH` 在摘要卡片中预览图片，`--image-reply PATH` 单独回复图片，`--file PATH` 回复可下载的文件，或 `--doc '标题=HTTPS_URL'` 在卡片中显示云文档链接。每次回复最多 8 项。单张图片最多 10 MB，所有本地文件合计最多 30 MB。上传媒体需要飞书应用开通「获取与上传图片或文件资源」权限。详见 [飞书消息工作流](feishu-messaging-spec.md)。
 
+### Vikunja webhook
+
+启用 daemon 的 HTTP 监听，在数据目录中创建权限为 `0600` 的 `vikunja-hooks.json`，按团队名设置各自的签名密钥。daemon 启动时读取此文件。
+
+```json
+{
+  "demo": "<demo 的签名密钥>",
+  "qa": "<qa 的签名密钥>"
+}
+```
+
+在 Vikunja 的项目设置中添加 webhook，目标填 `https://team-worker.example.internal/api/hooks/vikunja/demo`，并设置与该团队对应的 Secret 和要订阅的事件。daemon 按路径选择团队，用 Vikunja 的 `X-Vikunja-Signature` 验证原始 JSON。这个入口独立于 team-worker CLI 的 API Key。请求体上限为 256 KiB。 [Vikunja webhook 签名](https://vikunja.io/docs/webhooks/#signature-verification)
+
+返回 `202 Accepted` 表示已写入 SQLite。后台消费者每秒扫描，并将事件作为 `vikunja` 发出的普通消息投递到当时的 Leader 收件箱。同一团队收到字节完全相同的请求只投递一次。daemon 重启后会继续处理未投递的事件；团队暂时没有 Leader 时，消息继续留在队列里。可用 `team-worker inbox log demo` 查看投递记录。
+
 ## 日志
 
 team-workerd 记录这些事件：
@@ -191,6 +206,7 @@ team-workerd 记录这些事件：
 | `GET /v1/chat/blocked` | 最近被发送权限拦下的请求或答复，供看板管理员查看 |
 | `POST /v1/teams/{team}/chat/requests/{id}/results` | 本地当前 Leader Run 提交摘要材料。接受 `agentId`、`runId`、`material`、`final`、`groupApproved` 和可选的 `assets`。每项含 `kind`（`preview`、`image`、`file`、`link`）及 `name`，本地文件用 `data` 提交 Base64 编码的字节，链接用 `url` |
 | `GET/PUT /api/chat/feishu/app` | 内置看板的登录会话可读取应用 ID 和配置来源。保存请求包含 `appId` 和 `appSecret`，响应只返回应用 ID 和配置来源。凭据由环境变量提供时，保存返回 409 |
+| `POST /api/hooks/vikunja/{team}` | 接收指定团队的 [Vikunja webhook](#vikunja-webhook)。验签并写入队列后返回 `202` |
 | `GET /v1/teams/{team}/inboxes/{agent}` | 查看收件箱但不消费 |
 | `POST /v1/teams/{team}/inboxes/{agent}/receive` | 消费消息；`wait=30s` 时长轮询，有新消息立即返回 |
 | `GET/PUT /v1/teams/{team}/prompt` | 读取 / 设置团队说明 |
