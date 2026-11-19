@@ -106,11 +106,7 @@ func Run(ctx context.Context, opts Options) error {
 	if tcp != nil {
 		api := Authenticate(handler, accessKey)
 		web := http.NewServeMux()
-		hooks, err := config.ReadVikunjaHooks(opts.DataDir)
-		if err != nil {
-			log.Warn("read Vikunja webhook configuration", "err", err)
-		}
-		web.HandleFunc(vikunjaHookRoute, vikunjaHook(st, hooks))
+		web.HandleFunc(vikunjaHookRoute, handler.vikunjaHook)
 		if opts.Board {
 			// The daemon's board runs where the agents run, so it has live terminals.
 			local := LocalClient(handler)

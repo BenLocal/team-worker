@@ -1,5 +1,7 @@
 """Run after make build with Playwright and a Chromium executable."""
 
+import hashlib
+import hmac
 import json
 import os
 import socket
@@ -70,12 +72,13 @@ def run(data_dir):
             "appliedRevision": 0,
         }
 
-        try:
-            opener.open(base + "/api/chat/settings", timeout=2)
-        except HTTPError as error:
-            assert error.code == 401
-        else:
-            raise AssertionError("Chat settings were accessible without authentication")
+        for path in ("/api/chat/settings", "/api/settings/vikunja"):
+            try:
+                opener.open(base + path, timeout=2)
+            except HTTPError as error:
+                assert error.code == 401
+            else:
+                raise AssertionError(f"{path} was accessible without authentication")
 
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(
@@ -113,12 +116,18 @@ def run(data_dir):
             ).to_be_visible()
             expect(app_secret).to_have_count(0)
             page.unroute("**/api/chat/feishu/app", save_app)
-            dialog = page.get_by_role("dialog")
-            bounds = dialog.bounding_box()
-            assert bounds == {"x": 0, "y": 0, "width": 1280, "height": 720}, bounds
+            settings_page = page.get_by_role("main")
+            expect(
+                settings_page.get_by_role("heading", name="Settings")
+            ).to_be_visible()
+            expect(page.get_by_role("dialog")).to_have_count(0)
+            expect(page.locator(".settings-rail")).to_be_visible()
+            expect(
+                page.get_by_role("navigation", name="Teams and members")
+            ).to_be_visible()
             page.set_viewport_size({"width": 390, "height": 660})
-            bounds = dialog.bounding_box()
-            assert bounds == {"x": 0, "y": 0, "width": 390, "height": 660}, bounds
+            expect(page.locator(".settings-inline")).to_be_visible()
+            expect(page.locator(".settings-rail")).to_be_hidden()
             page.set_viewport_size({"width": 1280, "height": 720})
             api("/v1/chat/connections", dict(account, connected=False))
             expect(page.get_by_role("status").first).to_contain_text(
@@ -126,10 +135,14 @@ def run(data_dir):
             )
             field = page.get_by_label("Feishu account allowed to message all teams")
             field.fill("ou_example")
-            expect(dialog.locator("input")).to_have_count(1)
+            expect(
+                settings_page.get_by_role("region", name="Feishu integration").locator(
+                    "input"
+                )
+            ).to_have_count(1)
             page.get_by_role("button", name="Save settings").click()
             expect(page.get_by_text("Saved version 1")).to_be_visible()
-            page.get_by_role("button", name="Close", exact=True).click()
+            page.get_by_role("button", name="Back", exact=True).click()
             expect(trigger).to_be_focused()
 
             page.get_by_role("button", name="Collapse sidebar").click()
@@ -175,6 +188,71 @@ def run(data_dir):
                 assert error.code == 403
             else:
                 raise AssertionError("A cross-site settings update was accepted")
+
+            sections = page.get_by_role("navigation", name="Settings sections")
+            sections.get_by_role("button", name="Vikunja", exact=True).click()
+            hooks = page.locator(".vikunja-settings")
+            expect(
+                hooks.get_by_role("combobox", name="Team", exact=True)
+            ).to_have_value("alpha")
+            expect(hooks.get_by_label("Webhook URL")).to_have_value(
+                base + "/api/hooks/vikunja/alpha"
+            )
+            hooks.get_by_label("Signing secret").fill("example-webhook-secret")
+            hooks.get_by_role("combobox", name="Events to deliver").select_option(
+                "allowlist"
+            )
+            hooks.get_by_label("Allowed events").fill("task.created\ntask.comment.*")
+            hooks.get_by_role("button", name="Save webhook").click()
+            expect(hooks.get_by_text("Webhook saved")).to_be_visible()
+            expect(hooks.get_by_label("Signing secret")).to_have_value("")
+            saved_hooks = page.request.get(base + "/api/settings/vikunja")
+            assert saved_hooks.ok
+            assert saved_hooks.json()[0] == {
+                "team": "alpha",
+                "hasSecret": True,
+                "events": ["task.created", "task.comment.*"],
+            }
+
+            for name, status in (
+                ("task.created", 202),
+                ("task.comment.created", 202),
+                ("task.updated", 204),
+            ):
+                body = json.dumps({"event_name": name, "data": {}}).encode()
+                signature = hmac.new(
+                    b"example-webhook-secret", body, hashlib.sha256
+                ).hexdigest()
+                request = Request(
+                    base + "/api/hooks/vikunja/alpha",
+                    data=body,
+                    headers={
+                        "X-Vikunja-Signature": signature,
+                        "Content-Type": "application/json",
+                    },
+                )
+                with opener.open(request, timeout=2) as response:
+                    assert response.status == status
+
+            assert "view=settings&tab=vikunja" in page.url
+            page.reload()
+            expect(
+                sections.get_by_role("button", name="Vikunja", exact=True)
+            ).to_have_attribute("aria-current", "page")
+            expect(hooks.get_by_label("Allowed events")).to_have_value(
+                "task.created\ntask.comment.*"
+            )
+            hooks.get_by_role("combobox", name="Team", exact=True).select_option("beta")
+            expect(
+                hooks.get_by_role("combobox", name="Events to deliver")
+            ).to_have_value("all")
+            page.get_by_role("button", name="alpha", exact=True).click()
+            expect(
+                settings_page.get_by_role("heading", name="alpha", exact=True)
+            ).to_be_visible()
+            expect(settings_page.get_by_role("heading", name="Settings")).to_have_count(
+                0
+            )
             browser.close()
 
         saved = api("/v1/chat/settings")
@@ -182,7 +260,7 @@ def run(data_dir):
         assert saved["feishuSender"]["openId"] == "ou_example"
         assert saved["bindings"] == []
         print(
-            "Verified protected settings, sidebar access, persistence, focus and connection status."
+            "Verified Feishu and Vikunja settings, event filtering, persistence and focus."
         )
     finally:
         daemon.terminate()

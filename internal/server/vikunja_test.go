@@ -15,6 +15,7 @@ import (
 
 	"github.com/benlocal/team-worker/internal/client"
 	"github.com/benlocal/team-worker/internal/config"
+	"github.com/benlocal/team-worker/internal/model"
 	"github.com/benlocal/team-worker/internal/store"
 )
 
@@ -30,13 +31,14 @@ func TestDaemonVikunjaHook(t *testing.T) {
 	t.Setenv("TEAM_WORKER_SERVER_URL", "")
 	t.Setenv("TEAM_WORKER_NO_AUTOSTART", "1")
 	if err := os.WriteFile(filepath.Join(dir, "vikunja-hooks.json"),
-		[]byte(`{"alpha":"alpha-example-secret","beta":"beta-example-secret"}`), 0o600); err != nil {
+		[]byte(`{"alpha":"alpha-example-secret","beta":{"secret":"beta-example-secret","events":["task.*"]}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
 	ctx := t.Context()
 	const alphaEvent = `{"event_name":"task.created","data":{"task":{"id":10}}}`
 	const betaEvent = `{"event_name":"task.updated","data":{"task":{"id":11}}}`
+	const projectEvent = `{"event_name":"project.updated","data":{"project":{"id":12}}}`
 	st, err := store.Open(config.DBPath(dir))
 	if err != nil {
 		t.Fatal(err)
@@ -91,6 +93,19 @@ func TestDaemonVikunjaHook(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 
+	settings, err := api.VikunjaSettings(ctx)
+	if err != nil || len(settings) != 2 || !settings[0].HasSecret || settings[0].Events != nil ||
+		len(settings[1].Events) != 1 || settings[1].Events[0] != "task.*" {
+		t.Fatalf("Unexpected initial webhook settings: %+v, %v", settings, err)
+	}
+	if _, err := api.SetVikunjaSettings(ctx, "alpha", model.VikunjaHookUpdate{Events: []string{"task*"}}); err == nil {
+		t.Fatal("An invalid event wildcard was saved")
+	}
+	saved, err := api.SetVikunjaSettings(ctx, "alpha", model.VikunjaHookUpdate{Events: []string{"task.created"}})
+	if err != nil || !saved.HasSecret || len(saved.Events) != 1 || saved.Events[0] != "task.created" {
+		t.Fatalf("Unexpected saved settings: %+v, %v", saved, err)
+	}
+
 	httpClient := &http.Client{Timeout: 3 * time.Second}
 	for _, test := range []struct {
 		team, secret, body string
@@ -101,6 +116,8 @@ func TestDaemonVikunjaHook(t *testing.T) {
 		{"unknown", "alpha-example-secret", alphaEvent, http.StatusNotFound},
 		{"alpha", "alpha-example-secret", `{"event_name":"task.created"}`, http.StatusBadRequest},
 		{"alpha", "alpha-example-secret", strings.Repeat(" ", vikunjaHookBodyLimit+1), http.StatusRequestEntityTooLarge},
+		{"alpha", "alpha-example-secret", betaEvent, http.StatusNoContent},
+		{"beta", "beta-example-secret", projectEvent, http.StatusNoContent},
 		{"alpha", "alpha-example-secret", alphaEvent, http.StatusAccepted},
 		{"beta", "beta-example-secret", betaEvent, http.StatusAccepted},
 		{"beta", "beta-example-secret", betaEvent, http.StatusAccepted},
@@ -147,5 +164,12 @@ func TestDaemonVikunjaHook(t *testing.T) {
 			}
 			time.Sleep(20 * time.Millisecond)
 		}
+	}
+	if _, err := api.SetVikunjaSettings(ctx, "alpha", model.VikunjaHookUpdate{Events: []string{}}); err != nil {
+		t.Fatal(err)
+	}
+	settings, err = api.VikunjaSettings(ctx)
+	if err != nil || len(settings) != 2 || settings[0].Events == nil || len(settings[0].Events) != 0 {
+		t.Fatalf("An empty allowlist was not preserved: %+v, %v", settings, err)
 	}
 }

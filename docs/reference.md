@@ -133,18 +133,23 @@ Leader 在本机运行 `team-worker chat reply <团队> <请求编号> "<材料>
 
 ### Vikunja webhook
 
-启用 daemon 的 HTTP 监听，在数据目录中创建权限为 `0600` 的 `vikunja-hooks.json`，按团队名设置各自的签名密钥。daemon 启动时读取此文件。
+启用 daemon 的 HTTP 监听。在内置看板打开 **Settings → Vikunja**，选择团队，填入签名密钥和要接收的事件。保存后立即生效，修改过滤规则时留空密钥会保留原来的值。面板显示该团队的 webhook URL。
+
+也可以在 daemon 数据目录中维护权限为 `0600` 的 `vikunja-hooks.json`。原来的字符串写法表示接收全部事件。对象写法支持精确事件名和 `task.*` 这样的前缀，`events` 为 `null` 或省略时接收全部，空数组暂停接收。
 
 ```json
 {
-  "demo": "<demo 的签名密钥>",
+  "demo": {
+    "secret": "<demo 的签名密钥>",
+    "events": ["task.created", "task.comment.*"]
+  },
   "qa": "<qa 的签名密钥>"
 }
 ```
 
 在 Vikunja 的项目设置中添加 webhook，目标填 `https://team-worker.example.internal/api/hooks/vikunja/demo`，并设置与该团队对应的 Secret 和要订阅的事件。daemon 按路径选择团队，用 Vikunja 的 `X-Vikunja-Signature` 验证原始 JSON。这个入口独立于 team-worker CLI 的 API Key。请求体上限为 256 KiB。 [Vikunja webhook 签名](https://vikunja.io/docs/webhooks/#signature-verification)
 
-返回 `202 Accepted` 表示已写入 SQLite。后台消费者每秒扫描，并将事件作为 `vikunja` 发出的普通消息投递到当时的 Leader 收件箱。同一团队收到字节完全相同的请求只投递一次。daemon 重启后会继续处理未投递的事件；团队暂时没有 Leader 时，消息继续留在队列里。可用 `team-worker inbox log demo` 查看投递记录。
+返回 `202 Accepted` 表示事件已入队，`204 No Content` 表示已验签但被事件规则过滤。后台消费者每秒扫描，并将事件作为 `vikunja` 发出的普通消息投递到当时的 Leader 收件箱。同一团队收到字节完全相同的请求只投递一次。daemon 重启后会继续处理未投递的事件；团队暂时没有 Leader 时，消息继续留在队列里。可用 `team-worker inbox log demo` 查看投递记录。
 
 ## 日志
 
@@ -206,7 +211,9 @@ team-workerd 记录这些事件：
 | `GET /v1/chat/blocked` | 最近被发送权限拦下的请求或答复，供看板管理员查看 |
 | `POST /v1/teams/{team}/chat/requests/{id}/results` | 本地当前 Leader Run 提交摘要材料。接受 `agentId`、`runId`、`material`、`final`、`groupApproved` 和可选的 `assets`。每项含 `kind`（`preview`、`image`、`file`、`link`）及 `name`，本地文件用 `data` 提交 Base64 编码的字节，链接用 `url` |
 | `GET/PUT /api/chat/feishu/app` | 内置看板的登录会话可读取应用 ID 和配置来源。保存请求包含 `appId` 和 `appSecret`，响应只返回应用 ID 和配置来源。凭据由环境变量提供时，保存返回 409 |
-| `POST /api/hooks/vikunja/{team}` | 接收指定团队的 [Vikunja webhook](#vikunja-webhook)。验签并写入队列后返回 `202` |
+| `POST /api/hooks/vikunja/{team}` | 接收指定团队的 [Vikunja webhook](#vikunja-webhook)。验签并写入队列后返回 `202`，过滤时返回 `204` |
+| `GET /api/settings/vikunja` | 通过登录后的内置看板读取团队列表、是否已配置密钥和事件规则 |
+| `PUT /api/settings/vikunja/{team}` | 通过登录后的内置看板保存单个团队的设置，接受 `secret` 和 `events`，响应不含密钥 |
 | `GET /v1/teams/{team}/inboxes/{agent}` | 查看收件箱但不消费 |
 | `POST /v1/teams/{team}/inboxes/{agent}/receive` | 消费消息；`wait=30s` 时长轮询，有新消息立即返回 |
 | `GET/PUT /v1/teams/{team}/prompt` | 读取 / 设置团队说明 |

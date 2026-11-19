@@ -4,7 +4,7 @@ import { AgentTerminal, describe, selectCard, setBoardHost } from "./terminals.j
 import { openMemberPrompt, openTeamPrompt } from "./prompt-dialog.js";
 import { workLabel, activityLabel, protocolLabel } from "./member-work.js";
 import { openServiceKeys } from "./service-keys.js";
-import { openSettings } from "./settings.js";
+import { mountSettings } from "./settings.js";
 
 const $ = (id) => document.getElementById(id);
 const SVG = "http://www.w3.org/2000/svg";
@@ -23,6 +23,7 @@ const initialView = new URLSearchParams(location.search).get("view");
 const state = {
   teams: [], boards: {}, team: new URLSearchParams(location.search).get("team") || "", 
   view: VIEWS.some(([v]) => v === initialView) ? initialView : "board", railOpen: stored(RAIL_KEY) !== "closed",
+  settingsTab: new URLSearchParams(location.search).get("tab") === "vikunja" ? "vikunja" : "feishu",
   doneShown: DONE_PAGE, open: new Set(), resultOpen: new Set(), oversight: {}, openPlans: new Set(), approvalsTab: "requests",
   // Decision request cards: open bodies, the action being written per
   // request, requests being sent, their errors and AI decisions being overridden.
@@ -34,6 +35,7 @@ const state = {
   termLayout: stored(TERM_LAYOUT_KEY) === "grid" ? "grid" : "single", termAgent: {},
 };
 const terms = new Map();
+let disposeSettings;
 
 function el(tag, attrs = {}, ...children) {
   const node = document.createElement(tag);
@@ -267,7 +269,7 @@ function renderMiniRail(rows) {
     const s = b && b.taskSummary;
     const facts = s && s.total ? `, ${s.completed} of ${executionTotal(s)} done${s.blocked ? `, ${s.blocked} blocked` : ""}` : "";
     return el("li", {}, el("button", { type: "button", title: t.name + facts, "aria-label": t.name + facts,
-      "aria-current": t.name === state.team ? "page" : null, onclick: () => selectTeam(t.name) },
+      "aria-current": !disposeSettings && t.name === state.team ? "page" : null, onclick: () => selectTeam(t.name) },
       [...t.name][0].toUpperCase(), teamTone(s) ? el("span", { class: "dot " + teamTone(s), "aria-hidden": "true" }) : null));
   }))));
 }
@@ -326,7 +328,7 @@ function memberRows(t, b) {
 
 function teamRow({ t, b, at }) {
   const s = b && b.taskSummary;
-  const current = t.name === state.team;
+  const current = !disposeSettings && t.name === state.team;
   const members = b ? b.members : [];
   // As in Magpie's sidebar, only the open team shows its members, under it;
   // clicking the open team folds or unfolds them.
@@ -383,7 +385,7 @@ function renderRail() {
   renderRailTools();
   const rows = orderedTeams();
   const minute = Math.floor(Date.now() / 60000);
-  if (!changed("rail", [rows.map((r) => [r.t, r.b && [r.b.taskSummary, r.b.members], r.at]), state.team, state.railOpen,
+  if (!changed("rail", [rows.map((r) => [r.t, r.b && [r.b.taskSummary, r.b.members], r.at]), state.team, state.railOpen, Boolean(disposeSettings),
     rail.sort, [...rail.pins], [...rail.folded], rail.shown, rail.query, rail.searching, minute])) return;
   closeMenu();
   if (rows.length && !state.railOpen) { renderMiniRail(rows); return; }
@@ -1070,6 +1072,7 @@ function ledgerKeys(e) {
 
 /* ---------------- update loop ---------------- */
 function update() {
+  if (disposeSettings) return;
   const board = state.boards[state.team];
   if (!board || !$("board")) return;
   renderHead(board);
@@ -1084,6 +1087,7 @@ function update() {
   renderInspector(records);
 }
 function showNotice(text, error = false) {
+  if (disposeSettings) return;
   $("main").replaceChildren(el("div", { class: "notice" + (error ? " error" : " muted") }, text));
 }
 async function loadTeams() {
@@ -1097,7 +1101,7 @@ async function refreshSelected() {
   if (!state.team) return;
   try {
     await loadBoard(state.team);
-    if (!$("board")) buildMain();
+    if (!disposeSettings && !$("board")) buildMain();
     update();
     renderRail();
   } catch (e) {
@@ -1109,6 +1113,7 @@ async function refreshOthers() {
   renderRail();
 }
 function selectTeam(name) {
+  closeSettings();
   if (name === state.team) return;
   state.team = name;
   rail.folded.delete(name);
@@ -1126,9 +1131,48 @@ function selectTeam(name) {
 
 /* ---------------- views and live terminals ---------------- */
 function writeURL() {
-  const q = new URLSearchParams({ team: state.team });
-  if (state.view !== "board") q.set("view", state.view);
+  const q = new URLSearchParams();
+  if (state.team) q.set("team", state.team);
+  if (disposeSettings) {
+    q.set("view", "settings");
+    q.set("tab", state.settingsTab);
+  } else if (state.view !== "board") q.set("view", state.view);
   history.replaceState(null, "", "?" + q);
+}
+
+function showSettings(focus = true) {
+  if (disposeSettings) return;
+  disposeTerminals();
+  const trigger = $("rail-settings");
+  trigger.setAttribute("aria-current", "page");
+  disposeSettings = mountSettings($("main"), $("rail-settings-tabs"), el, state.settingsTab, (tab) => {
+    state.settingsTab = tab;
+    writeURL();
+  }, () => {
+    closeSettings();
+    trigger.focus();
+  });
+  writeURL();
+  renderRail();
+  if (focus) $("settings-title").focus();
+}
+
+function closeSettings() {
+  if (!disposeSettings) return;
+  disposeSettings();
+  disposeSettings = null;
+  $("rail-settings").removeAttribute("aria-current");
+  if (state.boards[state.team]) {
+    buildMain();
+    update();
+  } else if (state.team) {
+    showNotice("Loading " + state.team + "…");
+    refreshSelected();
+  } else {
+    showNotice("No teams yet. Create one with team-worker team spawn-team <name>.");
+  }
+  writeURL();
+  renderRail();
 }
 function setView(view) {
   if (state.view === view) return;
@@ -1227,8 +1271,9 @@ function showTerminal(team, name) {
 }
 window.addEventListener("pagehide", disposeTerminals);
 $("rail-toggle").addEventListener("click", () => setRail(!state.railOpen));
-$("rail-settings").addEventListener("click", (event) => openSettings(event.currentTarget, el));
+$("rail-settings").addEventListener("click", () => showSettings());
 setRail(state.railOpen);
+if (initialView === "settings") showSettings(false);
 
 api("api/host").then((h) => { setBoardHost(h); state.keys = {}; update(); renderRail(); }).catch(() => {});
 // Older servers have no /api/links; the header then simply shows none.

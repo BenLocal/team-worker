@@ -56,6 +56,7 @@ func newHandler(c *client.Client, terminals http.Handler) http.Handler {
 	})
 	mux.HandleFunc("GET /api/service-keys", serviceKeys)
 	chatRoutes(mux, c)
+	vikunjaRoutes(mux, c)
 	mux.HandleFunc("GET /api/service-auth/magpie", magpieAuth)
 	mux.HandleFunc("GET /api/openbao/login", openbaoLogin)
 	if terminals != nil {

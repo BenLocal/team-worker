@@ -55,7 +55,8 @@ type Server struct {
 	conduct               conductors
 	memory                memberMemory
 	// restoreMu keeps restores from resuming the same agent twice.
-	restoreMu sync.Mutex
+	restoreMu         sync.Mutex
+	vikunjaSettingsMu sync.Mutex
 }
 
 // New wires the store's change notifications into a hub and registers
@@ -227,6 +228,7 @@ func (s *Server) routes() {
 	s.checkpointRoutes()
 	s.costRoutes(m)
 	s.chatRoutes()
+	s.vikunjaSettingsRoutes()
 	s.harnessRoutes(m)
 }
 

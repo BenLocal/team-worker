@@ -86,7 +86,7 @@ button, input, select { font: inherit; color: inherit; }
 .rail-footer { margin-top: auto; flex: none; border-top: 1px solid var(--line); padding-top: 8px; }
 .rail-settings { width: 100%; display: flex; align-items: center; gap: 9px; padding: 7px 8px; border: 0;
   border-radius: 7px; background: none; color: var(--fg-2); text-align: left; cursor: pointer; }
-.rail-settings:hover { color: var(--fg); background: var(--pill); }
+.rail-settings:hover, .rail-settings[aria-current="page"] { color: var(--fg); background: var(--pill); }
 body.rail-collapsed .rail-settings { justify-content: center; }
 body.rail-collapsed .rail-settings span { display: none; }
 /* Teams are rows of Magpie's sidebar: an icon, the name and a count; the
@@ -371,21 +371,31 @@ body.rail-collapsed #rail-tools { display: none; }
 .prompt-body.loading, .prompt-body.empty { color: var(--muted); font-style: italic; }
 .prompt-body.error { color: var(--red); font-style: normal; }
 .service-keys .prompt-head h2 { flex: 1; }
-.prompt-dialog.chat-settings { position: fixed; inset: 0; margin: 0; width: 100%; max-width: none;
-  height: 100dvh; max-height: none; border-radius: 0; box-shadow: none; }
-.chat-settings .prompt-card { height: 100%; max-height: none; }
-.chat-settings .prompt-head { align-items: center; padding-inline: clamp(16px, 5vw, 64px); }
-.chat-settings .prompt-head h2 { flex: 1; font-size: 17px; }
-.chat-settings .prompt-body { flex: 1; white-space: normal; padding: clamp(20px, 5vw, 56px) 16px 36px;
-  font-family: inherit; }
-.chat-settings-pane { width: min(100%, 680px); margin: 0 auto; }
-.chat-settings h3 { margin: 0 0 6px; color: var(--fg); font-size: 22px; }
+.settings-rail { display: grid; gap: 2px; margin: 5px 0 0 15px; padding-left: 10px; border-left: 1px solid var(--line); }
+.settings-rail button, .settings-inline button { border: 0; background: none; padding: 6px 9px;
+  border-radius: 6px; color: var(--muted); text-align: left; cursor: pointer; }
+.settings-rail button:hover, .settings-inline button:hover { color: var(--fg); }
+.settings-rail button[aria-current="page"], .settings-inline button[aria-current="page"] {
+  background: var(--pill); color: var(--fg); }
+.settings-inline { display: none; align-self: start; gap: 4px; padding: 2px; border-radius: 8px; border: 1px solid var(--line); }
+body.rail-collapsed .settings-rail { display: none; }
+body.rail-collapsed .settings-inline { display: flex; }
+.settings-page { flex: 1; min-height: 0; overflow: auto; padding: 22px 0; }
+.settings-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 0 14px;
+  margin-bottom: 18px; border-bottom: 1px solid var(--line); }
+.settings-head h1 { margin: 0; font-size: 22px; font-weight: 600; }
+.settings-content { width: min(100%, 760px); }
+.settings-pane { padding: clamp(14px, 2.5vw, 24px); border: 1px solid var(--line); border-radius: 10px; background: var(--card); }
+.settings-pane h3 { margin: 0 0 12px; color: var(--fg); font-size: 17px; font-weight: 600; }
+.settings-inline + .settings-content { margin-top: 14px; }
 .chat-status { color: var(--muted); margin: 0 0 18px; }
 .chat-form { display: grid; gap: 12px; }
 .chat-form label { display: grid; gap: 5px; }
-.chat-form input {
+.chat-form input, .chat-form select, .chat-form textarea {
   width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px;
   background: var(--bg); color: var(--fg); font: inherit; }
+.vikunja-settings .muted { margin: 6px 0 0; }
+.vikunja-settings textarea { resize: vertical; }
 .chat-form > p { margin: 0; }
 .chat-actions { display: flex; align-items: center; gap: 8px; }
 .chat-feedback { min-height: 1.4em; margin: 0; color: var(--muted); }
@@ -399,6 +409,8 @@ body.rail-collapsed #rail-tools { display: none; }
 @media (max-width: 760px) {
   .prompt-dialog { width: calc(100vw - 16px); }
   .prompt-body { padding: 12px 14px 16px; }
+  .settings-rail { display: none; }
+  .settings-inline { display: flex; }
 }
 
 /* ---- approvals: decision requests, plans and join requests, one sub-tab each ---- */

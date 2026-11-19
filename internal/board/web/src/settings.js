@@ -1,30 +1,66 @@
-export function openSettings(trigger, el) {
-  const controller = new AbortController();
-  const dialog = el("dialog", { class: "prompt-dialog chat-settings", "aria-labelledby": "settings-title" });
-  const status = el("p", { class: "chat-status", role: "status" }, "Loading settings…");
-  const editor = el("div");
-  const blocked = el("section");
-  const pane = el("section", { class: "chat-settings-pane", "aria-labelledby": "feishu-settings-title" },
-    el("h3", { id: "feishu-settings-title" }, "Feishu integration"), status, editor, blocked);
-  dialog.append(el("div", { class: "prompt-card" },
-    el("header", { class: "prompt-head" }, el("h2", { id: "settings-title" }, "Settings"),
-      el("button", { class: "quiet-btn", type: "button", onclick: () => dialog.close() }, "Close")),
-    el("div", { class: "prompt-body" }, pane)));
-  document.body.append(dialog);
-  dialog.showModal();
+import { vikunjaSettings } from "./vikunja-settings.js";
 
-  let timer;
-  let settings;
-  let connections = [];
-  let appInfo;
+export function mountSettings(host, sidebar, el, initialTab, onSelect, onBack) {
+  const controller = new AbortController();
+  const { signal } = controller;
+  const content = el("div", { class: "settings-content" });
+  const tabs = [["feishu", "Feishu"], ["vikunja", "Vikunja"]];
+  const buttons = [];
+  const navigation = (className) => el("nav", { class: className, "aria-label": "Settings sections" },
+    tabs.map(([key, label]) => {
+      const button = el("button", { type: "button", "data-tab": key, onclick: () => {
+        show(key);
+        onSelect(key);
+      } }, label);
+      buttons.push(button);
+      return button;
+    }));
+  sidebar.replaceChildren(navigation("settings-rail"));
+  host.replaceChildren(el("div", { class: "settings-page" },
+    el("header", { class: "settings-head" },
+      el("h1", { id: "settings-title", tabindex: "-1" }, "Settings"),
+      el("button", { class: "quiet-btn", type: "button", onclick: onBack }, "Back")),
+    navigation("settings-inline"), content));
+
   const fetchJSON = async (path, options) => {
-    const response = await fetch(path, { cache: "no-store", signal: controller.signal, ...options });
+    const response = await fetch(path, { cache: "no-store", signal, ...options });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || response.statusText);
     return data;
   };
   const put = (path, data) => fetchJSON(path, { method: "PUT", headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data) });
+  const panes = new Map();
+  function show(key) {
+    if (!panes.has(key)) {
+      const pane = key === "vikunja" ? vikunjaSettings(el, fetchJSON, put, signal) : feishuSettings(el, fetchJSON, put, signal);
+      content.append(pane);
+      panes.set(key, pane);
+    }
+    for (const [name, pane] of panes) pane.hidden = name !== key;
+    for (const button of buttons) {
+      if (button.dataset.tab === key) button.setAttribute("aria-current", "page");
+      else button.removeAttribute("aria-current");
+    }
+  }
+  show(initialTab);
+  return () => {
+    controller.abort();
+    sidebar.replaceChildren();
+  };
+}
+
+function feishuSettings(el, fetchJSON, put, signal) {
+  const status = el("p", { class: "chat-status", role: "status" }, "Loading settings…");
+  const editor = el("div");
+  const blocked = el("section");
+  const pane = el("section", { class: "settings-pane", "aria-labelledby": "feishu-settings-title" },
+    el("h3", { id: "feishu-settings-title" }, "Feishu integration"), status, editor, blocked);
+
+  let timer;
+  let settings;
+  let connections = [];
+  let appInfo;
   const sameApp = (a, b) => a?.provider === b?.provider && a?.tenant === b?.tenant && a?.application === b?.application;
   const currentApp = () => {
     if (appInfo?.appId) return { provider: "feishu", tenant: "app-scoped", application: appInfo.appId };
@@ -89,7 +125,7 @@ export function openSettings(trigger, el) {
         await submit();
         renderStatus();
       } catch (error) {
-        if (controller.signal.aborted) return;
+        if (signal.aborted) return;
         feedback.classList.add("error");
         feedback.textContent = error.message;
       } finally {
@@ -98,15 +134,11 @@ export function openSettings(trigger, el) {
     } }, fields, el("div", { class: "chat-actions" }, save, navigation, feedback)));
   }
 
-  dialog.addEventListener("close", () => {
-    controller.abort();
-    clearInterval(timer);
-    dialog.remove();
-    trigger.focus({ preventScroll: true });
-  }, { once: true });
+  signal.addEventListener("abort", () => clearInterval(timer), { once: true });
   const metadata = fetchJSON("api/chat/feishu/app").catch(() => undefined);
   void Promise.all([fetchJSON("api/chat/settings"), fetchJSON("api/chat/connections"), metadata])
     .then(([saved, registered, info]) => {
+      if (signal.aborted) return;
       settings = saved;
       connections = registered;
       appInfo = info;
@@ -125,8 +157,9 @@ export function openSettings(trigger, el) {
           if (!sameApp(previous, currentApp())) renderForm();
           renderStatus();
         }).catch(() => {
-          if (!controller.signal.aborted) status.textContent = "Unable to check the Feishu connection";
+          if (!signal.aborted) status.textContent = "Unable to check the Feishu connection";
         });
       }, 5000);
-    }).catch((error) => { if (!controller.signal.aborted) status.textContent = error.message; });
+    }).catch((error) => { if (!signal.aborted) status.textContent = error.message; });
+  return pane;
 }
