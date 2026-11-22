@@ -200,6 +200,7 @@ func (s *Server) memoryTick(ctx context.Context, now time.Time) error {
 	for _, session := range sessions {
 		saved[sessionIdentity(session)] = session
 	}
+	var toReflect []model.MemoryIdentity
 	for _, id := range ids {
 		if err = ctx.Err(); err != nil {
 			return err
@@ -228,9 +229,26 @@ func (s *Server) memoryTick(ctx context.Context, now time.Time) error {
 			}
 			continue
 		}
-		if _, e = s.reflectMember(ctx, id, saved[id], true, now, reports[id]); e != nil {
-			s.log.Warn("scheduled reflection", "err", e)
+		toReflect = append(toReflect, id)
+	}
+	sem := s.memory.semaphore()
+	for _, id := range toReflect {
+		if ctx.Err() != nil {
+			return ctx.Err()
 		}
+		select {
+		case sem <- struct{}{}:
+		default:
+			continue
+		}
+		session := saved[id]
+		evidence := reports[id]
+		s.memory.reflectWG.Go(func() {
+			defer func() { <-sem }()
+			if _, e := s.reflectMember(ctx, id, session, true, now, evidence); e != nil && !errors.Is(e, memory.ErrConflict) {
+				s.log.Warn("scheduled reflection", "team", id.Team, "agent", id.Name, "err", e)
+			}
+		})
 	}
 	return nil
 }

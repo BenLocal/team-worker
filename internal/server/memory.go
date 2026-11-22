@@ -12,12 +12,22 @@ import (
 )
 
 type memberMemory struct {
-	once      sync.Once
-	files     *memory.Manager
-	reflectMu sync.Mutex
-	running   map[model.MemoryIdentity]bool
-	gateMu    sync.Mutex
-	gates     map[model.MemoryIdentity]*sync.Mutex
+	once        sync.Once
+	files       *memory.Manager
+	reflectMu   sync.Mutex
+	running     map[model.MemoryIdentity]bool
+	gateMu      sync.Mutex
+	gates       map[model.MemoryIdentity]*sync.Mutex
+	reflectOnce sync.Once
+	reflectSem  chan struct{}
+	reflectWG   sync.WaitGroup
+}
+
+func (m *memberMemory) semaphore() chan struct{} {
+	m.reflectOnce.Do(func() {
+		m.reflectSem = make(chan struct{}, 2)
+	})
+	return m.reflectSem
 }
 
 func (s *Server) memoryFiles() *memory.Manager {

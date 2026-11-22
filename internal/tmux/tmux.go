@@ -3,6 +3,8 @@ package tmux
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,11 +14,21 @@ import (
 	"unicode"
 )
 
+// CommandTimeout bounds individual tmux CLI invocations so a stalled tmux
+// server cannot block the daemon indefinitely.
+var CommandTimeout = 5 * time.Second
+
 func run(args ...string) (string, error) {
-	cmd := exec.Command("tmux", args...)
+	ctx, cancel := context.WithTimeout(context.Background(), CommandTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "tmux", args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	cmd.WaitDelay = time.Second
 	if err := cmd.Run(); err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return "", fmt.Errorf("tmux %s: timed out after %s", args[0], CommandTimeout)
+		}
 		msg := strings.TrimSpace(stderr.String())
 		if msg == "" {
 			msg = err.Error()

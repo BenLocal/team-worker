@@ -27,6 +27,13 @@ var errNoVikunjaHooks = errors.New("No Vikunja hooks ready for delivery")
 // DeliverVikunjaHooks moves up to 32 events to their current leaders' inboxes.
 // Inbox writes and queue acknowledgments commit together so either both survive or neither does.
 func (s *Store) DeliverVikunjaHooks(ctx context.Context) error {
+	var pending bool
+	if err := s.db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM vikunja_hooks WHERE delivered = 0)").Scan(&pending); err != nil {
+		return err
+	}
+	if !pending {
+		return nil
+	}
 	err := s.write(ctx, func(tx *sql.Tx) error {
 		hooks, err := pendingVikunjaHooks(ctx, tx)
 		if err != nil {

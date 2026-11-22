@@ -158,41 +158,46 @@ func (s *Server) agentScreen(w http.ResponseWriter, r *http.Request) {
 // or of one agent's, read from this machine's session files.
 func (s *Server) syncCosts(w http.ResponseWriter, r *http.Request) {
 	team, only := r.PathValue("team"), r.URL.Query().Get("agent")
-	agents, err := s.store.ListAgents(r.Context(), team)
+	recorded, err := s.syncTeamCosts(r.Context(), team, only)
 	if err != nil {
 		respond(w, nil, err)
 		return
+	}
+	respond(w, map[string]any{"team": team, "recorded": recorded}, nil)
+}
+
+func (s *Server) syncTeamCosts(ctx context.Context, team, only string) ([]model.CostEvent, error) {
+	agents, err := s.store.ListAgents(ctx, team)
+	if err != nil {
+		return nil, err
 	}
 	recorded := []model.CostEvent{}
 	for _, a := range agents {
 		if only != "" && a.Name != only {
 			continue
 		}
-		session, err := s.captureSession(r.Context(), team, a.Name)
+		session, err := s.captureSession(ctx, team, a.Name)
 		if store.KindOf(err) == store.KindNotFound {
 			continue
 		}
 		if err != nil {
-			respond(w, nil, err)
-			return
+			return nil, err
 		}
 		t, ok, err := usage.Session(session.Client, session.SessionID)
 		if err != nil {
-			respond(w, nil, err)
-			return
+			return nil, err
 		}
 		if !ok {
 			continue
 		}
-		e, err := s.store.RecordSessionUsage(r.Context(), team, model.CostEvent{
+		e, err := s.store.RecordSessionUsage(ctx, team, model.CostEvent{
 			AgentName: a.Name, Provider: t.Provider, Model: t.Model, SessionID: session.SessionID,
 			InputTokens: t.Input, OutputTokens: t.Output,
 		})
 		if err != nil {
-			respond(w, nil, err)
-			return
+			return nil, err
 		}
 		recorded = append(recorded, e)
 	}
-	respond(w, map[string]any{"team": team, "recorded": recorded}, nil)
+	return recorded, nil
 }

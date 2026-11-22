@@ -54,6 +54,7 @@ func TestScheduledReflectionPersistsAndDoesNotRepeat(t *testing.T) {
 	if err = srv.memoryTick(context.Background(), now); err != nil {
 		t.Fatal(err)
 	}
+	srv.memory.reflectWG.Wait()
 	state, err := files.ReflectionState(id, nil)
 	if err != nil || state.Latest.Status != "pending" {
 		t.Fatalf("%+v %v", state, err)
@@ -64,6 +65,7 @@ func TestScheduledReflectionPersistsAndDoesNotRepeat(t *testing.T) {
 	if err = srv.memoryTick(context.Background(), now); err != nil {
 		t.Fatal(err)
 	}
+	srv.memory.reflectWG.Wait()
 	state, err = srv.memoryFiles().ReflectionState(id, nil)
 	if err != nil || state.Latest.Status != "applied" {
 		t.Fatalf("%+v %v", state, err)
@@ -71,6 +73,7 @@ func TestScheduledReflectionPersistsAndDoesNotRepeat(t *testing.T) {
 	if err = srv.memoryTick(context.Background(), now); err != nil {
 		t.Fatal(err)
 	}
+	srv.memory.reflectWG.Wait()
 	state, err = srv.memoryFiles().ReflectionState(id, nil)
 	if err != nil || state.Attempts != 1 {
 		t.Fatalf("repeated reflection: %+v %v", state, err)

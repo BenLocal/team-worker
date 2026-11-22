@@ -147,6 +147,8 @@ func Run(ctx context.Context, opts Options) error {
 	workers.Go(func() { handler.runMemory(baseCtx) })
 	workers.Go(func() { runCheckpoints(baseCtx, st, log) })
 	workers.Go(func() { runVikunjaHooks(baseCtx, st, log) })
+	workers.Go(func() { runMaintenance(baseCtx, st, log) })
+	workers.Go(func() { runCostSync(baseCtx, handler, st, log) })
 	workers.Go(func() { NewNudger(st, log).Run(baseCtx) })
 	workers.Go(func() { NewAnnouncer(st, log).Run(baseCtx) })
 	workers.Go(func() { NewDeliverer(st, handler.hub, log).Run(baseCtx) })
@@ -180,6 +182,77 @@ func Run(ctx context.Context, opts Options) error {
 // ReapInterval is how often the daemon looks for agents that died without
 // running their exit hook, e.g. a killed tmux window.
 const ReapInterval = 10 * time.Second
+
+// MaintenanceInterval is how often the daemon prunes aged database records and
+// checkpoints the SQLite WAL.
+const MaintenanceInterval = 6 * time.Hour
+
+// CostSyncInterval is how often the daemon syncs session token usage for
+// running agents so budgets are enforced even when agents stay alive long-term.
+const CostSyncInterval = 5 * time.Minute
+
+func runMaintenance(ctx context.Context, st *store.Store, log *slog.Logger) {
+	initial := time.NewTimer(time.Minute)
+	defer initial.Stop()
+	select {
+	case <-ctx.Done():
+		return
+	case <-initial.C:
+	}
+	run := func() {
+		stats, err := st.Maintain(ctx, store.DefaultEventRetention)
+		if err != nil {
+			if ctx.Err() == nil {
+				log.Warn("store maintenance", "err", err)
+			}
+			return
+		}
+		if stats.Total() > 0 {
+			log.Info("store maintenance", "events_deleted", stats.EventsDeleted,
+				"vikunja_deleted", stats.VikunjaDeleted, "idempotency_deleted", stats.IdempotencyDeleted)
+		}
+	}
+	run()
+	ticker := time.NewTicker(MaintenanceInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			run()
+		}
+	}
+}
+
+func runCostSync(ctx context.Context, handler *Server, st *store.Store, log *slog.Logger) {
+	ticker := time.NewTicker(CostSyncInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			agents, err := st.RunningAgents(ctx)
+			if err != nil {
+				if ctx.Err() == nil {
+					log.Warn("cost sync: list running agents", "err", err)
+				}
+				continue
+			}
+			seen := map[string]bool{}
+			for _, a := range agents {
+				if seen[a.Team] {
+					continue
+				}
+				seen[a.Team] = true
+				if _, err := handler.syncTeamCosts(ctx, a.Team, ""); err != nil && ctx.Err() == nil {
+					log.Debug("cost sync", "team", a.Team, "err", err)
+				}
+			}
+		}
+	}
+}
 
 func reapLoop(ctx context.Context, st *store.Store, log *slog.Logger) {
 	ticker := time.NewTicker(ReapInterval)

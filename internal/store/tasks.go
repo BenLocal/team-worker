@@ -147,6 +147,17 @@ func (s *Store) UpdateTask(ctx context.Context, team, id string, in UpdateTaskIn
 			return model.Task{}, invalidf("Submit a wait review separately from task changes")
 		}
 	}
+	var (
+		preCheckedHolder string
+		preCheckedDead   bool
+		preCheckedErr    error
+	)
+	if in.Status != nil && *in.Status == model.StatusInProgress && !in.Force {
+		if existing, preErr := getTask(ctx, s.db, team, id); preErr == nil && existing.LockedBy != "" && existing.LockedBy != in.Caller {
+			preCheckedHolder = existing.LockedBy
+			preCheckedDead, preCheckedErr = s.lockHolderDead(ctx, s.db, team, existing.LockedBy)
+		}
+	}
 	var t model.Task
 	err := s.write(ctx, func(tx *sql.Tx) error {
 		if err := requireTeam(ctx, tx, team); err != nil {
@@ -184,7 +195,13 @@ func (s *Store) UpdateTask(ctx context.Context, team, id string, in UpdateTaskIn
 					}
 				}
 				if t.LockedBy != "" && t.LockedBy != in.Caller && !in.Force {
-					dead, err := s.lockHolderDead(ctx, tx, team, t.LockedBy)
+					var dead bool
+					var err error
+					if t.LockedBy == preCheckedHolder && preCheckedErr == nil {
+						dead = preCheckedDead
+					} else {
+						dead, err = s.lockHolderDead(ctx, tx, team, t.LockedBy)
+					}
 					if err != nil {
 						return err
 					}

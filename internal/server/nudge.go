@@ -307,7 +307,8 @@ func (n *Nudger) checkCoordination(ctx context.Context, a model.Agent, st *nudge
 
 // checkBlocked tells the leader once when an agent has sat on a question or
 // permission prompt for StallAfter: nothing typed reaches it there, and only
-// someone at its terminal can answer. A blocked leader has nobody to tell.
+// someone at its terminal can answer. A blocked leader is escalated to the
+// operator inbox so a human can intervene.
 func (n *Nudger) checkBlocked(ctx context.Context, a model.Agent, st *nudgeState, now time.Time) {
 	if st.blockedSince.IsZero() {
 		st.blockedSince = now
@@ -320,6 +321,14 @@ func (n *Nudger) checkBlocked(ctx context.Context, a model.Agent, st *nudgeState
 		return
 	}
 	if leader.Name == a.Name {
+		content := fmt.Sprintf("%s (team leader) has been stopped at a question or permission prompt for %s. Look at it with "+
+			"`team-worker agent screen %s %s`; someone at its terminal has to answer, or restart it.",
+			a.Name, now.Sub(st.blockedSince).Round(time.Minute), a.Team, a.Name)
+		if _, err := n.Store.Send(ctx, a.Team, store.SendInput{From: "team-worker", To: store.OperatorInbox, Content: content}); err != nil {
+			n.Log.Warn("blocked leader report failed", "team", a.Team, "agent", a.Name, "err", err)
+			return
+		}
+		n.Log.Info("reported blocked leader to operator", "team", a.Team, "agent", a.Name)
 		st.blockedReported = true
 		return
 	}

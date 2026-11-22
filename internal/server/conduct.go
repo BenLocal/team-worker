@@ -74,7 +74,7 @@ func (s *Server) stopConducting(w http.ResponseWriter, r *http.Request) {
 	respond(w, map[string]bool{"stopped": ok}, nil)
 }
 
-// Close stops the harness conductors and waits for them.
+// Close stops the harness conductors and background reflection workers and waits for them.
 func (s *Server) Close() {
 	c := &s.conduct
 	c.mu.Lock()
@@ -83,4 +83,5 @@ func (s *Server) Close() {
 	}
 	c.mu.Unlock()
 	c.wg.Wait()
+	s.memory.reflectWG.Wait()
 }

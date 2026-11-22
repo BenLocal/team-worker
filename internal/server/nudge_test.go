@@ -229,6 +229,21 @@ func TestLeaderStuckOnAPromptIsNotReportedToItself(t *testing.T) {
 	if got := leaderMessages(t, st); len(got) != 0 {
 		t.Fatalf("told the leader about itself: %+v", got)
 	}
+	opMsgs, err := st.Peek(context.Background(), "demo", store.OperatorInbox, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(opMsgs) != 1 || !strings.Contains(opMsgs[0].Content, "leader") || !strings.Contains(opMsgs[0].Content, "team leader") {
+		t.Fatalf("want 1 operator escalation about blocked leader, got %+v", opMsgs)
+	}
+	advance(n, now, time.Hour)
+	opMsgs, err = st.Peek(context.Background(), "demo", store.OperatorInbox, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(opMsgs) != 1 {
+		t.Fatalf("blocked leader reported to operator more than once: %+v", opMsgs)
+	}
 }
 
 func TestRegisteredWaitAndGoalDoNotCauseStallReminder(t *testing.T) {
