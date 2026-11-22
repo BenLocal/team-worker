@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/benlocal/team-worker/internal/model"
@@ -75,24 +76,68 @@ func (a *AutoReviewer) Run(ctx context.Context) {
 }
 
 // Drain reviews every request waiting for the reviewer whose team is
-// inside its window, oldest first.
+// inside its window, oldest first per team, with bounded concurrency across teams.
 func (a *AutoReviewer) Drain(ctx context.Context) error {
 	items, err := a.Store.AutoReviewQueue(ctx)
 	if err != nil {
 		return err
 	}
+	now := a.Now()
+	byTeam := map[string][]store.AutoReviewItem{}
+	var order []string
 	for _, item := range items {
-		if ctx.Err() != nil {
-			return nil
-		}
-		if !item.Setting.Active(a.Now()) {
+		if !item.Setting.Active(now) {
 			continue
 		}
-		if err := a.review(ctx, item); err != nil {
-			return err
+		if _, seen := byTeam[item.Request.Team]; !seen {
+			order = append(order, item.Request.Team)
 		}
+		byTeam[item.Request.Team] = append(byTeam[item.Request.Team], item)
 	}
-	return nil
+	if len(order) == 0 {
+		return nil
+	}
+	if len(order) == 1 {
+		for _, item := range byTeam[order[0]] {
+			if ctx.Err() != nil {
+				return nil
+			}
+			if err := a.review(ctx, item); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	sem := make(chan struct{}, 4)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var firstErr error
+	for _, team := range order {
+		teamItems := byTeam[team]
+		wg.Go(func() {
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				return
+			}
+			for _, item := range teamItems {
+				if ctx.Err() != nil {
+					return
+				}
+				if err := a.review(ctx, item); err != nil {
+					mu.Lock()
+					if firstErr == nil {
+						firstErr = err
+					}
+					mu.Unlock()
+					return
+				}
+			}
+		})
+	}
+	wg.Wait()
+	return firstErr
 }
 
 // reviewVerdict is the JSON object the model answers with.

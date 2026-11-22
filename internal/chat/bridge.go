@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -367,6 +368,13 @@ func (b *Bridge) deliverNotices(ctx context.Context, bindingID string) error {
 }
 
 func (b *Bridge) sync(ctx context.Context, online bool) error {
+	if err := b.syncCore(ctx, online); err != nil {
+		return err
+	}
+	return b.syncAssistant(ctx, online)
+}
+
+func (b *Bridge) syncCore(ctx context.Context, online bool) error {
 	settings, err := b.Store.ChatSettings(ctx)
 	if err != nil {
 		return err
@@ -408,12 +416,6 @@ func (b *Bridge) sync(ctx context.Context, online bool) error {
 		if err := b.sendTeamReplies(ctx); err != nil {
 			return err
 		}
-		if err := b.runAssistantJobs(ctx, "assistant-read"); err != nil {
-			return err
-		}
-		if err := b.runAssistantJobs(ctx, "assistant-write"); err != nil {
-			return err
-		}
 	}
 	for _, binding := range settings.Bindings {
 		if binding.ChatAccount != b.Account || !binding.Notify || binding.NoticeID == "" {
@@ -432,6 +434,16 @@ func (b *Bridge) sync(ctx context.Context, online bool) error {
 		}
 	}
 	return nil
+}
+
+func (b *Bridge) syncAssistant(ctx context.Context, online bool) error {
+	if !online {
+		return nil
+	}
+	if err := b.runAssistantJobs(ctx, "assistant-read"); err != nil {
+		return err
+	}
+	return b.runAssistantJobs(ctx, "assistant-write")
 }
 
 func (b *Bridge) sendQueuedReplies(ctx context.Context, kind string) error {
@@ -469,12 +481,32 @@ func (b *Bridge) sendQueuedReplies(ctx context.Context, kind string) error {
 func (b *Bridge) Run(ctx context.Context, online func() bool) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
-	registered := false
+	var registered atomic.Bool
+	var assistantWG sync.WaitGroup
+	defer assistantWG.Wait()
+	assistantWG.Go(func() {
+		assistantTicker := time.NewTicker(2 * time.Second)
+		defer assistantTicker.Stop()
+		for {
+			if registered.Load() {
+				if err := b.syncAssistant(ctx, online()); err != nil && ctx.Err() == nil {
+					b.Log.Warn("sync chat assistant", "provider", b.Account.Provider, "err", err)
+				}
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-assistantTicker.C:
+			}
+		}
+	})
 	for {
 		up := online()
-		registered = registered || up
-		if registered {
-			if err := b.sync(ctx, up); err != nil && ctx.Err() == nil {
+		if up {
+			registered.Store(true)
+		}
+		if registered.Load() {
+			if err := b.syncCore(ctx, up); err != nil && ctx.Err() == nil {
 				b.Log.Warn("sync chat integration", "provider", b.Account.Provider, "err", err)
 			}
 		}

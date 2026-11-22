@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -87,5 +88,31 @@ func TestRequestLogLevels(t *testing.T) {
 	call(t, ts, "POST", "/v1/teams/demo/inboxes/leader/receive?wait=200ms", "")
 	if strings.Contains(buf.String(), "slow request") || !strings.Contains(buf.String(), `level=DEBUG msg=request`) {
 		t.Fatalf("a long poll is not slow:\n%s", buf.String())
+	}
+}
+
+func TestMetricsAndBodyLimit(t *testing.T) {
+	ts, _ := newLoggedServer(t, slog.LevelWarn)
+	resp, err := ts.Client().Get(ts.URL + "/v1/metrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /v1/metrics status = %d, want 200", resp.StatusCode)
+	}
+	var m map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&m); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"uptimeSeconds", "goroutines", "hubVersion", "runningAgents", "dbBytes", "walBytes"} {
+		if _, ok := m[key]; !ok {
+			t.Fatalf("metrics missing key %q: %+v", key, m)
+		}
+	}
+
+	oversized := `{"name":"` + strings.Repeat("a", MaxRequestBodyBytes+10) + `"}`
+	if status := call(t, ts, "POST", "/v1/teams", oversized); status != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized body status = %d, want 413", status)
 	}
 }

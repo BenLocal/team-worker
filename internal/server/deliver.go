@@ -45,12 +45,29 @@ func NewDeliverer(st *store.Store, hub *Hub, log *slog.Logger) *Deliverer {
 }
 
 // DeliverInterval is how often the daemon looks for agents that started or
-// stopped.
+// stopped when no Hub is attached.
 const DeliverInterval = 2 * time.Second
+
+// DeliverFallbackInterval is the safety poll interval when Hub wakeups are active.
+const DeliverFallbackInterval = 30 * time.Second
 
 // Run keeps one goroutine per agent run until ctx ends, then waits for them.
 func (d *Deliverer) Run(ctx context.Context) {
 	defer d.wg.Wait()
+	if d.Hub != nil {
+		ticker := time.NewTicker(DeliverFallbackInterval)
+		defer ticker.Stop()
+		for {
+			changed, _ := d.Hub.Changed()
+			d.Sync(ctx)
+			select {
+			case <-ctx.Done():
+				return
+			case <-changed:
+			case <-ticker.C:
+			}
+		}
+	}
 	ticker := time.NewTicker(DeliverInterval)
 	defer ticker.Stop()
 	for {

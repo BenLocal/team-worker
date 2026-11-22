@@ -160,7 +160,9 @@ func (a *app) supervise(ctx context.Context, team, name, runID, paste string, co
 		// `agent stop` may run on another machine; it can only record the
 		// request, so this machine ends the child when it sees one.
 		watchDone := make(chan struct{})
-		go watchStop(childCtx, watchDone, cancelChild, func() (model.Agent, error) { return c.GetAgent(ctx, team, name) }, runID)
+		go watchStopWithChanges(childCtx, watchDone, cancelChild,
+			func() (model.Agent, error) { return c.GetAgent(ctx, team, name) },
+			c.Changes, runID)
 		readyCtx, readyCancel := context.WithCancel(ctx)
 		waitDone := make(chan error, 1)
 		go func() {
@@ -216,10 +218,14 @@ func (a *app) supervise(ctx context.Context, team, name, runID, paste string, co
 			restarts = 0
 		}
 		if restarts >= session.MaxRestarts {
-			return fmt.Errorf("keepalive restart limit reached after %d restart(s); last exit code %d", restarts, code)
+			reason := fmt.Sprintf("keepalive restart limit reached after %d restart(s); last exit code %d", restarts, code)
+			a.notifyKeepaliveStopped(ctx, c, team, name, reason)
+			return errors.New(reason)
 		}
 		if session.SessionID == "" {
-			return fmt.Errorf("keepalive cannot resume without an exact native session id; use session save")
+			reason := "keepalive cannot resume without an exact native session id; use session save"
+			a.notifyKeepaliveStopped(ctx, c, team, name, reason)
+			return errors.New(reason)
 		}
 		delay := time.Duration(session.RestartDelayMillis) * time.Millisecond
 		if delay <= 0 {
@@ -378,5 +384,48 @@ func watchStop(ctx context.Context, done <-chan struct{}, cancel context.CancelF
 				return
 			}
 		}
+	}
+}
+
+// watchStopWithChanges waits on daemon store changes via long-polling so stop
+// requests take effect immediately without 2-second polling traffic, falling
+// back to stopPollInterval if the changes endpoint errors.
+func watchStopWithChanges(ctx context.Context, done <-chan struct{}, cancel context.CancelFunc, read func() (model.Agent, error), changes func(context.Context, uint64, time.Duration) (uint64, error), runID string) {
+	var version uint64
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-done:
+			return
+		default:
+		}
+		if rec, err := read(); err == nil && (rec.StopRequested || rec.RunID != runID) {
+			cancel()
+			return
+		}
+		next, err := changes(ctx, version, 30*time.Second)
+		if err != nil {
+			if !waitRetry(ctx, stopPollInterval) {
+				return
+			}
+			continue
+		}
+		version = next
+	}
+}
+
+func (a *app) notifyKeepaliveStopped(ctx context.Context, c *client.Client, team, name, reason string) {
+	alertCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	to := store.OperatorInbox
+	if !config.IdentityFromEnv().IsLeader {
+		if leader, err := c.Leader(alertCtx, team); err == nil && leader.Name != "" && leader.Name != name {
+			to = leader.InboxName()
+		}
+	}
+	content := fmt.Sprintf("Agent '%s' stopped keepalive in team %s: %s", name, team, reason)
+	if _, err := c.Send(alertCtx, team, store.SendInput{From: "team-worker", To: to, Content: content}); err != nil {
+		fmt.Fprintf(a.errOut, "notify keepalive stop: %v\n", err)
 	}
 }

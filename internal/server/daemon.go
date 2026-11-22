@@ -99,6 +99,7 @@ func Run(ctx context.Context, opts Options) error {
 	httpSrv := &http.Server{
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       2 * time.Minute,
 		BaseContext:       func(net.Listener) context.Context { return context.WithValue(baseCtx, localAccess{}, true) },
 	}
 	servers := []*http.Server{httpSrv}
@@ -119,7 +120,7 @@ func Run(ctx context.Context, opts Options) error {
 		} else {
 			web.Handle("/", api)
 		}
-		servers = append(servers, &http.Server{Handler: web, ReadHeaderTimeout: 10 * time.Second,
+		servers = append(servers, &http.Server{Handler: web, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute,
 			BaseContext: func(net.Listener) context.Context { return baseCtx }})
 		listeners = append(listeners, tcp)
 		log.Info("HTTP API listening", "address", tcp.Addr().String(), "board", opts.Board)
@@ -150,7 +151,11 @@ func Run(ctx context.Context, opts Options) error {
 	workers.Go(func() { runMaintenance(baseCtx, st, log) })
 	workers.Go(func() { runCostSync(baseCtx, handler, st, log) })
 	workers.Go(func() { NewNudger(st, log).Run(baseCtx) })
-	workers.Go(func() { NewAnnouncer(st, log).Run(baseCtx) })
+	workers.Go(func() {
+		ann := NewAnnouncer(st, log)
+		ann.Hub = handler.hub
+		ann.Run(baseCtx)
+	})
 	workers.Go(func() { NewDeliverer(st, handler.hub, log).Run(baseCtx) })
 	workers.Go(func() { NewHookRunner(st, handler.hub, log).Run(baseCtx) })
 	workers.Go(func() { NewAutoReviewer(st, handler.hub, log).Run(baseCtx) })

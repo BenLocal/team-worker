@@ -11,8 +11,11 @@ import (
 	"github.com/benlocal/team-worker/internal/store"
 )
 
-// AnnounceInterval is how often the Announcer looks for new unassigned tasks.
+// AnnounceInterval is how often the Announcer polls when no Hub is attached.
 const AnnounceInterval = 2 * time.Second
+
+// AnnounceFallbackInterval is the safety poll interval when Hub wakeups are active.
+const AnnounceFallbackInterval = 30 * time.Second
 
 // Announcer tells each team's leader about pending tasks nobody owns that
 // appeared since its last look. The message goes to the leader's inbox, so a
@@ -21,6 +24,7 @@ const AnnounceInterval = 2 * time.Second
 // first seen are not announced: the leader reads the task list on start.
 type Announcer struct {
 	Store *store.Store
+	Hub   *Hub
 	Log   *slog.Logger
 	// seen holds each team's unassigned pending task IDs from the last round.
 	seen map[string]map[string]bool
@@ -30,8 +34,22 @@ func NewAnnouncer(st *store.Store, log *slog.Logger) *Announcer {
 	return &Announcer{Store: st, Log: log, seen: map[string]map[string]bool{}}
 }
 
-// Run announces new tasks every AnnounceInterval until ctx ends.
+// Run announces new tasks on Hub changes (or every AnnounceInterval without a Hub) until ctx ends.
 func (a *Announcer) Run(ctx context.Context) {
+	if a.Hub != nil {
+		ticker := time.NewTicker(AnnounceFallbackInterval)
+		defer ticker.Stop()
+		for {
+			changed, _ := a.Hub.Changed()
+			a.Tick(ctx)
+			select {
+			case <-ctx.Done():
+				return
+			case <-changed:
+			case <-ticker.C:
+			}
+		}
+	}
 	ticker := time.NewTicker(AnnounceInterval)
 	defer ticker.Stop()
 	for {

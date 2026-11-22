@@ -7,10 +7,13 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"os"
+	"runtime"
 	"strconv"
 	"sync"
 	"time"
 
+	"github.com/benlocal/team-worker/internal/config"
 	"github.com/benlocal/team-worker/internal/model"
 	"github.com/benlocal/team-worker/internal/proc"
 	"github.com/benlocal/team-worker/internal/store"
@@ -18,6 +21,9 @@ import (
 
 // MaxWait caps how long a long-poll request may block.
 const MaxWait = 60 * time.Second
+
+// MaxRequestBodyBytes bounds JSON payloads accepted by /v1/ endpoints.
+const MaxRequestBodyBytes = 8 << 20
 
 // Hub wakes long-poll requests whenever the store commits a write and
 // counts writes, so clients can ask whether anything changed since a version.
@@ -52,6 +58,7 @@ type Server struct {
 	log   *slog.Logger
 	// runDataDir and workerBin configure the agents it starts (SetRunner).
 	runDataDir, workerBin string
+	startedAt             time.Time
 	conduct               conductors
 	memory                memberMemory
 	// restoreMu keeps restores from resuming the same agent twice.
@@ -65,7 +72,7 @@ func New(s *store.Store, log *slog.Logger) *Server {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	srv := &Server{store: s, hub: NewHub(), mux: http.NewServeMux(), log: log,
+	srv := &Server{store: s, hub: NewHub(), mux: http.NewServeMux(), log: log, startedAt: time.Now(),
 		conduct: conductors{running: map[string]context.CancelFunc{}}}
 	s.OnChange = srv.hub.Notify
 	srv.routes()
@@ -144,6 +151,7 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /v1/health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
+	m.HandleFunc("GET /v1/metrics", s.metrics)
 
 	m.HandleFunc("GET /v1/changes", s.changes)
 
@@ -245,6 +253,11 @@ func (s *Server) changes(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		wait = min(d, MaxWait)
+	}
+	if wait == 0 {
+		_, version := s.hub.Changed()
+		respond(w, map[string]uint64{"version": version}, nil)
+		return
 	}
 	timer := time.NewTimer(wait)
 	defer timer.Stop()
@@ -634,8 +647,40 @@ func (s *Server) receive(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
+	_, hubVersion := s.hub.Changed()
+	runningCount := 0
+	if agents, err := s.store.RunningAgents(r.Context()); err == nil {
+		runningCount = len(agents)
+	}
+	var dbBytes, walBytes int64
+	if s.runDataDir != "" {
+		dbPath := config.DBPath(s.runDataDir)
+		if info, err := os.Stat(dbPath); err == nil {
+			dbBytes = info.Size()
+		}
+		if info, err := os.Stat(dbPath + "-wal"); err == nil {
+			walBytes = info.Size()
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"uptimeSeconds": int64(time.Since(s.startedAt).Seconds()),
+		"goroutines":    runtime.NumGoroutine(),
+		"hubVersion":    hubVersion,
+		"runningAgents": runningCount,
+		"dbBytes":       dbBytes,
+		"walBytes":      walBytes,
+	})
+}
+
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, MaxRequestBodyBytes)
 	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
+			return false
+		}
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return false
 	}

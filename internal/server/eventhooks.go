@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/benlocal/team-worker/internal/model"
@@ -61,7 +62,8 @@ func (h *HookRunner) Run(ctx context.Context) {
 	}
 }
 
-// Drain runs the hooks of every recorded event, oldest first.
+// Drain runs the hooks of every recorded event, oldest first per team,
+// with bounded concurrency across teams.
 func (h *HookRunner) Drain(ctx context.Context) error {
 	for {
 		events, err := h.Store.PendingEvents(ctx, 50)
@@ -74,28 +76,78 @@ func (h *HookRunner) Drain(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		byTeam := map[string][]model.Event{}
+		var order []string
 		for _, e := range events {
-			for _, hook := range hooks {
-				if !hook.Matches(e.Type, e.Team) {
-					continue
-				}
-				res := h.Exec(ctx, hook, e.Payload)
-				if ctx.Err() != nil {
-					// Shutting down: keep the event so the next start runs it.
-					return nil
-				}
-				if res.Error != "" || res.ExitCode != 0 {
-					h.Log.Warn("event hook failed", "event", e.Type, "team", e.Team, "hook", hook.ID,
-						"exit_code", res.ExitCode, "err", res.Error, "output", res.Output)
-				} else {
-					h.Log.Debug("event hook ran", "event", e.Type, "team", e.Team, "hook", hook.ID)
-				}
+			if _, seen := byTeam[e.Team]; !seen {
+				order = append(order, e.Team)
 			}
-			if err := h.Store.EventDone(ctx, e.ID); err != nil {
+			byTeam[e.Team] = append(byTeam[e.Team], e)
+		}
+		if len(order) == 1 {
+			if err := h.drainEvents(ctx, byTeam[order[0]], hooks); err != nil {
 				return err
 			}
+			if ctx.Err() != nil {
+				return nil
+			}
+			continue
+		}
+		sem := make(chan struct{}, 4)
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+		var firstErr error
+		for _, team := range order {
+			teamEvents := byTeam[team]
+			wg.Go(func() {
+				select {
+				case sem <- struct{}{}:
+					defer func() { <-sem }()
+				case <-ctx.Done():
+					return
+				}
+				if err := h.drainEvents(ctx, teamEvents, hooks); err != nil {
+					mu.Lock()
+					if firstErr == nil {
+						firstErr = err
+					}
+					mu.Unlock()
+				}
+			})
+		}
+		wg.Wait()
+		if firstErr != nil {
+			return firstErr
+		}
+		if ctx.Err() != nil {
+			return nil
 		}
 	}
+}
+
+func (h *HookRunner) drainEvents(ctx context.Context, events []model.Event, hooks []model.EventHook) error {
+	for _, e := range events {
+		for _, hook := range hooks {
+			if !hook.Matches(e.Type, e.Team) {
+				continue
+			}
+			res := h.Exec(ctx, hook, e.Payload)
+			if ctx.Err() != nil {
+				// Shutting down: keep the event so the next start runs it.
+				return nil
+			}
+			if res.Error != "" || res.ExitCode != 0 {
+				h.Log.Warn("event hook failed", "event", e.Type, "team", e.Team, "hook", hook.ID,
+					"exit_code", res.ExitCode, "err", res.Error, "output", res.Output)
+			} else {
+				h.Log.Debug("event hook ran", "event", e.Type, "team", e.Team, "hook", hook.ID)
+			}
+		}
+		if err := h.Store.EventDone(ctx, e.ID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // RunShellHook runs a hook's command with sh -c. The event goes to the
