@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -59,13 +60,21 @@ func KindOf(err error) Kind {
 type ProbeFunc func(a model.Agent) (alive, known bool)
 
 type Store struct {
-	db *sql.DB
+	db  *sql.DB
+	rdb *sql.DB
 	// Now returns the current time; tests replace it.
 	Now func() time.Time
 	// OnChange runs after every committed write.
 	OnChange func()
 	// Probe decides whether a task lock held by a running agent may be taken over.
 	Probe ProbeFunc
+}
+
+func (s *Store) readDB() *sql.DB {
+	if s.rdb != nil {
+		return s.rdb
+	}
+	return s.db
 }
 
 func Open(path string) (*Store, error) {
@@ -86,10 +95,27 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate %s: %w", path, err)
 	}
+	if path != ":memory:" && !strings.Contains(path, ":memory:") {
+		rdsn := "file:" + path +
+			"?_pragma=busy_timeout(5000)&_pragma=query_only(1)&_pragma=foreign_keys(1)"
+		rdb, err := sql.Open("sqlite", rdsn)
+		if err != nil {
+			db.Close()
+			return nil, err
+		}
+		rdb.SetMaxOpenConns(4)
+		s.rdb = rdb
+	}
 	return s, nil
 }
 
-func (s *Store) Close() error { return s.db.Close() }
+func (s *Store) Close() error {
+	var err error
+	if s.rdb != nil && s.rdb != s.db {
+		err = errors.Join(err, s.rdb.Close())
+	}
+	return errors.Join(err, s.db.Close())
+}
 
 // write runs fn in a transaction and fires OnChange after a successful commit.
 func (s *Store) write(ctx context.Context, fn func(tx *sql.Tx) error) error {

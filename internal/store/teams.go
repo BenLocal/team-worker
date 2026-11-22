@@ -176,7 +176,7 @@ func (s *Store) ListTeams(ctx context.Context) ([]model.TeamSummary, error) {
 // Overview summarizes every team: leader, member and task counts and the
 // messages waiting in its inboxes.
 func (s *Store) Overview(ctx context.Context) ([]model.TeamOverview, error) {
-	rows, err := s.db.QueryContext(ctx,
+	rows, err := s.readDB().QueryContext(ctx,
 		`SELECT t.name, t.description,
 		        COALESCE((SELECT m.name FROM members m WHERE m.team = t.name AND m.agent_id = t.lead_agent_id
 		                  ORDER BY m.seq LIMIT 1), ''),

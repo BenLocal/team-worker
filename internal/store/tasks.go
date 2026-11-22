@@ -385,7 +385,8 @@ type TaskFilter struct {
 
 // ListTasks returns tasks in creation order, or urgent-first with SortPriority.
 func (s *Store) ListTasks(ctx context.Context, team string, f TaskFilter) ([]model.Task, error) {
-	if err := requireTeam(ctx, s.db, team); err != nil {
+	rdb := s.readDB()
+	if err := requireTeam(ctx, rdb, team); err != nil {
 		return nil, err
 	}
 	query := "SELECT " + taskColumns + " FROM tasks WHERE team = ?"
@@ -403,7 +404,7 @@ func (s *Store) ListTasks(ctx context.Context, team string, f TaskFilter) ([]mod
 		args = append(args, f.Priority)
 	}
 	query += " ORDER BY rowid"
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := rdb.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -420,7 +421,7 @@ func (s *Store) ListTasks(ctx context.Context, team string, f TaskFilter) ([]mod
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	deps, err := teamDeps(ctx, s.db, team)
+	deps, err := teamDeps(ctx, rdb, team)
 	if err != nil {
 		return nil, err
 	}
@@ -449,6 +450,10 @@ func (s *Store) TaskStats(ctx context.Context, team string) (model.TaskStats, er
 	if err != nil {
 		return model.TaskStats{}, err
 	}
+	return computeTaskStats(tasks), nil
+}
+
+func computeTaskStats(tasks []model.Task) model.TaskStats {
 	st := model.TaskStats{Total: len(tasks)}
 	var sum float64
 	for _, t := range tasks {
@@ -479,7 +484,7 @@ func (s *Store) TaskStats(ctx context.Context, team string) (model.TaskStats, er
 	if st.TimedCompleted > 0 {
 		st.AvgDurationSeconds = math.Round(sum/float64(st.TimedCompleted)*100) / 100
 	}
-	return st, nil
+	return st
 }
 
 const taskColumns = `id, subject, description, status, priority, owner, locked_by, locked_at,
@@ -815,7 +820,7 @@ func (t teamScanner) Scan(dest ...any) error {
 // MemoryTaskEvidence gathers bounded completed-task reports in one query.
 // Ambiguous owner names are excluded rather than assigned to another user.
 func (s *Store) MemoryTaskEvidence(ctx context.Context) (map[model.MemoryIdentity]string, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT t.team, m.user_name, t.owner, t.id, t.subject, t.result
+	rows, err := s.readDB().QueryContext(ctx, `SELECT t.team, m.user_name, t.owner, t.id, t.subject, t.result
  FROM tasks t JOIN members m ON m.team = t.team AND m.name = t.owner
  WHERE t.status = ? AND t.result <> 'null'
  AND NOT EXISTS (SELECT 1 FROM members other WHERE other.team = m.team AND other.name = m.name AND other.user_name <> m.user_name)

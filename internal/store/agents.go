@@ -103,7 +103,7 @@ func (s *Store) RegisterAgent(ctx context.Context, a model.Agent) (model.Agent, 
 }
 
 func (s *Store) GetAgent(ctx context.Context, team, name string) (model.Agent, error) {
-	return getAgent(ctx, s.db, team, name)
+	return getAgent(ctx, s.readDB(), team, name)
 }
 
 func getAgent(ctx context.Context, q queryer, team, name string) (model.Agent, error) {
@@ -116,7 +116,7 @@ func getAgent(ctx context.Context, q queryer, team, name string) (model.Agent, e
 }
 
 func (s *Store) ListAgents(ctx context.Context, team string) ([]model.Agent, error) {
-	if err := requireTeam(ctx, s.db, team); err != nil {
+	if err := requireTeam(ctx, s.readDB(), team); err != nil {
 		return nil, err
 	}
 	return s.queryAgents(ctx, "SELECT "+agentColumns+" FROM agents WHERE team = ? ORDER BY started_at", team)
@@ -143,7 +143,7 @@ func (s *Store) RestorableAgents(ctx context.Context) ([]model.Agent, error) {
 }
 
 func (s *Store) queryAgents(ctx context.Context, query string, args ...any) ([]model.Agent, error) {
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := s.readDB().QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -162,11 +162,12 @@ func (s *Store) queryAgents(ctx context.Context, query string, args ...any) ([]m
 // InboxStats returns how many messages wait in an agent's inbox and the id
 // of the newest one, which grows whenever a new message arrives.
 func (s *Store) InboxStats(ctx context.Context, team, agent string) (count int, newest int64, err error) {
-	inbox, err := resolveInbox(ctx, s.db, team, agent, "")
+	rdb := s.readDB()
+	inbox, err := resolveInbox(ctx, rdb, team, agent, "")
 	if err != nil {
 		return 0, 0, err
 	}
-	err = s.db.QueryRowContext(ctx,
+	err = rdb.QueryRowContext(ctx,
 		"SELECT COUNT(*), COALESCE(MAX(id), 0) FROM messages WHERE team = ? AND inbox = ?", team, inbox,
 	).Scan(&count, &newest)
 	return count, newest, err
@@ -362,9 +363,7 @@ func (s *Store) Board(ctx context.Context, team string, messageLimit int) (model
 	if b.Tasks, err = s.ListTasks(ctx, team, TaskFilter{}); err != nil {
 		return b, err
 	}
-	if b.Stats, err = s.TaskStats(ctx, team); err != nil {
-		return b, err
-	}
+	b.Stats = computeTaskStats(b.Tasks)
 	if b.Messages, err = s.MessageLog(ctx, team, messageLimit, ""); err != nil {
 		return b, err
 	}
@@ -377,7 +376,7 @@ func (s *Store) Board(ctx context.Context, team string, messageLimit int) (model
 		byName[a.Name] = a
 	}
 	counts := map[string]int{}
-	rows, err := s.db.QueryContext(ctx,
+	rows, err := s.readDB().QueryContext(ctx,
 		"SELECT inbox, COUNT(*) FROM messages WHERE team = ? GROUP BY inbox", team)
 	if err != nil {
 		return b, err

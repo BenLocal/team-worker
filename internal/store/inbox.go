@@ -305,14 +305,15 @@ func (s *Store) ReceiveWith(ctx context.Context, team, agent, user string, limit
 
 // Peek returns pending messages without consuming them.
 func (s *Store) Peek(ctx context.Context, team, agent, user string) ([]model.Message, error) {
-	if err := requireTeam(ctx, s.db, team); err != nil {
+	rdb := s.readDB()
+	if err := requireTeam(ctx, rdb, team); err != nil {
 		return nil, err
 	}
-	inbox, err := resolveInbox(ctx, s.db, team, agent, user)
+	inbox, err := resolveInbox(ctx, rdb, team, agent, user)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx,
+	rows, err := rdb.QueryContext(ctx,
 		"SELECT id, body FROM messages WHERE team = ? AND inbox = ? ORDER BY id", team, inbox)
 	if err != nil {
 		return nil, err
@@ -323,7 +324,8 @@ func (s *Store) Peek(ctx context.Context, team, agent, user string) ([]model.Mes
 // MessageLog returns the newest limit sent messages, oldest first,
 // optionally only those from one sender.
 func (s *Store) MessageLog(ctx context.Context, team string, limit int, from string) ([]model.Message, error) {
-	if err := requireTeam(ctx, s.db, team); err != nil {
+	rdb := s.readDB()
+	if err := requireTeam(ctx, rdb, team); err != nil {
 		return nil, err
 	}
 	if limit <= 0 {
@@ -337,7 +339,7 @@ func (s *Store) MessageLog(ctx context.Context, team string, limit int, from str
 	}
 	query += " ORDER BY id DESC LIMIT ?"
 	args = append(args, limit)
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := rdb.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -359,12 +361,13 @@ type MessageLogPage struct {
 // MessageLogAfter reads the append-only message log without changing any inbox.
 func (s *Store) MessageLogAfter(ctx context.Context, team, cursor string, limit int, includeChatEvents bool) (MessageLogPage, error) {
 	page := MessageLogPage{Items: []MessageLogEntry{}, NextCursor: cursor}
-	if err := requireTeam(ctx, s.db, team); err != nil {
+	rdb := s.readDB()
+	if err := requireTeam(ctx, rdb, team); err != nil {
 		return page, err
 	}
 	if cursor == "latest" {
 		var id int64
-		err := s.db.QueryRowContext(ctx, "SELECT COALESCE(MAX(id),0) FROM events WHERE team=? AND (kind='message' OR (kind='chat-event' AND ?))", team, includeChatEvents).Scan(&id)
+		err := rdb.QueryRowContext(ctx, "SELECT COALESCE(MAX(id),0) FROM events WHERE team=? AND (kind='message' OR (kind='chat-event' AND ?))", team, includeChatEvents).Scan(&id)
 		page.NextCursor = strconv.FormatInt(id, 10)
 		return page, err
 	}
@@ -376,7 +379,7 @@ func (s *Store) MessageLogAfter(ctx context.Context, team, cursor string, limit 
 		limit = 50
 	}
 	limit = min(limit, 500)
-	rows, err := s.db.QueryContext(ctx, "SELECT id,kind,body FROM events WHERE team=? AND (kind='message' OR (kind='chat-event' AND ?)) AND id>? ORDER BY id LIMIT ?",
+	rows, err := rdb.QueryContext(ctx, "SELECT id,kind,body FROM events WHERE team=? AND (kind='message' OR (kind='chat-event' AND ?)) AND id>? ORDER BY id LIMIT ?",
 		team, includeChatEvents, after, limit+1)
 	if err != nil {
 		return page, err
