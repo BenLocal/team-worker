@@ -11,7 +11,7 @@ import (
 
 func TestTaskProgressAndGoalCommands(t *testing.T) {
 	h := newHarness(t)
-	h.run("team", "spawn-team", "demo")
+	h.run("team", "spawn-team", "--no-start", "demo")
 	var goal, old, next, got model.Task
 	h.json(&goal, "task", "create", "demo", "Continuous coverage", "--kind", "goal", "--owner", "leader")
 	h.json(&old, "task", "create", "demo", "First round", "--parent", goal.ID, "--owner", "alice")
@@ -85,7 +85,7 @@ func TestStopHookAllowsRegisteredWaitWithoutIdleNotice(t *testing.T) {
 
 func TestWaitReviewCommandsAndScopeChanges(t *testing.T) {
 	h := newHarness(t)
-	h.run("team", "spawn-team", "demo")
+	h.run("team", "spawn-team", "--no-start", "demo")
 	var task, offline, got model.Task
 	h.json(&task, "task", "create", "demo", "Scheduled observation", "--owner", "alice")
 	h.json(&offline, "task", "create", "demo", "Offline assertions", "--owner", "alice")

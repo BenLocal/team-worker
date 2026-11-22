@@ -14,7 +14,7 @@ import (
 
 func supervisedFixture(t *testing.T, h *harness, max int) (string, string) {
 	t.Helper()
-	h.run("team", "spawn-team", "demo")
+	h.run("team", "spawn-team", "--no-start", "demo")
 	h.run("team", "add-member", "demo", "alice")
 	dir := t.TempDir()
 	log := filepath.Join(dir, "attempts")

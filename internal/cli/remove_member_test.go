@@ -7,7 +7,7 @@ import (
 
 func TestTeamRemoveMember(t *testing.T) {
 	h := newHarness(t)
-	if out, ok := h.run("team", "spawn-team", "demo"); !ok {
+	if out, ok := h.run("team", "spawn-team", "--no-start", "demo"); !ok {
 		t.Fatal(out)
 	}
 	if out, ok := h.run("team", "add-member", "demo", "alice"); !ok {

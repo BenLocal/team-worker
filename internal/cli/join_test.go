@@ -9,7 +9,7 @@ import (
 
 func TestJoinRequestApproveFlow(t *testing.T) {
 	h := newHarness(t)
-	h.run("team", "spawn-team", "demo")
+	h.run("team", "spawn-team", "--no-start", "demo")
 
 	var pending map[string]any
 	h.json(&pending, "team", "request-join", "demo", "alice", "-c", "writes Go", "--no-wait")
@@ -52,7 +52,7 @@ func TestJoinRequestWaitEndsOnDecisionOrTimeout(t *testing.T) {
 	joinPollInterval = 20 * time.Millisecond
 	t.Cleanup(func() { joinPollInterval = old })
 	h := newHarness(t)
-	h.run("team", "spawn-team", "demo")
+	h.run("team", "spawn-team", "--no-start", "demo")
 
 	decide := func(action string, extra ...string) {
 		go func() {

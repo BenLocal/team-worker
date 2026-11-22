@@ -36,7 +36,7 @@ func operatorFixture(t *testing.T, h *harness, mode os.FileMode) {
 	if err := os.WriteFile(filepath.Join(dir, "config.json"), data, mode); err != nil {
 		t.Fatal(err)
 	}
-	h.run("team", "spawn-team", "demo")
+	h.run("team", "spawn-team", "--no-start", "demo")
 }
 
 func TestRemoteActsAsOperator(t *testing.T) {

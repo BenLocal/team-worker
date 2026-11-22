@@ -14,6 +14,7 @@ import (
 
 	"github.com/benlocal/team-worker/internal/client"
 	"github.com/benlocal/team-worker/internal/model"
+	"github.com/benlocal/team-worker/internal/proc"
 	"github.com/benlocal/team-worker/internal/server"
 	"github.com/benlocal/team-worker/internal/store"
 )
@@ -81,11 +82,47 @@ func (h *harness) json(v any, args ...string) {
 	}
 }
 
+func TestTeamSpawnStartsLeader(t *testing.T) {
+	h := newHarness(t)
+	h.json(&map[string]any{}, "profile", "set", "test", "--command", "sleep 60")
+
+	var created map[string]string
+	h.json(&created, "team", "spawn-team", "demo", "-n", "captain", "--backend", "subprocess")
+	t.Cleanup(func() { h.run("agent", "stop", "demo", "captain") })
+
+	var agents []model.Agent
+	h.json(&agents, "agent", "list", "demo")
+	if created["status"] != "created" || created["leaderName"] != "captain" ||
+		len(agents) != 1 || agents[0].Name != "captain" || agents[0].AgentID != created["leadAgentId"] {
+		t.Fatalf("created=%v agents=%+v", created, agents)
+	}
+	if alive, known := proc.Probe(agents[0]); !known || !alive {
+		t.Fatalf("leader process is not alive: %+v", agents[0])
+	}
+}
+
+func TestTeamSpawnKeepsTeamOnLeaderStartFailure(t *testing.T) {
+	h := newHarness(t)
+	h.json(&map[string]any{}, "profile", "set", "test", "--command", "missing-test-leader-command")
+	out, ok := h.run("--json", "team", "spawn-team", "demo", "--backend", "subprocess")
+	if ok || !strings.Contains(out, "was created") || !strings.Contains(out, "could not start") {
+		t.Fatalf("expected a partial creation error, got %q", out)
+	}
+
+	var team model.Team
+	h.json(&team, "team", "status", "demo")
+	var agents []model.Agent
+	h.json(&agents, "agent", "list", "demo")
+	if len(team.Members) != 1 || team.Members[0].AgentID != team.LeadAgentID || len(agents) != 0 {
+		t.Fatalf("team=%+v agents=%+v", team, agents)
+	}
+}
+
 func TestTeamTaskInboxFlow(t *testing.T) {
 	h := newHarness(t)
 
 	var created map[string]string
-	h.json(&created, "team", "spawn-team", "demo", "-d", "build auth")
+	h.json(&created, "team", "spawn-team", "--no-start", "demo", "-d", "build auth")
 	if created["status"] != "created" || created["leaderName"] != "leader" || created["leadAgentId"] == "" {
 		t.Fatalf("spawn-team: %v", created)
 	}
@@ -174,7 +211,7 @@ func TestTeamTaskInboxFlow(t *testing.T) {
 
 func TestReceiveWaitWakesOnSend(t *testing.T) {
 	h := newHarness(t)
-	h.run("team", "spawn-team", "demo")
+	h.run("team", "spawn-team", "--no-start", "demo")
 	ctx := context.Background()
 
 	go func() {
@@ -202,7 +239,7 @@ func TestReceiveWaitWakesOnSend(t *testing.T) {
 
 func TestTaskWaitTimeoutBeatsPollInterval(t *testing.T) {
 	h := newHarness(t)
-	h.run("team", "spawn-team", "demo")
+	h.run("team", "spawn-team", "--no-start", "demo")
 	h.run("task", "create", "demo", "never done")
 	start := time.Now()
 	out, ok := h.run("--json", "task", "wait", "demo", "--timeout", "0.5", "--poll-interval", "5")
@@ -216,7 +253,7 @@ func TestTaskWaitTimeoutBeatsPollInterval(t *testing.T) {
 
 func TestTaskWaitCompletes(t *testing.T) {
 	h := newHarness(t)
-	h.run("team", "spawn-team", "demo")
+	h.run("team", "spawn-team", "--no-start", "demo")
 	var task model.Task
 	h.json(&task, "task", "create", "demo", "only task")
 

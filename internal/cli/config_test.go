@@ -56,7 +56,7 @@ func TestHealthWithoutDaemon(t *testing.T) {
 
 func TestHealthReachesDaemonThroughSocket(t *testing.T) {
 	h := newHarness(t)
-	h.run("team", "spawn-team", "demo")
+	h.run("team", "spawn-team", "--no-start", "demo")
 	listenSocket(t)
 	got, ok := runHealth(t, h)
 	if !ok || got.Daemon != "running" || got.TeamsCount != 1 || got.SocketMode != "0600" {

@@ -60,7 +60,7 @@ def main():
                     time.sleep(0.1)
             else:
                 raise RuntimeError("Preview daemon did not start")
-            cli("team", "spawn-team", "demo")
+            cli("team", "spawn-team", "--no-start", "demo")
             cli("team", "add-member", "demo", "alice")
             cli("team", "add-member", "demo", "bob")
             task = cli("task", "create", "demo", "Export report", "--owner", "alice")

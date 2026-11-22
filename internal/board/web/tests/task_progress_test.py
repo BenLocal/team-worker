@@ -66,7 +66,7 @@ def fixture():
                     time.sleep(0.1)
             else:
                 raise RuntimeError("Fixture daemon did not start")
-            cli("team", "spawn-team", "demo")
+            cli("team", "spawn-team", "--no-start", "demo")
             cli("team", "add-member", "demo", "alice")
             goal = cli(
                 "task",

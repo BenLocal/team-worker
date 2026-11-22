@@ -39,7 +39,7 @@ func (h *harness) hook(stdin string, args ...string) (hookOutput, string) {
 
 func newHookTeam(t *testing.T) (*harness, context.Context) {
 	h := newHarness(t)
-	h.run("team", "spawn-team", "demo")
+	h.run("team", "spawn-team", "--no-start", "demo")
 	h.run("team", "add-member", "demo", "alice")
 	return h, context.Background()
 }

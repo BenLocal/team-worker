@@ -281,7 +281,12 @@ func assistantCLI(dataDir, socket string) func(context.Context, []string) ([]byt
 		}
 	}
 	return func(ctx context.Context, args []string) ([]byte, error) {
-		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		timeout := 10 * time.Second
+		if len(args) >= 2 && args[0] == "team" && args[1] == "spawn-team" {
+			// Starting a tmux agent can wait up to 20 seconds for its terminal.
+			timeout = time.Minute
+		}
+		ctx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
 		cmd := exec.CommandContext(ctx, binary, append([]string{"--json"}, args...)...)
 		cmd.Env = []string{"TEAM_WORKER_DATA_DIR=" + dataDir, "TEAM_WORKER_SOCKET=" + socket,

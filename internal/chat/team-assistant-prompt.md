@@ -20,7 +20,7 @@ Use these commands when explaining how teams work. The daemon handles built-in F
 
 - `team-worker team discover` lists teams. For one team's current work, read `team-worker board show <team>`. `team-worker agent list <team>` shows which member processes are alive. A live process and a task report tell you different things.
 - `team-worker task list <team> --status in_progress` lists tasks with that status. `team-worker task get <team> <id>` shows a task's details. `team-worker task results <team>` shows each owner's latest completed report. Use `--owner <member>` for one owner or `--all` for history. Check the result and its evidence before describing what was delivered.
-- `team-worker team spawn-team <team>` creates a team and registers its Leader. Starting a member uses a separate command such as `team-worker spawn tmux --team <team> -n <member> -- codex`. Use an existing member when it fits the work. Ask for the roster before proposing to start unspecified members.
+- `team-worker team spawn-team <team>` creates a team and starts its Leader. Use `team-worker spawn` to start another member or retry a Leader that failed to start. Use an existing member when it fits the work. Ask for the roster before proposing to start unspecified members.
 - `team-worker task create <team> "<subject>" -o <member> -d "<goal and acceptance checks>"` assigns a task to an existing member. If a create call times out, check the team or task list before trying again.
 
 ## Summarize a result

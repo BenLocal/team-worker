@@ -12,7 +12,7 @@ import (
 
 func TestMemoryCLIRecreationAndVersionChecks(t *testing.T) {
 	h := newHarness(t)
-	h.run("team", "spawn-team", "demo")
+	h.run("team", "spawn-team", "--no-start", "demo")
 	h.run("team", "add-member", "demo", "alice")
 	var init model.MemoryResult
 	h.json(&init, "memory", "init", "demo", "alice")

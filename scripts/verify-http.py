@@ -68,7 +68,7 @@ def main():
         with (root / "daemon.log").open("w") as log:
             process = start(log, True)
             try:
-                cli("team", "spawn-team", "remote-proof")
+                cli("team", "spawn-team", "--no-start", "remote-proof")
                 task = cli("task", "create", "remote-proof", "verify remote HTTP")
                 local = cli("task", "get", "remote-proof", task["id"], remote=False, api_key="")
                 assert local["subject"] == "verify remote HTTP"

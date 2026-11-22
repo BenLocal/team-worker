@@ -16,9 +16,9 @@ func TestBoardOverview(t *testing.T) {
 	if len(empty) != 0 {
 		t.Fatalf("%+v", empty)
 	}
-	h.run("team", "spawn-team", "alpha", "-n", "boss", "-d", "first")
+	h.run("team", "spawn-team", "--no-start", "alpha", "-n", "boss", "-d", "first")
 	h.run("team", "add-member", "alpha", "dev")
-	h.run("team", "spawn-team", "beta")
+	h.run("team", "spawn-team", "--no-start", "beta")
 	h.run("task", "create", "alpha", "one")
 	h.run("task", "create", "alpha", "two")
 	h.run("inbox", "send", "alpha", "dev", "hello")
@@ -35,7 +35,7 @@ func TestBoardOverview(t *testing.T) {
 
 func TestBoardLiveAndUpdate(t *testing.T) {
 	h := newHarness(t)
-	h.run("team", "spawn-team", "demo")
+	h.run("team", "spawn-team", "--no-start", "demo")
 	h.run("task", "create", "demo", "write docs")
 	out, ok := h.run("--json", "board", "live", "demo", "--count", "2", "-i", "10ms")
 	lines := strings.Split(strings.TrimSpace(out), "\n")
@@ -83,7 +83,7 @@ func TestIdentitySet(t *testing.T) {
 
 func TestHarnessContracts(t *testing.T) {
 	h := newHarness(t)
-	h.run("team", "spawn-team", "demo")
+	h.run("team", "spawn-team", "--no-start", "demo")
 	if out, ok := h.run("harness", "start", "-t", "demo", "-g", "ship it"); !ok {
 		t.Fatalf("start: %s", out)
 	}
@@ -119,7 +119,7 @@ func TestFindZombies(t *testing.T) {
 
 func TestCheckZombiesWithoutAgents(t *testing.T) {
 	h := newHarness(t)
-	h.run("team", "spawn-team", "demo")
+	h.run("team", "spawn-team", "--no-start", "demo")
 	var res map[string]any
 	h.json(&res, "lifecycle", "check-zombies", "--team", "demo")
 	if res["team"] != "demo" || len(res["zombies"].([]any)) != 0 {

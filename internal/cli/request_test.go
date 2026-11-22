@@ -12,7 +12,7 @@ import (
 
 func TestDecisionRequestFlow(t *testing.T) {
 	h := newHarness(t)
-	h.json(&map[string]any{}, "team", "spawn-team", "demo")
+	h.json(&map[string]any{}, "team", "spawn-team", "--no-start", "demo")
 	t.Setenv("TEAM_WORKER_AGENT_ID", "")
 
 	bodyFile := filepath.Join(t.TempDir(), "body.md")

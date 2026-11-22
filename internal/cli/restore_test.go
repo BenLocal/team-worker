@@ -46,7 +46,7 @@ func TestRestoreResumesOnlyAgentsARestartLeftBehind(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("TEAM_WORKER_WORKSPACE", "never")
 	h := &harness{t: t, api: client.NewHTTP(ts.URL, ts.Client())}
-	h.run("team", "spawn-team", "demo")
+	h.run("team", "spawn-team", "--no-start", "demo")
 	dir := t.TempDir()
 	log := filepath.Join(dir, "attempts")
 	command := filepath.Join(dir, "claude")

@@ -14,7 +14,7 @@ import (
 
 func TestAgentPromptCLIAndSpawnReuse(t *testing.T) {
 	h := newHarness(t)
-	if out, ok := h.run("team", "spawn-team", "demo"); !ok {
+	if out, ok := h.run("team", "spawn-team", "--no-start", "demo"); !ok {
 		t.Fatal(out)
 	}
 	if out, ok := h.run("team", "add-member", "demo", "alice"); !ok {
@@ -68,7 +68,7 @@ func TestAgentPromptCLIAndSpawnReuse(t *testing.T) {
 
 func TestSpawnReadsTaskFromFile(t *testing.T) {
 	h := newHarness(t)
-	h.run("team", "spawn-team", "demo")
+	h.run("team", "spawn-team", "--no-start", "demo")
 	h.run("team", "add-member", "demo", "alice")
 	file := filepath.Join(t.TempDir(), "task.md")
 	if err := os.WriteFile(file, []byte("Line one\nLine two\n\n"), 0600); err != nil {

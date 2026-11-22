@@ -13,7 +13,7 @@ import (
 
 func TestCostReportShowAndEnforcedBudget(t *testing.T) {
 	h := newHarness(t)
-	h.run("team", "spawn-team", "demo")
+	h.run("team", "spawn-team", "--no-start", "demo")
 	h.run("team", "add-member", "demo", "alice")
 
 	var ev map[string]any
@@ -69,7 +69,7 @@ func TestCostReportShowAndEnforcedBudget(t *testing.T) {
 func TestCostSyncRecordsClaudeSessionTokens(t *testing.T) {
 	h := newHarness(t)
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
-	h.run("team", "spawn-team", "demo")
+	h.run("team", "spawn-team", "--no-start", "demo")
 	ctx := context.Background()
 	if _, err := h.api.RegisterAgent(ctx, model.Agent{Team: "demo", Name: "alice", AgentID: "a1", RunID: "run1", Backend: "subprocess"}); err != nil {
 		t.Fatal(err)

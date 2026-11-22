@@ -41,8 +41,9 @@ team-workerd --data-dir /path     # 指定数据目录
 ## 使用
 
 ```bash
-# 建团队，当前身份成为 leader；登记成员后才能收到广播
+# 建团队并启动 Leader
 team-worker team spawn-team my-team -d "构建认证模块"
+# 登记成员后才能收到广播
 team-worker team add-member my-team alice --agent-type developer
 
 # 建任务，--blocked-by 声明依赖
@@ -92,6 +93,8 @@ tmux attach -t team-worker-my-team        # 直接进入各 Agent 的窗口
 ```
 
 `spawn` 登记成员（团队不存在时先建团队并设为 leader），创建工作目录 `<数据目录>/workspaces/<team>/<agent>`（`--cwd` 可换；知道仓库时默认是该仓库的 git worktree，分支 `clawteam/<team>/<agent>`），注入 `TEAM_WORKER_*` 身份变量，再把身份、团队说明、任务和协作规则作为第一条提示词发给 Agent。`--dry-run` 只打印选中的适配器、最终命令和每个环境变量的来源，不启动。Agent 退出或 tmux 窗口被关掉后，它手上 `in_progress` 的任务退回 `pending` 并通知 leader。
+
+`team spawn-team` 默认通过 tmux 启动 Leader，沿用 `spawn` 的运行配置选择规则。可用 `--backend subprocess` 启动后台进程，或用 `--no-start` 只登记 Leader。若启动失败，团队会保留，可以用 `team-worker spawn --team <团队> -n <Leader>` 重试。
 
 - 每种 CLI 怎样启动由适配器决定，内置 claude、codex、gemini、kimi、qwen、opencode、dsh、pi；自定义适配器、环境变量合成顺序、hook、消息粘贴和卡住提醒见 [docs/agents.md](docs/agents.md)。
 - 运行配置（profile）和端点预设（preset）见 [docs/profiles.md](docs/profiles.md)。

@@ -19,7 +19,7 @@ func TestAgentProtocolReadAckAndRoleContext(t *testing.T) {
 		}
 		return out
 	}
-	must("team", "spawn-team", "demo")
+	must("team", "spawn-team", "--no-start", "demo")
 	must("team", "add-member", "demo", "alice")
 	must("team", "prompt", "set", "demo", "Shared bounded scope")
 	must("agent", "prompt", "set", "demo", "alice", "Preserve delivered evidence")

@@ -28,7 +28,7 @@ async function main() {
       });
       daemon.on("exit", () => { clearTimeout(timer); reject(new Error(logs)); });
     });
-    execFileSync(path.join(root, "bin/team-worker"), ["team", "spawn-team", "demo"], { env });
+    execFileSync(path.join(root, "bin/team-worker"), ["team", "spawn-team", "--no-start", "demo"], { env });
     browser = await chromium.launch({ headless: true,
       executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE,
       args: ["--no-proxy-server", "--host-resolver-rules=MAP board.example.test 127.0.0.1"] });

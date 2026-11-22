@@ -12,7 +12,7 @@ import (
 
 func TestPlanApprovalFlow(t *testing.T) {
 	h := newHarness(t)
-	h.json(&map[string]any{}, "team", "spawn-team", "demo")
+	h.json(&map[string]any{}, "team", "spawn-team", "--no-start", "demo")
 	var added struct {
 		Member model.Member `json:"member"`
 	}
@@ -85,7 +85,7 @@ func TestPlanApprovalFlow(t *testing.T) {
 
 func TestPlanRequiredSpawnSetsEnvAndPrompt(t *testing.T) {
 	h := newHarness(t)
-	h.json(&map[string]any{}, "team", "spawn-team", "demo")
+	h.json(&map[string]any{}, "team", "spawn-team", "--no-start", "demo")
 	out, ok := h.run("--json", "spawn", "subprocess", "--team", "demo", "-n", "alice", "--plan-required", "--dry-run", "--", "true")
 	if !ok {
 		t.Fatalf("dry run: %s", out)

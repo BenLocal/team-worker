@@ -168,19 +168,24 @@ func (a *app) teamRemoveMemberCmd() *cobra.Command {
 }
 
 func (a *app) teamSpawnCmd() *cobra.Command {
-	var description, agentName, agentType string
+	var description, agentName, agentType, backend string
+	var noStart bool
 	var repos []string
 	cmd := &cobra.Command{
 		Use:   "spawn-team NAME",
-		Short: "Create a new team and register the leader",
+		Short: "Create a new team and start its leader",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if backend != "tmux" && backend != "subprocess" {
+				return a.fail(fmt.Errorf("unknown backend '%s': use tmux or subprocess", backend))
+			}
 			id := config.IdentityFromEnv()
 			leaderID := id.AgentID
 			if leaderID == "" {
 				leaderID = store.NewAgentID()
 			}
-			team, err := a.client().CreateTeam(cmd.Context(), store.CreateTeamInput{
+			ctx, c := cmd.Context(), a.client()
+			team, err := c.CreateTeam(ctx, store.CreateTeamInput{
 				Name:            args[0],
 				Description:     description,
 				LeaderName:      agentName,
@@ -191,6 +196,16 @@ func (a *app) teamSpawnCmd() *cobra.Command {
 			})
 			if err != nil {
 				return a.fail(err)
+			}
+			if !noStart {
+				_, callerDir := workspaceFlags(cmd, c.Remote())
+				_, err := c.SpawnAgent(ctx, model.SpawnRequest{
+					Team: team.Name, Name: agentName, User: id.User, AgentType: agentType,
+					Backend: backend, CallerDir: callerDir, SkipPerms: true,
+				})
+				if err != nil {
+					return a.fail(fmt.Errorf("Team '%s' was created, but leader '%s' could not start. Retry with team-worker spawn: %w", team.Name, agentName, err))
+				}
 			}
 			result := map[string]string{
 				"status":      "created",
@@ -204,6 +219,9 @@ func (a *app) teamSpawnCmd() *cobra.Command {
 			a.emit(result, func(w io.Writer) {
 				fmt.Fprintf(w, "OK Team '%s' created\n", team.Name)
 				fmt.Fprintf(w, "  Leader: %s (id: %s)\n", agentName, team.LeadAgentID)
+				if !noStart {
+					fmt.Fprintf(w, "  Leader process: started (%s)\n", backend)
+				}
 			})
 			return nil
 		},
@@ -211,6 +229,8 @@ func (a *app) teamSpawnCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&description, "description", "d", "", "Team description")
 	cmd.Flags().StringVarP(&agentName, "agent-name", "n", "leader", "Leader agent name")
 	cmd.Flags().StringVar(&agentType, "agent-type", "leader", "Leader agent type")
+	cmd.Flags().StringVar(&backend, "backend", "tmux", "Leader backend: tmux or subprocess")
+	cmd.Flags().BoolVar(&noStart, "no-start", false, "Register the leader without starting a process")
 	cmd.Flags().StringArrayVar(&repos, "repo", nil,
 		"Default git repository for the agents' worktrees, a path on the daemon's machine (repeatable)")
 	return cmd

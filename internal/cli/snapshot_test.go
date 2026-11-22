@@ -9,7 +9,7 @@ import (
 
 func TestTeamSnapshotRestoreThroughCLI(t *testing.T) {
 	h := newHarness(t)
-	h.run("team", "spawn-team", "demo")
+	h.run("team", "spawn-team", "--no-start", "demo")
 	h.run("task", "create", "demo", "keep me")
 	var meta model.SnapshotMeta
 	h.json(&meta, "team", "snapshot", "demo", "--tag", "v1")

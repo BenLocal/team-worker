@@ -73,7 +73,7 @@ exit 7
             marker = root / "provider-pending"
             marker.touch()
             env["TEAM_WORKER_START_BLOCKED_FILE"] = str(marker)
-            cli("team", "spawn-team", "proof")
+            cli("team", "spawn-team", "--no-start", "proof")
             cli("spawn", args.backend, "--team", "proof", "-n", "alice", "--cwd", str(root),
                 "--keepalive", "--max-restarts", "2", "--restart-delay", "20ms", "--", str(fake))
             time.sleep(0.2)

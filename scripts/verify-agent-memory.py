@@ -195,7 +195,7 @@ def main():
             wait_result(projects[1], "MEMORY_RULE_B")
             report["checks"]["resume_updated_rules"] = "passed"
             cli("team", "cleanup", "verification")
-            cli("team", "spawn-team", "verification", "--agent-name", "worker")
+            cli("team", "spawn-team", "--no-start", "verification", "--agent-name", "worker")
             current = cli("memory", "read", "verification", "worker", "AGENTS.md")[
                 "documents"
             ][0]

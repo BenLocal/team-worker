@@ -9,7 +9,7 @@ import (
 
 func TestTaskResultReport(t *testing.T) {
 	h := newHarness(t)
-	h.run("team", "spawn-team", "demo")
+	h.run("team", "spawn-team", "--no-start", "demo")
 	var task model.Task
 	h.json(&task, "task", "create", "demo", "Export report", "--owner", "alice")
 	var got map[string]any
@@ -33,7 +33,7 @@ func TestTaskResultReport(t *testing.T) {
 
 func TestTaskResultsForAnotherAgent(t *testing.T) {
 	h := newHarness(t)
-	h.run("team", "spawn-team", "demo")
+	h.run("team", "spawn-team", "--no-start", "demo")
 	var old, latest, legacy, draft model.Task
 	h.json(&old, "task", "create", "demo", "Earlier report", "--owner", "alice")
 	h.run("task", "update", "demo", old.ID, "--status", "completed", "--result", "Earlier findings")

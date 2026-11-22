@@ -172,7 +172,7 @@ func TestWorkspaceImportTakesOverClawTeamWorktrees(t *testing.T) {
 	if err := os.WriteFile(registry, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	h.run("team", "spawn-team", "demo")
+	h.run("team", "spawn-team", "--no-start", "demo")
 	var op model.WorkspaceOp
 	h.json(&op, "workspace", "import", "demo", "--file", registry)
 	if op.Count != 1 || len(op.Repos) != 2 || op.Repos[1].Status != "skipped" {
@@ -197,7 +197,7 @@ func TestTeamDefaultRepositories(t *testing.T) {
 	h := newHarness(t)
 	t.Setenv("TEAM_WORKER_WORKSPACE", "auto")
 	app, web := gitRepo(t, "app"), gitRepo(t, "web")
-	h.run("team", "spawn-team", "demo", "--repo", app)
+	h.run("team", "spawn-team", "--no-start", "demo", "--repo", app)
 	var repos struct{ Repos []string }
 	h.json(&repos, "team", "repos", "demo")
 	if len(repos.Repos) != 1 || repos.Repos[0] != app {
