@@ -68,8 +68,10 @@ export MAGPIE_WEB_KEY
 MAGPIE_WEB_KEY=$(cat "$key_file")
 export MAGPIE_WEB_URL="${TEAM_WORKER_WEB_URL:-http://localhost:${TEAM_WORKER_WEB_PORT:-8080}}/magpie"
 pids=()
+watchdog_pid=
 cleanup() {
     trap - EXIT
+    if [[ -n $watchdog_pid ]]; then kill "$watchdog_pid" 2>/dev/null || true; fi
     kill "${pids[@]}" 2>/dev/null || true
     tmux kill-server 2>/dev/null || true
     wait || true
@@ -140,6 +142,17 @@ if ! env -u TEAM_WORKER_NO_AUTOSTART team-worker team discover >/dev/null; then
 fi
 # Waits for the daemon's own restore and reports what it resumed.
 team-worker agent restore || echo 'warning: restoring the agents failed; see team-workerd.log in the data directory.' >&2
+# Keep team-workerd alive if it crashes unexpectedly while the container runs.
+(
+    while sleep 15; do
+        if ! TEAM_WORKER_NO_AUTOSTART=1 team-worker config health >/dev/null 2>&1; then
+            echo 'warning: team-workerd became unhealthy; restarting daemon and restoring agents' >&2
+            env -u TEAM_WORKER_NO_AUTOSTART team-worker team discover >/dev/null 2>&1 || true
+            team-worker agent restore >/dev/null 2>&1 || true
+        fi
+    done
+) &
+watchdog_pid=$!
 # Signing in to Magpie and OpenBao with the board session is opt-in; Nginx
 # includes the pieces for the ones that are on.
 rm -rf /tmp/team-worker-nginx && mkdir -p /tmp/team-worker-nginx
