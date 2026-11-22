@@ -18,7 +18,7 @@ import (
 )
 
 func TestDaemonServesBoardBesideAPI(t *testing.T) {
-	dir, err := os.MkdirTemp("/tmp", "tw-board-")
+	dir, err := os.MkdirTemp("", "tw-board-")
 	if err != nil {
 		t.Fatal(err)
 	}

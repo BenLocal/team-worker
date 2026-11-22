@@ -21,7 +21,7 @@ func TestDaemonHTTPAndSocketShareData(t *testing.T) {
 }
 
 func daemonKeyFlow(t *testing.T, configured string) {
-	dir, err := os.MkdirTemp("/tmp", "tw-http-")
+	dir, err := os.MkdirTemp("", "tw-http-")
 	if err != nil {
 		t.Fatal(err)
 	}

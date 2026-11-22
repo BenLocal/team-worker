@@ -14,7 +14,7 @@ import (
 
 // This exercises real daemon startup, persisted recovery, API calls and shutdown.
 func TestDaemonCheckpointRecoveryAndCompletion(t *testing.T) {
-	dir, err := os.MkdirTemp("/tmp", "tw-checkpoint-")
+	dir, err := os.MkdirTemp("", "tw-checkpoint-")
 	if err != nil {
 		t.Fatal(err)
 	}
