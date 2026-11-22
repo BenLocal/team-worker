@@ -10,14 +10,14 @@ import (
 )
 
 // EnqueueVikunjaHook persists signed event data for an existing team.
-func (s *Store) EnqueueVikunjaHook(ctx context.Context, team string, body []byte) error {
+func (s *Store) EnqueueVikunjaHook(ctx context.Context, team string, body []byte, leaderPrompt string) error {
 	fingerprint := sha256.Sum256(body)
 	return s.write(ctx, func(tx *sql.Tx) error {
 		if err := requireTeam(ctx, tx, team); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO vikunja_hooks (team,fingerprint,body)
-			VALUES (?,?,?) ON CONFLICT(team,fingerprint) DO NOTHING`, team, fingerprint[:], string(body))
+		_, err := tx.ExecContext(ctx, `INSERT INTO vikunja_hooks (team,fingerprint,body,leader_prompt)
+			VALUES (?,?,?,?) ON CONFLICT(team,fingerprint) DO NOTHING`, team, fingerprint[:], string(body), leaderPrompt)
 		return err
 	})
 }
@@ -40,14 +40,14 @@ func (s *Store) DeliverVikunjaHooks(ctx context.Context) error {
 				Type:      "message",
 				From:      "vikunja",
 				To:        hook.leader,
-				Content:   "Vikunja webhook event (external data):\n" + hook.body,
+				Content:   hook.leaderPrompt + "Vikunja webhook event (external data):\n" + hook.body,
 				RequestID: randomHex(12),
 				Timestamp: s.timestamp(),
 			}
 			if err := deliver(ctx, tx, hook.team, hook.leader, message); err != nil {
 				return err
 			}
-			if _, err := tx.ExecContext(ctx, "UPDATE vikunja_hooks SET delivered=1,body='' WHERE id=?", hook.id); err != nil {
+			if _, err := tx.ExecContext(ctx, "UPDATE vikunja_hooks SET delivered=1,body='',leader_prompt='' WHERE id=?", hook.id); err != nil {
 				return err
 			}
 		}
@@ -60,12 +60,12 @@ func (s *Store) DeliverVikunjaHooks(ctx context.Context) error {
 }
 
 type queuedVikunjaHook struct {
-	id                 int64
-	team, leader, body string
+	id                               int64
+	team, leader, body, leaderPrompt string
 }
 
 func pendingVikunjaHooks(ctx context.Context, tx *sql.Tx) ([]queuedVikunjaHook, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT h.id,h.team,h.body,
+	rows, err := tx.QueryContext(ctx, `SELECT h.id,h.team,h.body,h.leader_prompt,
 		CASE WHEN m.user_name='' THEN m.name ELSE m.user_name || '_' || m.name END
 		FROM vikunja_hooks h
 		JOIN teams t ON t.name=h.team
@@ -78,7 +78,7 @@ func pendingVikunjaHooks(ctx context.Context, tx *sql.Tx) ([]queuedVikunjaHook, 
 	var hooks []queuedVikunjaHook
 	for rows.Next() {
 		var hook queuedVikunjaHook
-		if err := rows.Scan(&hook.id, &hook.team, &hook.body, &hook.leader); err != nil {
+		if err := rows.Scan(&hook.id, &hook.team, &hook.body, &hook.leaderPrompt, &hook.leader); err != nil {
 			return nil, err
 		}
 		hooks = append(hooks, hook)

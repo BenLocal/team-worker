@@ -7,9 +7,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"html"
 	"io"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -20,6 +22,9 @@ import (
 
 const vikunjaHookRoute = "POST /api/hooks/vikunja/{team}"
 const vikunjaHookBodyLimit = 256 << 10
+const vikunjaCommentCreated = "task.comment.created"
+
+var vikunjaCommentParagraph = regexp.MustCompile(`(?i)^<p(?:[[:space:]][^>]*)?>`)
 
 func (s *Server) vikunjaDataDir() string {
 	if s.runDataDir != "" {
@@ -78,11 +83,39 @@ func (s *Server) vikunjaHook(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	if err := s.store.EnqueueVikunjaHook(r.Context(), team, body); err != nil {
+	var leaderPrompt string
+	if event.Name == vikunjaCommentCreated && len(hook.Commands) > 0 {
+		leaderPrompt = vikunjaCommentLeaderPrompt(event.Data, hook.Commands)
+	}
+	if err := s.store.EnqueueVikunjaHook(r.Context(), team, body, leaderPrompt); err != nil {
 		respond(w, nil, err)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "queued"})
+}
+
+func vikunjaCommentLeaderPrompt(data json.RawMessage, commands map[string]string) string {
+	var event struct {
+		Comment struct {
+			Text string `json:"comment"`
+		} `json:"comment"`
+	}
+	if json.Unmarshal(data, &event) != nil {
+		return ""
+	}
+	comment := strings.TrimSpace(event.Comment.Text)
+	// Vikunja's editor wraps ordinary rich-text comments in a paragraph.
+	if paragraph := vikunjaCommentParagraph.FindStringIndex(comment); paragraph != nil {
+		text, _, _ := strings.Cut(comment[paragraph[1]:], "<")
+		comment = html.UnescapeString(text)
+	}
+	for name := range strings.FieldsSeq(comment) {
+		if prompt := commands[name]; prompt != "" {
+			return "Vikunja comment command " + name + "\n\n" + prompt + "\n\n"
+		}
+		break
+	}
+	return ""
 }
 
 func runVikunjaHooks(ctx context.Context, st *store.Store, log *slog.Logger) {

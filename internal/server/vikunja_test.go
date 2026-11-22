@@ -39,6 +39,11 @@ func TestDaemonVikunjaHook(t *testing.T) {
 	const alphaEvent = `{"event_name":"task.created","data":{"task":{"id":10}}}`
 	const betaEvent = `{"event_name":"task.updated","data":{"task":{"id":11}}}`
 	const projectEvent = `{"event_name":"project.updated","data":{"project":{"id":12}}}`
+	const plainComment = `{"event_name":"task.comment.created","data":{"task":{"id":20},"comment":{"comment":"/commanda Check the report"}}}`
+	const richComment = `{"event_name":"task.comment.created","data":{"task":{"id":21},"comment":{"comment":"<p>/commandb&nbsp;Read the checklist</p>"}}}`
+	const editedComment = `{"event_name":"task.comment.edited","data":{"task":{"id":22},"comment":{"comment":"/commanda Check the report"}}}`
+	const mentionedCommand = `{"event_name":"task.comment.created","data":{"task":{"id":23},"comment":{"comment":"The /commanda example"}}}`
+	const quotedCommand = `{"event_name":"task.comment.created","data":{"task":{"id":24},"comment":{"comment":"<blockquote><p>/commanda</p></blockquote>"}}}`
 	st, err := store.Open(config.DBPath(dir))
 	if err != nil {
 		t.Fatal(err)
@@ -52,7 +57,7 @@ func TestDaemonVikunjaHook(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := st.EnqueueVikunjaHook(ctx, "alpha", []byte(alphaEvent)); err != nil {
+	if err := st.EnqueueVikunjaHook(ctx, "alpha", []byte(alphaEvent), ""); err != nil {
 		st.Close()
 		t.Fatal(err)
 	}
@@ -101,8 +106,16 @@ func TestDaemonVikunjaHook(t *testing.T) {
 	if _, err := api.SetVikunjaSettings(ctx, "alpha", model.VikunjaHookUpdate{Events: []string{"task*"}}); err == nil {
 		t.Fatal("An invalid event wildcard was saved")
 	}
-	saved, err := api.SetVikunjaSettings(ctx, "alpha", model.VikunjaHookUpdate{Events: []string{"task.created"}})
-	if err != nil || !saved.HasSecret || len(saved.Events) != 1 || saved.Events[0] != "task.created" {
+	if _, err := api.SetVikunjaSettings(ctx, "alpha", model.VikunjaHookUpdate{Commands: map[string]string{"invalid": "Inspect"}}); err == nil {
+		t.Fatal("A command without a leading slash was saved")
+	}
+	const promptA = "Summarize the open questions."
+	const promptB = "Review the acceptance criteria."
+	saved, err := api.SetVikunjaSettings(ctx, "alpha", model.VikunjaHookUpdate{
+		Events:   []string{"task.created", "task.comment.*"},
+		Commands: map[string]string{"/commanda": promptA, "/commandb": promptB},
+	})
+	if err != nil || !saved.HasSecret || len(saved.Events) != 2 || saved.Commands["/commandb"] != promptB {
 		t.Fatalf("Unexpected saved settings: %+v, %v", saved, err)
 	}
 
@@ -119,6 +132,12 @@ func TestDaemonVikunjaHook(t *testing.T) {
 		{"alpha", "alpha-example-secret", betaEvent, http.StatusNoContent},
 		{"beta", "beta-example-secret", projectEvent, http.StatusNoContent},
 		{"alpha", "alpha-example-secret", alphaEvent, http.StatusAccepted},
+		{"alpha", "alpha-example-secret", plainComment, http.StatusAccepted},
+		{"alpha", "alpha-example-secret", richComment, http.StatusAccepted},
+		{"alpha", "alpha-example-secret", richComment, http.StatusAccepted},
+		{"alpha", "alpha-example-secret", editedComment, http.StatusAccepted},
+		{"alpha", "alpha-example-secret", mentionedCommand, http.StatusAccepted},
+		{"alpha", "alpha-example-secret", quotedCommand, http.StatusAccepted},
 		{"beta", "beta-example-secret", betaEvent, http.StatusAccepted},
 		{"beta", "beta-example-secret", betaEvent, http.StatusAccepted},
 	} {
@@ -143,9 +162,18 @@ func TestDaemonVikunjaHook(t *testing.T) {
 			t.Fatalf("Webhook for %s returned %d, want %d", test.team, resp.StatusCode, test.want)
 		}
 	}
-	for _, check := range []struct{ team, inbox, body string }{
-		{"alpha", "demo_lead", alphaEvent},
-		{"beta", "other-lead", betaEvent},
+	const prefix = "Vikunja webhook event (external data):\n"
+	for _, check := range []struct {
+		team, inbox string
+		messages    []string
+	}{
+		{"alpha", "demo_lead", []string{
+			prefix + alphaEvent,
+			"Vikunja comment command /commanda\n\n" + promptA + "\n\n" + prefix + plainComment,
+			"Vikunja comment command /commandb\n\n" + promptB + "\n\n" + prefix + richComment,
+			prefix + editedComment, prefix + mentionedCommand, prefix + quotedCommand,
+		}},
+		{"beta", "other-lead", []string{prefix + betaEvent}},
 	} {
 		deadline := time.Now().Add(5 * time.Second)
 		for {
@@ -153,9 +181,14 @@ func TestDaemonVikunjaHook(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(messages) > 0 {
-				if len(messages) != 1 || messages[0].From != "vikunja" || !strings.HasSuffix(messages[0].Content, check.body) {
+			if len(messages) >= len(check.messages) {
+				if len(messages) != len(check.messages) {
 					t.Fatalf("Unexpected messages in %s/%s: %+v", check.team, check.inbox, messages)
+				}
+				for i, want := range check.messages {
+					if messages[i].From != "vikunja" || messages[i].Content != want {
+						t.Fatalf("Unexpected message in %s/%s: %+v", check.team, check.inbox, messages[i])
+					}
 				}
 				break
 			}
@@ -169,7 +202,8 @@ func TestDaemonVikunjaHook(t *testing.T) {
 		t.Fatal(err)
 	}
 	settings, err = api.VikunjaSettings(ctx)
-	if err != nil || len(settings) != 2 || settings[0].Events == nil || len(settings[0].Events) != 0 {
-		t.Fatalf("An empty allowlist was not preserved: %+v, %v", settings, err)
+	if err != nil || len(settings) != 2 || settings[0].Events == nil || len(settings[0].Events) != 0 ||
+		settings[0].Commands["/commanda"] != promptA {
+		t.Fatalf("An empty allowlist or existing commands were not preserved: %+v, %v", settings, err)
 	}
 }

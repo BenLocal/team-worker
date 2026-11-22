@@ -44,6 +44,11 @@ func legacyDB(t *testing.T, version int) string {
 			t.Fatal(err)
 		}
 	}
+	if version >= 29 {
+		if _, err := db.Exec("INSERT INTO vikunja_hooks (team, fingerprint, body) VALUES (?, ?, ?)", "legacy", []byte("event-id"), "keep event"); err != nil {
+			t.Fatal(err)
+		}
+	}
 	return path
 }
 
@@ -71,6 +76,13 @@ func TestMigrationUpgradesAndBacksUpLegacyData(t *testing.T) {
 				var count int
 				if err := s.db.QueryRow("SELECT COUNT(*) FROM " + table + " WHERE team='legacy'").Scan(&count); err != nil || count != 1 {
 					t.Fatalf("%s count=%d err=%v", table, count, err)
+				}
+			}
+			if version >= 29 {
+				var body, leaderPrompt string
+				err := s.db.QueryRow("SELECT body, leader_prompt FROM vikunja_hooks WHERE team=?", "legacy").Scan(&body, &leaderPrompt)
+				if err != nil || body != "keep event" || leaderPrompt != "" {
+					t.Fatalf("migrated Vikunja event body=%q leaderPrompt=%q err=%v", body, leaderPrompt, err)
 				}
 			}
 			if err := s.Close(); err != nil {

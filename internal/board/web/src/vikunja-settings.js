@@ -13,6 +13,8 @@ export function vikunjaSettings(el, fetchJSON, put, signal) {
 
   function render(settings) {
     const team = el("select", {}, settings.map(({ team }) => el("option", { value: team }, team)));
+    const currentTeam = new URLSearchParams(location.search).get("team");
+    if (settings.some(({ team }) => team === currentTeam)) team.value = currentTeam;
     const endpoint = el("input", { readonly: true });
     const secret = el("input", { type: "password", autocomplete: "new-password" });
     const mode = el("select", {}, el("option", { value: "all" }, "All events"),
@@ -20,6 +22,22 @@ export function vikunjaSettings(el, fetchJSON, put, signal) {
     const events = el("textarea", { rows: "4", spellcheck: "false", placeholder: "task.created\ntask.comment.*" });
     const eventFields = el("div", {}, el("label", {}, "Allowed events", events),
       el("p", { class: "muted" }, "One event or prefix per line, such as task.*. Leave the list empty to pause delivery."));
+    const commandRows = el("div", { class: "comment-command-rows" });
+    function addCommand(name = "", prompt = "") {
+      const command = el("input", { value: name, required: true, placeholder: "/commanda", spellcheck: "false" });
+      const instruction = el("textarea", { rows: "3", required: true });
+      instruction.value = prompt;
+      const row = el("div", { class: "comment-command" },
+        el("label", {}, "Command", command),
+        el("label", {}, "Leader prompt", instruction),
+        el("button", { class: "quiet-btn", type: "button", onclick: () => row.remove() }, "Remove command"));
+      commandRows.append(row);
+      return command;
+    }
+    const commandFields = el("section", { class: "comment-commands", "aria-labelledby": "comment-commands-title" },
+      el("h4", { id: "comment-commands-title" }, "Comment commands"),
+      el("p", { class: "muted" }, "Start a task comment with the command to send its prompt and the comment to the team leader. Subscribe to task.comment.created in Vikunja and allow it here."),
+      commandRows, el("button", { class: "quiet-btn", type: "button", onclick: () => addCommand().focus() }, "Add command"));
     const feedback = el("p", { class: "chat-feedback", role: "status" });
     const save = el("button", { class: "tool-btn", type: "submit" }, "Save webhook");
     const updateMode = () => { eventFields.hidden = mode.value === "all"; };
@@ -33,6 +51,8 @@ export function vikunjaSettings(el, fetchJSON, put, signal) {
       secret.placeholder = hook.hasSecret ? "Leave blank to keep the saved secret" : "Enter the secret from Vikunja";
       mode.value = hook.events === null ? "all" : "allowlist";
       events.value = hook.events?.join("\n") ?? "";
+      commandRows.replaceChildren();
+      for (const [name, prompt] of Object.entries(hook.commands ?? {})) addCommand(name, prompt);
       feedback.classList.remove("error");
       feedback.textContent = "";
       updateMode();
@@ -45,9 +65,16 @@ export function vikunjaSettings(el, fetchJSON, put, signal) {
       feedback.textContent = "Saving…";
       try {
         const index = settings.findIndex((hook) => hook.team === team.value);
+        const commands = Object.create(null);
+        for (const row of commandRows.children) {
+          const name = row.querySelector("input").value.trim();
+          if (Object.hasOwn(commands, name)) throw new Error("Each comment command must have a unique name");
+          commands[name] = row.querySelector("textarea").value.trim();
+        }
         settings[index] = await put(path + "/" + encodeURIComponent(team.value), {
           secret: secret.value,
           events: mode.value === "all" ? null : events.value.split("\n").map((line) => line.trim()).filter(Boolean),
+          commands,
         });
         selectTeam();
         feedback.textContent = "Webhook saved";
@@ -59,7 +86,7 @@ export function vikunjaSettings(el, fetchJSON, put, signal) {
         save.disabled = team.disabled = false;
       }
     } }, el("label", {}, "Team", team), el("label", {}, "Webhook URL", endpoint),
-    el("label", {}, "Signing secret", secret), el("label", {}, "Events to deliver", mode), eventFields,
+    el("label", {}, "Signing secret", secret), el("label", {}, "Events to deliver", mode), eventFields, commandFields,
     el("div", { class: "chat-actions" }, save, feedback)));
     selectTeam();
   }

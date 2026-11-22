@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -14,10 +15,12 @@ const vikunjaHooksFile = "vikunja-hooks.json"
 const maxVikunjaHooksSize = 64 << 10
 
 var ErrInvalidVikunjaHooks = errors.New("Invalid Vikunja hook settings")
+var vikunjaCommandName = regexp.MustCompile(`^/[A-Za-z][A-Za-z0-9_-]{0,63}$`)
 
 type VikunjaHook struct {
-	Secret string   `json:"secret"`
-	Events []string `json:"events"`
+	Secret   string            `json:"secret"`
+	Events   []string          `json:"events"`
+	Commands map[string]string `json:"commands,omitempty"`
 }
 
 func (h VikunjaHook) AllowsEvent(name string) bool {
@@ -93,6 +96,11 @@ func validateVikunjaHooks(hooks map[string]VikunjaHook) error {
 			name, _ := strings.CutSuffix(event, ".*")
 			if name == "" || strings.ContainsAny(name, "* \t\r\n") {
 				return errors.New("Use an event name or a prefix ending in .*")
+			}
+		}
+		for command, prompt := range hook.Commands {
+			if !vikunjaCommandName.MatchString(command) || strings.TrimSpace(prompt) == "" {
+				return errors.New("Each Vikunja command needs a slash name and a nonempty prompt")
 			}
 		}
 	}

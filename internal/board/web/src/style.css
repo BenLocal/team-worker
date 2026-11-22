@@ -396,6 +396,11 @@ body.rail-collapsed .settings-inline { display: flex; }
   background: var(--bg); color: var(--fg); font: inherit; }
 .vikunja-settings .muted { margin: 6px 0 0; }
 .vikunja-settings textarea { resize: vertical; }
+.comment-commands { border-top: 1px solid var(--line); padding-top: 12px; }
+.comment-commands h4 { margin: 0; font-size: 14px; color: var(--fg); }
+.comment-command-rows { display: grid; gap: 10px; margin: 10px 0; }
+.comment-command { display: grid; gap: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 7px; }
+.comment-command button { justify-self: start; }
 .chat-form > p { margin: 0; }
 .chat-actions { display: flex; align-items: center; gap: 8px; }
 .chat-feedback { min-height: 1.4em; margin: 0; color: var(--muted); }

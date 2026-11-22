@@ -67,6 +67,9 @@ func (s *Server) saveVikunjaSettings(w http.ResponseWriter, r *http.Request) {
 		hook.Secret = input.Secret
 	}
 	hook.Events = input.Events
+	if input.Commands != nil {
+		hook.Commands = input.Commands
+	}
 	hooks[team] = hook
 	if err := config.SaveVikunjaHooks(dir, hooks); err != nil {
 		if errors.Is(err, config.ErrInvalidVikunjaHooks) {
@@ -80,5 +83,5 @@ func (s *Server) saveVikunjaSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 func vikunjaSettingsInfo(team string, hook config.VikunjaHook) model.VikunjaHookSettings {
-	return model.VikunjaHookSettings{Team: team, HasSecret: hook.Secret != "", Events: hook.Events}
+	return model.VikunjaHookSettings{Team: team, HasSecret: hook.Secret != "", Events: hook.Events, Commands: hook.Commands}
 }

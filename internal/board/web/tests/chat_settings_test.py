@@ -203,6 +203,9 @@ def run(data_dir):
                 "allowlist"
             )
             hooks.get_by_label("Allowed events").fill("task.created\ntask.comment.*")
+            hooks.get_by_role("button", name="Add command").click()
+            hooks.get_by_label("Command", exact=True).fill("/commanda")
+            hooks.get_by_label("Leader prompt").fill("Summarize the open questions.")
             hooks.get_by_role("button", name="Save webhook").click()
             expect(hooks.get_by_text("Webhook saved")).to_be_visible()
             expect(hooks.get_by_label("Signing secret")).to_have_value("")
@@ -212,6 +215,7 @@ def run(data_dir):
                 "team": "alpha",
                 "hasSecret": True,
                 "events": ["task.created", "task.comment.*"],
+                "commands": {"/commanda": "Summarize the open questions."},
             }
 
             for name, status in (
@@ -241,6 +245,17 @@ def run(data_dir):
             ).to_have_attribute("aria-current", "page")
             expect(hooks.get_by_label("Allowed events")).to_have_value(
                 "task.created\ntask.comment.*"
+            )
+            expect(hooks.get_by_label("Command", exact=True)).to_have_value("/commanda")
+            expect(hooks.get_by_label("Leader prompt")).to_have_value(
+                "Summarize the open questions."
+            )
+            hooks.get_by_role("button", name="Remove command").click()
+            hooks.get_by_role("button", name="Save webhook").click()
+            expect(hooks.get_by_text("Webhook saved")).to_be_visible()
+            assert (
+                "commands"
+                not in page.request.get(base + "/api/settings/vikunja").json()[0]
             )
             hooks.get_by_role("combobox", name="Team", exact=True).select_option("beta")
             expect(
