@@ -170,6 +170,47 @@ tmux attach -t team-worker-dev-team    # 观察各 Agent 的终端
 team-worker board serve                # 或在浏览器里打开看板（daemon 开了 --board 时直接访问它的地址）
 ```
 
+### 多方案盲评
+
+同一个问题有几种可行方案时，可以用下面的模板让两位候选独立交付。把任务、约束、必要输入和验收条件写进目标或团队说明。候选共用这份任务说明，各自在自己的工作目录交付。
+
+```toml
+[template]
+name = "design-comparison"
+description = "Compare independently produced designs with a blind rubric"
+
+[template.leader]
+name = "lead"
+task = """先定 3–6 条可打分的量规，保存在候选无权读取的位置，再发消息让两位候选开始。
+把匿名方案和量规交给独立裁判逐项评分。选定基础方案，从落选方案融入 1–2 个有用的改进。
+如果方案一致，采用共识方案。如果分歧来自任务定义，先澄清再重跑。
+验证最终产物，向发起人汇报选择理由、吸收的改进和验证结果。"""
+
+[[template.agents]]
+name = "candidate-a"
+task = """等 Leader 通知后独立完成 {goal}。在自己的工作目录写 proposal.md，
+附关键取舍和验证方法。完成后把文件路径发给 {leader_name}。"""
+
+[[template.agents]]
+name = "candidate-b"
+task = """等 Leader 通知后独立完成 {goal}。在自己的工作目录写 proposal.md，
+附关键取舍和验证方法。完成后把文件路径发给 {leader_name}。"""
+
+[[template.tasks]]
+subject = "独立提交方案 A"
+owner = "candidate-a"
+
+[[template.tasks]]
+subject = "独立提交方案 B"
+owner = "candidate-b"
+```
+
+1. **定量规。** Leader 在候选开工前定 3–6 条可打分的量规，每条写明评分依据。量规单独保存，只向裁判提供，并用访问权限限制候选读取。团队共享提示、任务板和团队消息日志都可被团队成员查阅。
+2. **独立评审。** 候选交齐后，把量规和去掉作者标识的只读方案副本交给独立裁判。裁判按条评分、引用方案中的证据，并推荐基础方案。记录缺交或无法评分的情况。
+3. **选方案并验证。** 选职责边界最清楚、能满足验收条件的方案作为基础，从落选方案里挑 1–2 个能明确改善结果的点融入。候选做法一致时可直接采用共识方案。若分歧来自对需求或约束的不同理解，先澄清分歧再重新比选。验证最终产物，汇报选定理由、吸收的改动和验证结果。
+
+参考 [pstack arena](https://github.com/cursor/plugins/blob/main/pstack/skills/arena/SKILL.md)。
+
 ## 调试模板
 
 - 改完模板，先用 `team-worker template show <name>` 检查成员和依赖关系对不对。

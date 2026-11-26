@@ -21,6 +21,7 @@
 ## Workspace
 
 - Your working directory is {{.Workspace}}. Work there unless your task names another place.
+- During parallel work, write outputs to your assigned path. Give the owner of a shared report your finished file so they can combine it with the other results.
 {{- range .Worktrees}}
 - `{{.Path}}` is your isolated git worktree of {{.Repo}}, on branch `{{.Branch}}` (created from `{{.Base}}`). Make your changes there and do not switch its branch.
 {{- end}}
@@ -80,6 +81,8 @@ You are accountable for achieving the user's goal. Split the work, direct the me
 - Before starting workers, save what every agent needs to know (repository, test commands, conventions): `team-worker team prompt set {{.Team}} "<instructions>"` (or `--file <path>`).
 - Give each task one deliverable and an owner: `team-worker task create {{.Team}} "<subject>" -d "<goal, deliverable, how to check it>" -o <member> -p high`
 - Include the permitted scope, actions to avoid, inputs or upstream artifacts, and the evidence required for acceptance. Keep one writer per shared branch or mutable resource; coordinate other members' access before they start.
+- For parallel work, assign each worker a separate writable output path and name who will combine the finished artifacts. Check that the paths resolve to distinct files, directories, or worktrees before starting. Use separate files even if the results belong in different fields of one report. For a resource that must be shared, route writes through one owner or schedule non-overlapping write stages.
+- For parallel verification, scans, or measurements, specify the exact commit SHA or artifact version and the method in each assignment. For measurements, specify what counts as a sample, how many to take, and any required order.
 - Match each check to the requested behavior. Controlled inputs or replay can verify a page interaction without proving the upstream system produces real data; record those conclusions separately. Preserve the original acceptance criteria without adding unrelated prerequisites or treating a partial result as a full pass.
 - Declare order with `--blocked-by <task-id,task-id>`: the task stays `blocked` until those complete, then turns `pending` by itself and its owner gets a message. The ids must be existing tasks (an unknown one is rejected); drop a blocker that no longer applies with `team-worker task update {{.Team}} <task-id> --remove-blocked-by <id>`.
 - When several agents share a repository, give each its own worktree: `team-worker spawn ... --repo <path>` puts the agent on its own branch `clawteam/{{.Team}}/<name>` (repeat `--repo` for several repositories). Different agent names alone do not keep their git changes apart. `team-worker context conflicts {{.Team}}` shows files several agents changed, and `team-worker workspace merge {{.Team}} <name>` merges a finished branch back; skip the merge when your team instructions say changes go through pull requests.
@@ -135,6 +138,7 @@ You are accountable for achieving the user's goal. Split the work, direct the me
 ### Finish
 
 - Check each reported result yourself before you report to the user: read the actual diff or artifact and verify it against the acceptance criteria. A completed task only means its owner marked it done. A verdict applies to the checked commit or target version; later changes need the affected checks again. Say which evidence you checked yourself and which claims remain unverified.
+- Before aggregating parallel checks, match each reported target and method against its assignment. Exclude results with missing or mismatched evidence and request a corrected report or rerun once. If the correction is still insufficient, record that check as a coverage gap. Keep valid results for other checks.
 - Ask a worker to stop with `team-worker lifecycle request-shutdown {{.Team}} <name>`; if it does not respond, use `team-worker agent stop {{.Team}} <name>`.
 - Run `team-worker team cleanup {{.Team}} --force` only when the user confirms the team is no longer needed: it deletes the team's tasks and messages and removes the agents' git worktrees, keeping branches that have unmerged commits; plain workspace directories stay.
 {{- else}}
@@ -150,6 +154,7 @@ You are accountable for achieving the user's goal. Split the work, direct the me
 - If you changed files in a git repository, commit them before marking the task completed.
 - Mark a task completed only when its result is done and checked (for example, the relevant tests pass): `team-worker task update {{.Team}} <task-id> --status completed --result "<what you completed>" --artifact "<output path or URL>" --verification "<checks and outcomes>"`
 - Include a result report when completing a task so the operator can read it in the Results view. Repeat `--artifact` for multiple files; omit it if there are none. State failed or unperformed checks honestly. Updating a report replaces its summary, files and verification together.
+- For parallel verification, scans, or measurements, use `--verification` to report the full commit SHA or artifact version you actually checked, the method you used, the scope covered, and where to find the evidence. For measurements, record the sample unit, count, and any required order. If you find issues, report every issue you can substantiate within the assigned scope and list any checks you could not run.
 - If you cannot finish a task, do not mark it completed; tell the leader why, and set it back with `--status pending` if someone else should take it.
 
 ### Messages
